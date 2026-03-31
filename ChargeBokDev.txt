@@ -1,0 +1,2076 @@
+CAHIER DES CHARGES UNIFIÉ - GESTION DU PARC AUTOMOBILE V1.0
+ INTRODUCTION
+
+La gestion des véhicules dans de nombreuses institutions (entreprises, ministères, ONG, sociétés privées, etc.) 
+reste encore manuelle, fragmentée entre plusieurs outils, ou reposant sur des documents papier.
+Les conséquences observées sont :
+
+difficulté à suivre l’état réel des véhicules dans le parc auto ;
+
+absence de suivi précis du kilométrage, entraînant des vidanges tardives ou trop fréquentes ;
+
+manque de visibilité sur les pannes, interventions ou anomalies signalées ;
+
+délai long dans la transmission des informations chauffeur → mécanicien ;
+
+pertes ou oublis dans le suivi du stock de pièces détachées ;
+
+incapacité à connaître la disponibilité réelle d’un véhicule ;
+
+impossibilité de mesurer les coûts de maintenance réels ;
+
+difficulté à identifier les chauffeurs à risque (accidents fréquents).
+
+Ces problèmes entraînent :
+
+✔ des coûts élevés,
+✔ une sécurité réduite,
+✔ une baisse de disponibilité des véhicules,
+✔ une mauvaise organisation du service mécanique.
+
+° Problématique
+
+Comment digitaliser et optimiser la gestion d’un parc automobile afin d’assurer :
+
+une meilleure disponibilité des véhicules,
+
+un suivi rigoureux des maintenances,
+
+une traçabilité complète des interventions,
+
+un contrôle approfondi des pièces et outils,
+
+une communication fluide entre les acteurs,
+
+et une réduction des coûts opérationnels ?
+
+° Solution proposée
+
+Développer une plateforme numérique pour la gestion du parc automobile basée sur :
+
+Backend : Laravel (API REST sécurisée)
+
+Frontend Web : React + Vite
+
+Base de données : MySQL
+
+Architecture modulaire
+
+Interfaces adaptées à chaque rôle utilisateur
+
+Système de notifications
+
+Tableau de bord + KPI + Analytics
+
+Traçabilité complète de toutes les opérations
+
+° OBJECTIFS DU SYSTÈME
+🎯 Objectif principal
+
+Créer une application complète pour superviser, gérer et optimiser l’ensemble du cycle de vie d’un véhicule : 
+affectation,mission, Assignation à unchauffeur, utilisation, pannes, interventions, pièces, assurance, visite technique et accidents.
+
+🎯 Objectifs spécifiques
+► 1. Digitalisation complète
+
+Remplacer les papiers par un système numérique centralisé.
+
+► 2. Gestion automatique de la maintenance
+
+Kilométrage → règles calculées → alertes de vidange, contrôle, entretien.
+
+► 3. Traçabilité des interventions
+
+Chaque action a un auteur, une date, un véhicule, une pièce, etc.
+
+► 4. Gestion du stock de pièces et outils
+
+Entrées, sorties, prélèvements, alertes de rupture.
+
+► 5. Sécurité et contrôle des rôles
+
+Chaque acteur ne voit que ce qui lui correspond.
+
+► 6. KPI
+
+Mesurer :
+
+Disponibilité des véhicules
+
+Taux d’accidents
+
+Durée moyenne d’intervention
+
+Coûts de maintenance
+
+Fréquence d’utilisation des véhicules.
+
+1. Rôles finalisés (5 rôles)
+
+Super Administrateur → Configuration système + utilisateurs
+Gestionnaire du Parc (Chef du Parc) → Gestion globale (véhicules, missions, stock, interventions)
+Mécanicien / Technicien → Exécution des interventions
+Chauffeur → Exécution des missions + Déclaration anomalies + kilométrage
+Inspecteur Technique → Inspections périodiques
+
+
+2. MODULES FONCTIONNELS DÉTAILLÉS
+Module 1 : Gestion des Véhicules
+Fonctionnalités :
+
+Liste des véhicules avec état global
+Fiche véhicule complète (immatriculation, VIN, marque, modèle, type)
+Affectation à une direction
+Documents centralisés (carte grise, assurance, visite technique)
+Photo du véhicule
+État du véhicule (disponible / en_mission / en_maintenance / immobilisé)
+Historique complet (missions + interventions)
+
+Informations véhicule :
+
+Immatriculation (unique)
+VIN (numéro de châssis)
+Marque et modèle
+Type : 4x4, berline, utilitaire, camion
+Direction affectée
+Kilométrage actuel
+Date dernière mise à jour km
+Type de carburant
+Capacité réservoir
+Date acquisition
+Coût acquisition
+Valeur résiduelle
+Nombre de places
+Consommation moyenne (L/100km)
+Statut actuel
+Date immobilisation (si applicable)
+Jours immobilisation (calculé automatiquement)
+
+Module 2 : Gestion des Missions
+Fonctionnalités :
+
+Création de mission par le Gestionnaire du Parc
+Assignation véhicule + chauffeur
+Types de mission : transport personnel, transport fonds, transport marchandises, autre
+Suivi en temps réel des missions en cours
+Rendu de compte par le chauffeur
+Calcul automatique : durée réelle, km parcourus, carburant consommé
+Historique complet des missions
+
+Données mission :
+
+Véhicule assigné
+Chauffeur assigné
+Type de mission
+Destination
+Date/heure départ prévue
+Date/heure départ réelle
+Date/heure retour
+Kilométrage au départ
+Kilométrage au retour
+Kilomètres parcourus (calculé : km_retour - km_départ)
+Durée réelle en minutes (calculé)
+Consommation carburant estimée
+Coût carburant
+Nombre de passagers
+Référence mission
+Observations chauffeur
+Photos si incident
+Statut : planifiée / en_cours / terminée / annulée
+
+États véhicule pendant mission :
+
+Avant mission : disponible
+Pendant mission : en_mission
+Après mission : disponible (ou en_maintenance si anomalie détectée)
+
+Module 3 : Gestion du Kilométrage
+Fonctionnalités :
+
+Enregistrement automatique lors des missions (km départ et retour)
+Enregistrement manuel possible (par chauffeur ou gestionnaire)
+Recommandation : vérification hebdomadaire (chaque vendredi)
+Déclenchement automatique des alertes :
+
+Vidange proche (ex: 1000 km avant)
+Révision proche (ex: 500 km avant)
+Inspection technique (ex: 30 jours avant)
+Assurance expiration (ex: 60 jours avant)
+
+
+Historique complet avec dates
+Calcul de la consommation (L/100km)
+
+Données kilométrage :
+
+Véhicule
+Kilométrage enregistré
+Date enregistrement
+Source : mission / manuel
+Enregistré par (user)
+Consommation calculée si carburant enregistré
+
+Module 4 : Gestion des Anomalies
+Fonctionnalités :
+
+Déclaration par le chauffeur (pendant ou après mission)
+Photo + description obligatoire
+Sévérité : faible / moyenne / haute / critique
+État : ouverte / en_cours / résolue / annulée
+Envoi automatique au mécanicien (notification)
+Possibilité de créer une demande d'intervention directement
+Traçabilité complète
+
+Données anomalie :
+
+Véhicule concerné
+Déclaré par (chauffeur)
+Date/heure déclaration
+Description détaillée
+Sévérité
+Photos (JSON array)
+Localisation GPS si disponible
+Kilométrage au moment de l'anomalie
+Statut
+Mission liée (si déclarée pendant mission)
+
+Module 5 : Gestion des Demandes d'Intervention
+Fonctionnalités :
+
+Création automatique depuis anomalie
+Création manuelle par gestionnaire (maintenance préventive)
+Priorité : faible / normale / haute / urgente
+Validation par gestionnaire du parc
+Assignation au mécanicien
+Statut : en_attente / approuvée / rejetée / en_cours / terminée / annulée
+Historique complet
+
+Données demande d'intervention :
+
+Anomalie source (si applicable)
+Véhicule concerné
+Demandeur (user)
+Type maintenance : corrective (réparation) / préventive (entretien)
+Priorité
+Date demande
+Commentaire demandeur
+Statut
+Date validation
+Validé par (gestionnaire)
+
+Module 6 : Gestion des Interventions
+Fonctionnalités :
+
+Réception de la demande (anomalie ou maintenance planifiée)
+Assignation au mécanicien
+Saisie du diagnostic + type d'intervention
+Utilisation des pièces (traçabilité automatique)
+Horodatage automatique début/fin
+État : planned / in_progress / completed / cancelled
+Durée réelle + coût (main d'œuvre + pièces)
+Documentation (photos, notes techniques)
+
+Données intervention :
+
+Demande source
+Véhicule
+Mécanicien assigné
+Type d'intervention : vidange, freins, pneus, révision, moteur, carrosserie, électricité, autre
+Sévérité : mineure / normale / majeure / critique
+Date/heure début
+Date/heure fin
+Durée réelle en minutes (calculé)
+Durée estimée
+Kilométrage au moment intervention
+Diagnostic technique
+Pièces utilisées (via part_consumptions)
+Coût main d'œuvre
+Coût pièces (calculé)
+Coût total (calculé : main d'œuvre + pièces)
+Résultat : en_attente / en_cours / terminé / partiel
+Statut : planned / in_progress / completed / cancelled
+Documents (photos avant/après, factures)
+Notes techniques
+
+États véhicule pendant intervention :
+
+Avant intervention : disponible ou immobilisé
+Pendant intervention : en_maintenance
+Après intervention : disponible ou immobilisé si problème non résolu
+
+Module 7 : Gestion des Pièces Détachées
+Fonctionnalités :
+
+Inventaire complet (quantité, seuil d'alerte, fournisseur)
+Entrée en stock (achat + date + fournisseur)
+Sortie / prélèvement (lors intervention avec traçabilité automatique)
+Ajustement inventaire
+Retour en stock (pièce non utilisée)
+Historique complet des mouvements
+Alerte rupture de stock (quantité < seuil)
+Catégories par type de véhicule
+Calcul coût moyen pondéré
+
+Données pièce :
+
+SKU (référence)
+Nom
+Type de pièce : moteur, freinage, suspension, électrique, carrosserie, consommable
+Quantité en stock
+Seuil d'alerte
+Coût unitaire actuel
+Fournisseur principal
+Localisation dans stock
+État : actif / inactif
+
+Données mouvement stock :
+
+Pièce concernée
+Type mouvement : entrée / sortie / ajustement / retour
+Quantité
+Coût unitaire
+Référence : intervention / commande / inventaire
+ID référence
+Effectué par (user)
+Fournisseur (si entrée)
+Date/heure mouvement
+Notes
+
+Module 8 : Gestion des Outils
+Fonctionnalités :
+
+Inventaire complet (état OK / HS / en_réparation)
+Catégorisation : moteur / direction / frein / électrique / général
+Localisation dans atelier
+Alerte outils défectueux
+Signalement défaut par mécanicien
+Traçabilité des utilisations (optionnel)
+Historique des réparations
+
+Données outil :
+
+Nom
+Type/catégorie
+État : OK / HS / en_réparation
+Localisation
+Date dernier contrôle
+Notes
+
+Module 9 : Plan de Maintenance Automatique
+Fonctionnalités :
+
+Règles paramétrables (par type de véhicule ou global)
+Trigger : kilométrage OU date OU les deux
+Génération automatique de tâches de maintenance
+État : à_planifier / planifiée / en_retard / faite / annulée
+Notification au gestionnaire si en retard
+Calendrier de maintenance préventive
+
+Données règle maintenance :
+
+Type maintenance : vidange, révision, contrôle freins, permutation pneus, etc.
+Trigger type : km / date / mixte
+Valeur trigger (ex: tous les 10000 km)
+Description
+Actif : oui / non
+
+Données planning maintenance :
+
+Véhicule
+Règle maintenance
+Type maintenance
+Fréquence en km
+Fréquence en mois
+Dernière réalisation (date)
+Dernière réalisation (km)
+Prochaine échéance (date calculée)
+Prochaine échéance (km calculée)
+État
+Notes
+
+Module 10 : Gestion des Visites Techniques
+Fonctionnalités :
+
+Planification inspection
+Date de visite + résultats (checklist interactive)
+Actions requises vs actions réalisées
+Génération rapport PDF
+Alerte si expiration < 30 jours
+Notification si "danger immédiat"
+Suivi des actions correctives
+
+Données inspection :
+
+Véhicule
+Inspecteur
+Date inspection
+Checklist résultats (JSON) :
+
+Pneus : OK / À réparer / Danger
+Freins : OK / À réparer / Danger
+Moteur : OK / À réparer / Danger
+Direction : OK / À réparer / Danger
+Éclairage : OK / À réparer / Danger
+Carrosserie : OK / À réparer / Danger
+Intérieur : OK / À réparer / Danger
+
+
+Actions requises (JSON array)
+Actions réalisées (JSON array)
+Notes générales
+Statut global : conforme / non_conforme / danger_immédiat
+
+Module 11 : Gestion des Assurances
+Fonctionnalités :
+
+Détails contrat (numéro, compagnie, couverture, montant prime)
+Date expiration + alerte 60 jours
+Document PDF centralisé
+Historique des renouvellements
+Sinistres déclarés
+
+Données assurance (dans vehicle_documents) :
+
+Véhicule
+Type document : assurance
+Nom document
+Fichier PDF
+Numéro contrat
+Compagnie assurance
+Type couverture : tous risques / tiers / tiers+ / autre
+Montant prime annuelle
+Date effet
+Date expiration
+Notes
+
+Module 12 : Gestion des Permis Chauffeur
+Fonctionnalités :
+
+Permis de conduire (scan PDF)
+Date d'expiration
+Alerte 30 jours avant expiration
+Catégories permis (A, B, C, D, E)
+Certificat médical si applicable
+Historique des mises à jour
+
+Données permis (dans driver_documents) :
+
+Chauffeur (user)
+Type document : permis_conduire / certificat_medical
+Nom document
+Fichier PDF
+Numéro permis
+Catégories
+Date délivrance
+Date expiration
+Pays délivrance
+Notes
+
+Module 13 : Gestion des Accidents
+Fonctionnalités :
+
+Déclaration : date, lieu, description
+Photos du sinistre (obligatoire)
+Rapport police (si applicable)
+État : déclaré / expertise / en_réparation / clôturé
+Responsabilité : responsable / non_responsable / partagée
+Coûts estimés vs réels
+Montant réclamé assurance
+Immobilisation du véhicule (durée)
+Suivi dossier assurance
+
+Données accident :
+
+Véhicule
+Chauffeur au volant
+Date/heure accident
+Lieu (adresse + GPS)
+Description détaillée
+Type responsabilité
+Mission en cours (si applicable)
+Kilométrage au moment accident
+Photos sinistre (JSON array)
+Rapport police (fichier)
+Témoins (JSON array)
+Véhicule immobilisé : oui / non
+Assuré : oui / non
+Coût estimé réparation
+Coût final réparation
+Montant réclamé assurance
+Montant versé assurance
+Statut
+Notes
+
+Module 14 : Gestion du Carburant
+Fonctionnalités :
+
+Enregistrement plein de carburant
+Calcul consommation automatique (L/100km)
+Coût par plein
+Station-service
+Reçu (scan)
+Historique complet
+Alertes consommation anormale
+
+Données carburant :
+
+Véhicule
+Date plein
+Kilométrage au plein
+Litres ajoutés
+Prix unitaire
+Coût total (calculé)
+Station-service
+Km depuis dernier plein (calculé)
+Consommation calculée (L/100km)
+Reçu (fichier)
+Notes
+
+Module 15 : Dashboard & KPI
+KPI Véhicules :
+
+Taux de disponibilité : (jours_disponible / jours_total) × 100
+Taux d'utilisation : (jours_mission / jours_disponible) × 100
+Coût total par véhicule (missions + interventions + carburant)
+Coût au kilomètre
+Nombre d'interventions / an
+Nombre d'accidents / an
+Consommation moyenne carburant
+Jours immobilisation
+Âge du véhicule
+Valeur résiduelle
+
+KPI Missions :
+
+Nombre total missions
+Kilomètres totaux parcourus
+Durée moyenne mission
+Distance moyenne mission
+Coût carburant total
+Missions par type
+Missions par direction
+
+KPI Interventions :
+
+Nombre total interventions
+Durée moyenne intervention
+Coût moyen intervention
+Coût main d'œuvre total
+Coût pièces total
+Types interventions les plus fréquents
+Pièces les plus utilisées
+Temps d'immobilisation moyen
+
+KPI Chauffeurs :
+
+Nombre missions effectuées
+Kilomètres totaux
+Nombre anomalies déclarées
+Nombre accidents
+Taux d'accidents : (nb_accidents / nb_missions) × 100
+Consommation moyenne
+Score performance (calculé)
+
+KPI Mécaniciens :
+
+Nombre interventions complétées
+Temps moyen intervention
+Pièces prélevées
+Coûts générés
+
+KPI Globaux :
+
+Nombre total véhicules
+Véhicules disponibles
+Véhicules en mission
+Véhicules en maintenance
+Véhicules immobilisés
+Coût total parc (mensuel / annuel)
+Stock pièces (valeur totale)
+Alertes en cours
+
+Graphiques :
+
+Évolution coûts mensuels
+Répartition missions par type
+Répartition interventions par type
+Consommation carburant mensuelle
+Taux disponibilité véhicules
+Top 10 véhicules coûteux
+Top 10 pièces utilisées
+
+Export :
+
+PDF : rapports synthétiques
+Excel : données détaillées
+
+
+3. INTERFACES & FONCTIONNALITÉS PAR RÔLE
+3.1 SUPER ADMINISTRATEUR
+Accès : Tous les modules (lecture + écriture)
+Interfaces principales :
+Dashboard d'administration globale
+┌─────────────────────────────────────────────────────────────┐
+│ DASHBOARD SUPER ADMIN                                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 👥 UTILISATEURS                                             │
+│ ├─ Total : 45                                               │
+│ ├─ Actifs : 42                                              │
+│ ├─ Inactifs : 3                                             │
+│ └─ [GÉRER UTILISATEURS]                                     │
+│                                                             │
+│ 🔑 RÔLES & PERMISSIONS                                      │
+│ ├─ 5 rôles configurés                                       │
+│ └─ [CONFIGURER]                                             │
+│                                                             │
+│ 🏢 DIRECTIONS                                               │
+│ ├─ 8 directions actives                                     │
+│ └─ [GÉRER]                                                  │
+│                                                             │
+│ ⚙️ PARAMÈTRES SYSTÈME                                       │
+│ ├─ Seuils alertes                                           │
+│ ├─ Fréquences maintenance                                   │
+│ ├─ Types véhicules                                          │
+│ └─ [CONFIGURER]                                             │
+│                                                             │
+│ 📊 ACTIVITÉ SYSTÈME (7 derniers jours)                      │
+│ ├─ 245 actions enregistrées                                 │
+│ └─ [VOIR AUDIT LOGS]                                        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+Gestion des utilisateurs
+
+CRUD complet utilisateurs
+Assignation rôle
+Assignation direction
+Activation / désactivation compte
+Réinitialisation mot de passe
+Photo profil
+Historique connexions
+
+Configuration
+
+Rôles & Permissions :
+
+Définir permissions par rôle
+Créer rôles personnalisés (si besoin futur)
+
+
+Directions / Départements :
+
+CRUD directions
+Assigner responsable direction
+
+
+Types Véhicules :
+
+Ajouter types personnalisés
+Définir caractéristiques (nb places, consommation standard)
+
+
+Types Interventions :
+
+Liste types d'interventions
+Durée standard estimée
+Coût standard main d'œuvre
+
+
+Paramètres système :
+
+Seuils alertes kilométrage (km avant vidange, révision)
+Seuils alertes documents (jours avant expiration)
+Seuil immobilisation (jours)
+Seuil stock pièces
+Prix litre carburant (par défaut)
+Taux main d'œuvre mécanicien (€/h ou CFA/h)
+
+
+
+Audit Logs
+
+Historique complet actions
+Filtres : utilisateur, action, table, date
+Export CSV/Excel
+Colonnes :
+
+Date/heure
+Utilisateur
+Action (create, update, delete, login, logout)
+Table concernée
+ID enregistrement
+Anciennes valeurs (JSON)
+Nouvelles valeurs (JSON)
+IP
+
+
+
+Export données
+
+Export global base de données
+Export par module
+Format : CSV, Excel, SQL
+
+Menu navigation :
+SIDEBAR
+├─ 🏠 Dashboard
+├─ 👥 Utilisateurs
+│  ├─ Liste utilisateurs
+│  └─ Créer utilisateur
+├─ ⚙️ Configuration
+│  ├─ Rôles & Permissions
+│  ├─ Directions
+│  ├─ Types Véhicules
+│  ├─ Types Interventions
+│  └─ Paramètres système
+├─ 📋 Audit Logs
+└─ 📤 Exports
+
+3.2 GESTIONNAIRE DU PARC (Chef du Parc)
+Accès : Gestion complète du parc, missions, stock, interventions, analytics
+Interfaces principales :
+Dashboard Parc
+
+
+revoirs le type de mission. modifier le role pour celui qui renseigne les missions ce 
+n'est plus le chef du parc auto mais le c'est le chef transport de fond qui le fais du departement de la TOP
+departement d'operation avoirs la fiches des véhicules avec tout informations et les fiches des chauffeurs de transport de fond
+pou créer une mission de transport de fond a fin e le renseigner dans l'application.
+
+crée un module pour le PC radio affin d'aoir la  trasabilité (si on a donnée la clé de la voititre à un chauffeur on doit rensigner
+toutes les informations de la voiture du chaffeur le heure de donation le temps de la mission l'etait de la voiture avnt etaprès la misson) 
+
+┌─────────────────────────────────────────────────────────────┐
+│ DA                                                         │
+│ 🚗 VÉHICULES (Statut temps réel)                            │
+│ ├─ 🟢 Disponibles : 12                                      │
+│ ├─ 🔵 En mission : 8                                        │
+│ ├─ 🟠 En maintenance : 3                                    │
+│ └─ 🔴 Immobilisés : 2 ⚠️ [VOIR DÉTAILS]                     │
+│                                                             │
+│ 🎯 MISSIONS                                                 │
+│ ├─ En cours : 8                                             │
+│ ├─ À planifier : 5                                          │
+│ └─ [CRÉER MISSION] [VOIR TOUTES]                           │
+│                                                             │
+│ 🔧 INTERVENTIONS                                            │
+│ ├─ Demandes en attente : 4 ⚠️                               │
+│ ├─ En cours : 3                                             │
+│ └─ [VOIR DEMANDES]                                          │
+│    SHBOARD GESTIONNAIRE DU PARC                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ⚠️ ALERTES ACTIVES (15)                                     │
+│ ├─ 🔴 Immobilisation > 7j : VH-001 (12 jours)               │
+│ ├─ 🟠 Vidange proche : VH-005 (150 km restants)             │
+│ ├─ 🟠 Assurance expire : VH-012 (25 jours)                  │
+│ ├─ 🟠 Visite technique : VH-008 (15 jours)                  │
+│ ├─ 🟡 Permis expire : Chauffeur Ali (20 jours)              │
+│ ├─ 🔴 Rupture stock : Plaquettes frein                      │
+│ └─ [VOIR TOUTES ALERTES]                                    │
+│                                                             │
+│ 📦 STOCK                                                    │
+│ ├─ Pièces en alerte : 3                                     │
+│ ├─ Outils défectueux : 1                                    │
+│ └─ [GÉRER STOCK]                                            │
+│                                                             │
+│ 📊 KPI DU MOIS                                              │
+│ ├─ Missions effectuées : 142                                │
+│ ├─ Km parcourus : 18,450 km                                 │
+│ ├─ Interventions : 28                                       │
+│ ├─ Coût total : 2,450,000 CFA                               │
+│ │  ├─ Carburant : 1,200,000 CFA                             │
+│ │  ├─ Interventions : 1,000,000 CFA                         │
+│ │  └─ Pièces : 250,000 CFA                                  │
+│ └─ [VOIR ANALYTICS COMPLET]                                 │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+Gestion des Véhicules
+Liste véhicules :
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ VÉHICULES                                        [🔍 Rechercher] [+ AJOUTER] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Filtres : [Tous] [Disponibles] [En mission] [En maintenance] [Immobilisés]  │
+├────────┬──────────┬─────────┬──────────┬─────────┬──────────┬──────────────┤
+│ Immat  │ Marque   │ Modèle  │ Type     │ État    │ KM       │ Actions      │
+├────────┼──────────┼─────────┼──────────┼─────────┼──────────┼──────────────┤
+│ VH-001 │ Toyota   │ Hilux   │ 4x4      │ 🟢 Dispo│ 45,230   │ [👁️] [✏️]   │
+│ VH-002 │ Nissan   │ Patrol  │ 4x4      │ 🔵 Miss │ 62,100   │ [👁️] [✏️]   │
+│ VH-003 │ Peugeot  │ 508     │ Berline  │ 🟠 Maint│ 38,450   │ [👁️] [✏️]   │
+│ VH-004 │ Mercedes │ Sprinter│ Util.    │ 🔴 Immob│ 95,600   │ [👁️] [✏️]   │
+└────────┴──────────┴─────────┴──────────┴─────────┴──────────┴──────────────┘
+
+Fiche véhicule complète :
+┌─────────────────────────────────────────────────────────────┐
+│ FICHE VÉHICULE : VH-001                        [✏️ MODIFIER] │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ [PHOTO VÉHICULE]                                            │
+│                                                             │
+│ 📋 INFORMATIONS GÉNÉRALES                                   │
+│ ├─ Immatriculation : VH-001                                 │
+│ ├─ VIN : 1234567890ABCDEF                                   │
+│ ├─ Marque : Toyota                                          │
+│ ├─ Modèle : Hilux                                           │
+│ ├─ Type : 4x4                                               │
+│ ├─ Carburant : Diesel                                       │
+│ ├─ Capacité réservoir : 80 L                                │
+│ ├─ Nombre places : 5                                        │
+│ ├─ Date acquisition : 15/01/2020                            │
+│ ├─ Coût acquisition : 18,000,000 CFA                        │
+│ └─ Valeur actuelle : 12,000,000 CFA                         │
+│                                                             │
+│ 📊 ÉTAT ACTUEL                                              │
+│ ├─ Statut : 🟢 Disponible                                   │
+│ ├─ Kilométrage : 45,230 km                                  │
+│ ├─ Dernière MAJ km : 24/11/2025                             │
+│ ├─ Consommation moy : 12.5 L/100km                          │
+│ └─ Direction affectée : Direction Générale                  │
+│                                                             │
+│ 📄 DOCUMENTS                                                │
+│ ├─ ✅ Carte grise : expire n/a                              │
+│ ├─ ✅ Assurance : expire 15/03/2026 (108jours)             │
+│ ├─ ⚠️ Visite technique : expire 28/12/2025 (31 jours)       │
+│ └─ [VOIR TOUS DOCUMENTS]                                    │
+│                                                             │
+│ 🔧 MAINTENANCE                                              │
+│ ├─ Prochaine vidange : 50,000 km (4,770 km restants)       │
+│ ├─ Prochaine révision : 60,000 km (14,770 km restants)     │
+│ ├─ Dernière intervention : 22/11/2025 (Vidange)            │
+│ └─ [VOIR HISTORIQUE] [PLANIFIER MAINTENANCE]               │
+│                                                             │
+│ 📈 HISTORIQUE & STATISTIQUES                                │
+│ ├─ [MISSIONS] (45 missions, 12,450 km ce mois)             │
+│ ├─ [INTERVENTIONS] (8 interventions cette année)           │
+│ ├─ [CARBURANT] (Consommation détaillée)                    │
+│ ├─ [ACCIDENTS] (0 accident)                                 │
+│ └─ [KPI VÉHICULE]                                           │
+│     ├─ Taux disponibilité : 87%                             │
+│     ├─ Coût total année : 3,200,000 CFA                     │
+│     └─ Coût au km : 71 CFA/km                               │
+│                                                             │
+│ [ACTIONS RAPIDES]                                           │
+│ [📝 Enregistrer KM] [⚠️ Signaler anomalie]                  │
+│ [🚗 Créer mission] [🔧 Demander intervention]               │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Gestion des Missions desormais pour le nouveau profile chef (tf)
+
+**Liste missions :**
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ MISSIONS                                         [🔍 Rechercher] [+ CRÉER]   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Filtres : [Toutes] [En cours] [Planifiées] [Terminées] [Aujourd'hui]        │
+├──────────┬──────────┬─────────────┬────────────┬─────────┬──────────────────┤
+│ Date     │ Véhicule │ Chauffeur   │ Destination│ État    │ Actions          │
+├──────────┼──────────┼─────────────┼────────────┼─────────┼──────────────────┤
+│ 27/11    │ VH-002   │ Ali B.      │ Banque Ctr │ 🔵 Cours│ [👁️] [❌ Annuler]│
+│ 27/11    │ VH-005   │ Fatou D.    │ Ministère  │ 🔵 Cours│ [👁️] [❌]        │
+│ 27/11    │ VH-008   │ Mamadou S.  │ Aéroport   │ 🟡 Plan │ [👁️] [▶️ Démar] │
+│ 26/11    │ VH-001   │ Binta N.    │ Port       │ ✅ Term │ [👁️] [📄 Rapp]  │
+└──────────┴──────────┴─────────────┴────────────┴─────────┴──────────────────┘
+
+**Créer mission  en toute logqie c'est pas le chef du parc qui le fais mais le chef de tranport de font(TF)
+et le type de missions qu'on a c'est justement le transoport de fond et missin brousse hors de l'estuaire.
+dans ce cas c'est mission brousse que le chef du parc peu gerer uniquement en ce qui concerne les mision. le reste il
+gère.
+┌─────────────────────────────────────────────────────────────┐
+│ CRÉER NOUVELLE MISSION                                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Véhicule : *                                                │
+│ [Sélectionner véhicule] ▼                                   │
+│ → Disponibles : VH-001, VH-003, VH-007, VH-009...           │
+│                                                             │
+│ Chauffeur : *                                               │
+│ [Sélectionner chauffeur] ▼                                  │
+│ → Ali Balde, Fatou Diallo, Mamadou Sow...                   │
+│                                                             │
+│ Type de mission : *                                         │
+│ ⚪ Transport personnel                                      │
+│ ⚪ Transport de fonds                                       │
+│ ⚪ Transport marchandises                                   │
+│ ⚪ Autre                                                    │
+│                                                             │
+│ Destination : *                                             │
+│ [Banque Centrale / Ministère / Aéroport...]                 │
+│                                                             │
+│ Date/Heure départ prévue : *                                │
+│ [27/11/2025] [14:00]                                        │
+│                                                             │
+│ Nombre de passagers :                                       │
+│ [3]                                                         │
+│                                                             │
+│ Direction demandeuse :                                      │
+│ [Sélectionner direction] ▼                                  │
+│                                                             │
+│ Référence mission :                                         │
+│ [MISS-2025-1142]                                            │
+│                                                             │
+│ Observations / Notes :                                      │
+│ [Transport délégation + équipement...]                      │
+│                                                             │
+│ [CRÉER MISSION] [ANNULER]                                   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+**Détails mission :**Gestion des Missions desormais pour le nouveau profile chef (tf)
+┌─────────────────────────────────────────────────────────────┐
+│ MISSION #MISS-2025-1142                   [✏️ Modifier]     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 📋 INFORMATIONS                                             │
+│ ├─ Type : Transport de fonds                                │
+│ ├─ Destination : Banque Centrale                            │
+│ ├─ Direction : Direction Financière                         │
+│ ├─ Passagers : 3                                            │
+│ └─ Référence : MISS-2025-1142                               │
+│                                                             │
+│ 🚗 VÉHICULE & CHAUFFEUR                                     │
+│ ├─ Véhicule : VH-002 (Nissan Patrol)                        │
+│ ├─ Chauffeur : Ali Balde                                    │
+│ └─ Statut : 🔵 En cours                                     │
+│                                                             │
+│ 📅 PLANNING                                                 │
+│ ├─ Départ prévu : 27/11/2025 08:00                          │
+│ ├─ Départ réel : 27/11/2025 07:50                           │
+│ ├─ Retour prévu : 27/11/2025 11:00                          │
+│ └─ Retour réel : (en cours)                                 │
+│                                                             │
+│ 📊 KILOMÉTRAGE                                              │
+│ ├─ KM départ : 62,100 km                                    │
+│ ├─ KM retour : (en attente)                                 │
+│ └─ KM parcourus : (en attente)                              │
+│                                                             │
+│ ⛽ CARBURANT                                                │
+│ ├─ Consommation estimée : (en attente)                      │
+│ └─ Coût estimé : (en attente)                               │
+│                                                             │
+│ 📝 OBSERVATIONS                                             │
+│ Transport délégation importante + 2 gendarmes               │
+│                                                             │
+│ [❌ ANNULER MISSION]                                        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Gestion du Kilométrage
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SUIVI KILOMÉTRAGE                            [📝 Enregistrer manuellement]   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ⚠️ Véhicules non à jour (> 7 jours) : 3 véhicules                          │
+├──────────┬──────────┬──────────┬─────────────┬──────────┬──────────────────┤
+│ Véhicule │ KM actuel│ Dernière │ Alertes     │ Conso.   │ Actions          │
+│          │          │ MAJ      │             │ (L/100km)│                  │
+├──────────┼──────────┼──────────┼─────────────┼──────────┼──────────────────┤
+│ VH-001   │ 45,230   │ 24/11    │ ✅ OK       │ 12.5     │ [📝] [📊 Hist]   │
+│ VH-002   │ 62,100   │ 27/11    │ ✅ OK       │ 13.2     │ [📝] [📊]        │
+│ VH-003   │ 38,450   │ 19/11    │ ⚠️ 8j sans  │ 11.8     │ [📝] [📊]        │
+│ VH-004   │ 95,600   │ 15/11    │ 🔴 12j sans │ 14.5     │ [📝] [📊]        │
+│          │          │          │ 🟠 Vidange  │          │                  │
+│          │          │          │    proche   │          │                  │
+└──────────┴──────────┴──────────┴─────────────┴──────────┴──────────────────┘
+
+#### Gestion des Interventions
+
+**Demandes en attente :**
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ DEMANDES D'INTERVENTION                                [🔍 Rechercher]       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ⚠️ 4 demandes en attente de validation                                      │
+├────────┬──────────┬─────────────┬──────────┬─────────┬────────────────────┤
+│ Date   │ Véhicule │ Type        │ Priorité │ Source  │ Actions            │
+├────────┼──────────┼─────────────┼──────────┼─────────┼────────────────────┤
+│ 27/11  │ VH-008   │ Freins      │ 🔴 Haute │ Anomalie│ [✅ Valider] [❌]  │
+│ 26/11  │ VH-012   │ Vidange     │ 🟢 Norm  │ Planif. │ [✅] [❌]          │
+│ 25/11  │ VH-003   │ Pneu crevé  │ 🟠 Moy   │ Anomalie│ [✅] [❌]          │
+│ 24/11  │ VH-015   │ Révision    │ 🟢 Norm  │ Planif. │ [✅] [❌]          │
+└────────┴──────────┴─────────────┴──────────┴─────────┴────────────────────┘
+
+**Valider demande → Assigner mécanicien :**
+┌─────────────────────────────────────────────────────────────┐
+│ VALIDER DEMANDE D'INTERVENTION #DI-2025-0234                │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Véhicule : VH-008 (Toyota Land Cruiser)                     │
+│ Type : Freins grincent                                      │
+│ Priorité : 🔴 Haute                                         │
+│ Source : Anomalie #AN-2025-0567 (Chauffeur Ali)            │
+│                                                             │
+│ Assigner à mécanicien : *                                   │
+│ [Sélectionner] ▼                                            │
+│ → Sidy Diop (disponible)                                    │
+│ → Ousmane Fall (en intervention)                            │
+│                                                             │
+│ Date prévue :                                               │
+│ [28/11/2025]                                                │
+│                                                             │
+│ Durée estimée (heures) :                                    │
+│ [3]                                                         │
+│                                                             │
+│ Commentaire validation :                                    │
+│ [Priorité haute, vérifier plaquettes...]                    │
+│                                                             │
+│ [✅ VALIDER & ASSIGNER] [❌ REJETER] [ANNULER]              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+**Interventions en cours et terminées :**
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INTERVENTIONS                                    [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Onglets : [En attente] [En cours] [Terminées] [Toutes]                      │
+├────────┬──────────┬─────────────┬────────────┬─────────┬────────────────────┤
+│ Date   │ Véhicule │ Mécanicien  │ Type       │ État    │ Durée / Coût       │
+├────────┼──────────┼─────────────┼────────────┼─────────┼────────────────────┤
+│ 27/11  │ VH-003   │ Sidy D.     │ Vidange    │ 🔵 Cours│ 1h30 / (en cours)  │
+│ 26/11  │ VH-012   │ Ousmane F.  │ Pneus      │ ✅ Term │ 2h / 125,000 CFA   │
+│ 25/11  │ VH-001   │ Sidy D.     │ Freins     │ ✅ Term │ 4h / 280,000 CFA   │
+└────────┴──────────┴─────────────┴────────────┴─────────┴────────────────────┘
+
+#### Gestion du Stock - Pièces Détachées
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STOCK PIÈCES DÉTACHÉES                           [🔍 Rechercher] [+ AJOUTER]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ⚠️ 3 pièces en rupture de stock                                             │
+├─────────────────┬──────────┬────────┬────────┬──────────┬──────────────────┤
+│ Pièce           │ Quantité │ Seuil  │ Prix U.│ Fournis. │ Actions          │
+├─────────────────┼──────────┼────────┼────────┼──────────┼──────────────────┤
+│ Plaquettes frein│ 2        │ 5      │ 25,000 │ AutoParts│ 🔴 [➕ Stock]    │
+│ Huile moteur 5L │ 15       │ 10     │ 12,500 │ TotalGab │ ✅ [➕] [📊]     │
+│ Filtre air      │ 8        │ 8      │ 8,000  │ AutoParts│ 🟠 [➕] [📊]     │
+│ Pneus 265/70R16 │ 0        │ 4      │ 85,000 │ Michelin │ 🔴 [➕]          │
+└─────────────────┴──────────┴────────┴────────┴──────────┴──────────────────┘
+
+**Ajouter stock (entrée) :**
+┌─────────────────────────────────────────────────────────────┐
+│ ENTRÉE STOCK - Plaquettes frein                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Pièce : Plaquettes frein avant (SKU: PF-001)                │
+│                                                             │
+│ Quantité ajoutée : *                                        │
+│ [10]                                                        │
+│                                                             │
+│ Prix unitaire :                                             │
+│ [25,000] CFA                                                │
+│                                                             │
+│ Fournisseur :                                               │
+│ [AutoParts Gabon] ▼                                         │
+│                                                             │
+│ Date achat :                                                │
+│ [27/11/2025]                                                │
+│                                                             │
+│ Facture / Bon commande :                                    │
+│ [📎 Joindre fichier]                                        │
+│                                                             │
+│ Notes :                                                     │
+│ [Commande urgente suite alerte...]                          │
+│                                                             │
+│ [✅ VALIDER] [ANNULER]                                      │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+**Historique mouvements pièce :**
+┌─────────────────────────────────────────────────────────────┐
+│ HISTORIQUE - Plaquettes frein avant                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Stock actuel : 12 unités                                    │
+│ Valeur stock : 300,000 CFA                                  │
+│                                                             │
+├────────┬─────────┬─────────┬─────────┬──────────────────────┤
+│ Date   │ Type    │ Qté     │ Coût U. │ Référence            │
+├────────┼─────────┼─────────┼─────────┼──────────────────────┤
+│ 27/11  │ ➕ Entrée│ +10     │ 25,000  │ Achat AutoParts      │
+│ 25/11  │ ➖ Sortie│ -2      │ 25,000  │ Interv. #INT-1234    │
+│ 20/11  │ ➖ Sortie│ -4      │ 24,000  │ Interv. #INT-1201    │
+│ 15/11  │ ➕ Entrée│ +8      │ 24,000  │ Achat AutoParts      │
+└────────┴─────────┴─────────┴─────────┴──────────────────────┘
+
+#### Gestion du Stock - Outils
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ OUTILS ATELIER                                   [🔍 Rechercher] [+ AJOUTER]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ⚠️ 1 outil défectueux                                                       │
+├─────────────────────┬──────────────┬────────────┬─────────┬────────────────┤
+│ Outil               │ Catégorie    │ État       │ Local.  │ Actions        │
+├─────────────────────┼──────────────┼────────────┼─────────┼────────────────┤
+│ Cric hydraulique 3T │ Général      │ ✅ OK      │ Zone A  │ [✏️] [📋]      │
+│ Clé dynamométrique  │ Moteur       │ 🔴 HS      │ Zone B  │ [🔧 Réparer]   │
+│ Multimètre digital  │ Électrique   │ ✅ OK      │ Zone C  │ [✏️]           │
+│ Compresseur air     │ Général      │ ✅ OK      │ Zone A  │ [✏️]           │
+└─────────────────────┴──────────────┴────────────┴─────────┴────────────────┘
+
+#### Inspections
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INSPECTIONS TECHNIQUES                           [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ⚠️ 2 véhicules inspection < 30 jours                                        │
+├────────┬──────────┬─────────────┬─────────────┬─────────┬──────────────────┤
+│ Date   │ Véhicule │ Inspecteur  │ Résultat    │ Actions │ État             │
+├────────┼──────────┼─────────────┼─────────────┼─────────┼──────────────────┤
+│ 25/11  │ VH-012   │ Moussa K.   │ ✅ Conforme │ 0       │ ✅ Clôturée      │
+│ 20/11  │ VH-003   │ Moussa K.   │ ⚠️ Réparer  │ 2/3 OK  │ 🟠 En cours      │
+│ 15/11  │ VH-008   │ Moussa K.   │ 🔴 Danger   │ 0/5 OK  │ 🔴 Urgent        │
+└────────┴──────────┴─────────────┴─────────────┴─────────┴──────────────────┘
+
+#### Accidents
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ACCIDENTS                                        [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+├────────┬──────────┬─────────────┬────────────┬──────────┬──────────────────┤
+│ Date   │ Véhicule │ Chauffeur   │ Lieu       │ Resp.    │ État / Coût      │
+├────────┼──────────┼─────────────┼────────────┼──────────┼──────────────────┤
+│ 24/11  │ VH-015   │ Fatou D.    │ Rond-pt PK8│ Non resp.│ 🟠 Expertise     │
+│        │          │             │            │          │    Est: 450K CFA │
+│ 10/11  │ VH-003   │ Ali B.      │ Ave Bouët  │ Partagée │ ✅ Clôturé       │
+│        │          │             │            │          │    780K CFA      │
+└────────┴──────────┴─────────────┴────────────┴──────────┴──────────────────┘
+
+#### Analytics & KPI
+┌─────────────────────────────────────────────────────────────┐
+│ ANALYTICS & KPI                    [Période: Novembre 2025] │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 📊 VUE GLOBALE PARC                                         │
+│ ├─ Nombre véhicules : 25                                    │
+│ ├─ Disponibles : 48% (12)                                   │
+│ ├─ En mission : 32% (8)                                     │
+│ ├─ En maintenance : 12% (3)                                 │
+│ └─ Immobilisés : 8% (2)                                     │
+│                                                             │
+│ 🚗 MISSIONS (Ce mois)                                       │
+│ ├─ Total missions : 142                                     │
+│ ├─ Km parcourus : 18,450 km                                 │
+│ ├─ Durée moyenne : 2h 35min                                 │
+│ ├─ Distance moyenne : 130 km                                │
+│ └─ Coût carburant : 1,200,000 CFA                           │
+│                                                             │
+│ 🔧 INTERVENTIONS (Ce mois)                                  │
+│ ├─ Total interventions : 28                                 │
+│ ├─ Durée moyenne : 3.5 heures                               │
+│ ├─ Coût moyen : 89,000 CFA                                  │
+│ ├─ Coût main d'œuvre : 750,000 CFA                          │
+│ ├─ Coût pièces : 1,250,000 CFA                              │
+│ └─ Types fréquents : Vidange (10), Freins (5), Pneus (4)   │
+│                                                             │
+│ 💰 COÛTS TOTAUX                                             │
+│ ├─ Ce mois : 2,450,000 CFA                                  │
+│ ├─ Cette année : 24,800,000 CFA                             │
+│ └─ Budget alloué : 30,000,000 CFA (82% utilisé)             │
+│                                                             │
+│ 🏆 TOP 5 VÉHICULES COÛTEUX (année)                          │
+│ ├─ VH-004 : 2,100,000 CFA                                   │
+│ ├─ VH-008 : 1,850,000 CFA                                   │
+│ ├─ VH-012 : 1,620,000 CFA                                   │
+│ ├─ VH-003 : 1,480,000 CFA                                   │
+│ └─ VH-015 : 1,390,000 CFA                                   │
+│                                                             │
+│ 📦 TOP 5 PIÈCES UTILISÉES (année)                           │
+│ ├─ Huile moteur : 85 unités                                 │
+│ ├─ Plaquettes frein : 42 unités                             │
+│ ├─ Filtres air : 38 unités                                  │
+│ ├─ Pneus : 24 unités                                        │
+│ └─ Batteries : 12 unités                                    │
+│                                                             │
+│ [📊 GRAPHIQUES] [📄 EXPORTER PDF] [📊 EXPORTER EXCEL]       │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+**Fonctionnalités Gestionnaire du Parc :**
+- ✅ CRUD véhicules
+- ✅ Valider demandes intervention
+- ✅ Assigner mécaniciens
+- ✅ Gérer stock pièces + outils
+- ✅ Enregistrer kilométrage
+- ✅ Consulter tous rapports et KPI
+- ✅ Voir historique complet véhicule
+- ✅ Recevoir toutes alertes critiques
+- ✅ Export PDF/Excel
+
+**Menu navigation :**
+SIDEBAR
+├─ 🏠 Dashboard Parc
+├─ 🚗 Véhicules
+│  ├─ Liste véhicules
+│  ├─ Ajouter véhicule
+│  └─ Véhicules immobilisés
+├─ 🎯 Missions(pour le chef TF)
+│  ├─ Créer mission
+│  ├─ Missions en cours
+│  ├─ Missions planifiées
+│  └─ Historique missions
+├─ 📊 Kilométrage
+├─ ⚠️ Anomalies
+├─ 🔧 Interventions
+│  ├─ Demandes en attente
+│  ├─ En cours
+│  ├─ Terminées
+│  └─ Planifier maintenance
+├─ 📦 Stock
+│  ├─ Pièces détachées
+│  ├─ Mouvements stock
+│  └─ Outils
+├─ 🔍 Inspections
+├─ 💥 Accidents
+├─ 📄 Documents
+├─ 📊 Analytics & KPI
+└─ ⚠️ Alertes
+---
+
+### 3.3 MÉCANICIEN / TECHNICIEN
+
+**Accès :** Interventions assignées, pièces (lecture + prélèvement), outils (lecture + signalement)
+
+**Interfaces principales :**
+
+#### Dashboard Mécanicien
+┌─────────────────────────────────────────────────────────────┐
+│ DASHBOARD MÉCANICIEN - Sidy Diop                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 🔧 MES INTERVENTIONS                                        │
+│ ├─ À faire : 2                                              │
+│ ├─ En cours : 1                                             │
+│ └─ Terminées cette semaine : 5                              │
+│                                                             │
+│ 📦 STOCK DISPONIBLE                                         │
+│ ├─ Pièces : 156 références                                  │
+│ └─ ⚠️ 3 pièces en rupture                                   │
+│                                                             │
+│ 🔨 OUTILS                                                   │
+│ ├─ Total : 24                                               │
+│ └─ ⚠️ 1 outil HS (Clé dynamométrique)                       │
+│                                                             │
+│ 📊MES STATS (Ce mois)                                      │
+│ ├─ Interventions complétées : 18                            │
+│ ├─ Temps total travaillé : 64 heures                        │
+│ ├─ Pièces prélevées : 42                                    │
+│ └─ Coûts générés : 1,580,000 CFA                            │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Mes Interventions
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ MES INTERVENTIONS                                [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Onglets : [À faire] [En cours] [Terminées]                                  │
+├────────┬──────────┬─────────────┬──────────┬─────────┬────────────────────┤
+│ Assigné│ Véhicule │ Type        │ Priorité │ État    │ Actions            │
+├────────┼──────────┼─────────────┼──────────┼─────────┼────────────────────┤
+│ 27/11  │ VH-008   │ Freins      │ 🔴 Haute │ 📋 À faire│ [▶️ DÉMARRER]    │
+│ 26/11  │ VH-012   │ Vidange     │ 🟢 Norm  │ 📋 À faire│ [▶️ DÉMARRER]    │
+│ 27/11  │ VH-003   │ Révision    │ 🟢 Norm  │ 🔵 Cours │ [📝 CONTINUER]    │
+└────────┴──────────┴─────────────┴──────────┴─────────┴────────────────────┘
+
+#### Fiche Intervention (En cours)
+┌─────────────────────────────────────────────────────────────┐
+│ INTERVENTION #INT-2025-0345                                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 🚗 VÉHICULE                                                 │
+│ ├─ VH-003 (Peugeot 508)                                     │
+│ ├─ KM actuel : 38,450 km                                    │
+│ └─ [PHOTO VÉHICULE]                                         │
+│                                                             │
+│ 📋 DÉTAILS                                                  │
+│ ├─ Type : Révision complète                                 │
+│ ├─ Priorité : 🟢 Normale                                    │
+│ ├─ Source : Maintenance planifiée                           │
+│ └─ Assigné le : 26/11/2025                                  │
+│                                                             │
+│ ⏱️ TEMPS                                                    │
+│ ├─ Démarré : 27/11/2025 09:15                               │
+│ ├─ Durée actuelle : 1h 45min                                │
+│ └─ [⏸️ PAUSE] [⏹️ TERMINER]                                 │
+│                                                             │
+│ 🔍 DIAGNOSTIC                                               │
+│ [Révision 40,000 km : vidange moteur, filtres,             │
+│  contrôle freins, pression pneus, niveaux...]               │
+│                                                             │
+│ 📦 PIÈCES UTILISÉES                                         │
+│ ├─ Huile moteur 5L x1 : 12,500 CFA                          │
+│ ├─ Filtre à huile x1 : 6,000 CFA                            │
+│ ├─ Filtre à air x1 : 8,000 CFA                              │
+│ └─ [➕ PRÉLEVER PIÈCE]                                      │
+│ Total pièces : 26,500 CFA                                   │
+│                                                             │
+│ 💰 COÛTS                                                    │
+│ ├─ Main d'œuvre (1.75h × 15,000) : 26,250 CFA               │
+│ ├─ Pièces : 26,500 CFA                                      │
+│ └─ TOTAL : 52,750 CFA                                       │
+│                                                             │
+│ 📸 PHOTOS                                                   │
+│ [AVANT] [📷 Ajouter photo]                                  │
+│ [APRÈS] [📷 Ajouter photo]                                  │
+│                                                             │
+│ 📝 NOTES TECHNIQUES                                         │
+│ [Plaquettes freins avant à 40%, prévoir changement         │
+│  dans 5000 km...]                                           │
+│                                                             │
+│ ✅ STATUT FINAL                                             │
+│ ⚪ Complète                                                 │
+│ ⚪ Partiellement complète                                   │
+│ ⚪ Non réalisable (problème détecté)                        │
+│                                                             │
+│ [✅ TERMINER INTERVENTION]                                  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Prélèvement Pièces
+┌─────────────────────────────────────────────────────────────┐
+│ PRÉLEVER PIÈCE                                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Intervention : #INT-2025-0345 (VH-003 Révision)             │
+│                                                             │
+│ Rechercher pièce :                                          │
+│ [🔍 huile moteur...]                                        │
+│                                                             │
+│ Résultats :                                                 │
+│ ┌───────────────────────────────────────────────────────┐   │
+│ │ Huile moteur 5W30 - 5L                                │   │
+│ │ Stock : 15 unités | Prix : 12,500 CFA                 │   │
+│ │ [SÉLECTIONNER]                                        │   │
+│ ├───────────────────────────────────────────────────────┤   │
+│ │ Huile moteur 10W40 - 5L                               │   │
+│ │ Stock : 8 unités | Prix : 13,000 CFA                  │   │
+│ │ [SÉLECTIONNER]                                        │   │
+│ └───────────────────────────────────────────────────────┘   │
+│                                                             │
+│ Pièce sélectionnée : Huile moteur 5W30 - 5L                 │
+│                                                             │
+│ Quantité à prélever : *                                     │
+│ [1]                                                         │
+│                                                             │
+│ [✅ CONFIRMER PRÉLÈVEMENT] [ANNULER]                        │
+│                                                             │
+│ → Traçabilité automatique attachée à l'intervention         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Outils
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ OUTILS ATELIER                                   [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+├─────────────────────┬──────────────┬────────────┬─────────┬────────────────┤
+│ Outil               │ Catégorie    │ État       │ Local.  │ Actions        │
+├─────────────────────┼──────────────┼────────────┼─────────┼────────────────┤
+│ Cric hydraulique 3T │ Général      │ ✅ OK      │ Zone A  │ [👁️]          │
+│ Clé dynamométrique  │ Moteur       │ 🔴 HS      │ Zone B  │ [⚠️ SIGNALER]  │
+│ Multimètre digital  │ Électrique   │ ✅ OK      │ Zone C  │ [👁️]          │
+└─────────────────────┴──────────────┴────────────┴─────────┴────────────────┘
+
+**Signaler outil défectueux :**
+┌─────────────────────────────────────────────────────────────┐
+│ SIGNALER OUTIL DÉFECTUEUX                                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Outil : Clé dynamométrique                                  │
+│                                                             │
+│ Problème constaté : *                                       │
+│ [Graduation illisible, calibrage défectueux...]             │
+│                                                             │
+│ Photos :                                                    │
+│ [📷 Ajouter photo]                                          │
+│                                                             │
+│ [🔴 SIGNALER COMME HS] [ANNULER]                            │
+│                                                             │
+│ → Notification automatique au gestionnaire du parc          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Mon Historique
+┌─────────────────────────────────────────────────────────────┐
+│ MON HISTORIQUE - Sidy Diop                                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 📊 STATISTIQUES (Novembre 2025)                             │
+│ ├─ Interventions complétées : 18                            │
+│ ├─ Temps total : 64 heures                                  │
+│ ├─ Temps moyen par intervention : 3h 33min                  │
+│ ├─ Pièces prélevées : 42                                    │
+│ └─ Coûts générés : 1,580,000 CFA                            │
+│                                                             │
+│ 🔧 INTERVENTIONS RÉCENTES                                   │
+├────────┬──────────┬─────────────┬──────────┬───────────────┤
+│ Date   │ Véhicule │ Type        │ Durée    │ Coût          │
+├────────┼──────────┼─────────────┼──────────┼───────────────┤
+│ 26/11  │ VH-012   │ Pneus       │ 2h       │ 125,000 CFA   │
+│ 25/11  │ VH-001   │ Freins      │ 4h       │ 280,000 CFA   │
+│ 24/11  │ VH-015   │ Vidange     │ 1.5h     │ 45,000 CFA    │
+└────────┴──────────┴─────────────┴──────────┴───────────────┘
+
+**Fonctionnalités Mécanicien :**
+- ✅ Voir interventions assignées
+- ✅ Démarrer / terminer intervention
+- ✅ Horodatage automatique
+- ✅ Ajouter diagnostic
+- ✅ Prélever pièces (traçabilité auto)
+- ✅ Ajouter photos avant/après
+- ✅ Signaler outils défectueux
+- ✅ Consulter stock pièces
+- ✅ Voir historique personnel
+
+**Menu navigation :**
+SIDEBAR
+├─ 🏠 Dashboard
+├─ 🔧 Mes Interventions
+│  ├─ À faire
+│  ├─ En cours
+│  └─ Terminées
+├─ 📦 Pièces Disponibles
+├─ 🔨 Outils
+└─ 📊 Mon Historique
+
+---
+
+### 3.4 CHAUFFEUR
+
+**Accès :** Missions assignées, anomalies, kilométrage, documents personnels
+
+**Interfaces principales :**
+
+#### Dashboard Chauffeur
+┌─────────────────────────────────────────────────────────────┐
+│ DASHBOARD CHAUFFEUR - Ali Balde                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 🚗 MON VÉHICULE ACTUEL                                      │
+│ ├─ VH-002 (Nissan Patrol)                                   │
+│ ├─ État : 🔵 En mission                                     │
+│ ├─ KM : 62,100 km                                           │
+│ └─ Dernière intervention : Vidange (22/11/2025)             │
+│                                                             │
+│ 🎯 MA MISSION EN COURS                                      │
+│ ├─ Type : Transport de fonds                                │
+│ ├─ Destination : Banque Centrale                            │
+│ ├─ Départ : 07:50 (depuis 2h 40min)                         │
+│ └─ [📋 VOIR DÉTAILS] [✅ TERMINER MISSION]                  │
+│                                                             │
+│ ⚠️ ALERTES ME CONCERNANT (2)                                │
+│ ├─ 🟡 Permis expire dans 20 jours                           │
+│ └─ 🟠 VH-002 : Vidange proche (1200 km)                     │
+│                                                             │
+│ 📊 MES STATS (Ce mois)                                      │
+│ ├─ Missions effectuées : 24                                 │
+│ ├─ Km parcourus : 3,250 km                                  │
+│ ├─ Anomalies déclarées : 2                                  │
+│ └─ Accidents : 0                                            │
+│                                                             │
+│ [ACTIONS RAPIDES]                                           │
+│ [⚠️ Signaler anomalie] [📝 Enregistrer KM]                  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Mes Missions
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ MES MISSIONS                                     [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Onglets : [En cours] [Planifiées] [Terminées]                               │
+├────────┬──────────┬─────────────────┬────────────┬────────────────────────┤
+│ Date   │ Véhicule │ Destination     │ État       │ Actions                │
+├────────┼──────────┼─────────────────┼────────────┼────────────────────────┤
+│ 27/11  │ VH-002   │ Banque Centrale │ 🔵 En cours│ [✅ TERMINER]          │
+│ 26/11  │ VH-002   │ Port Owendo     │ ✅ Terminée│ [👁️ Voir]             │
+│ 25/11  │ VH-005   │ Ministère       │ ✅ Terminée│ [👁️]                  │
+└────────┴──────────┴─────────────────┴────────────┴────────────────────────┘
+
+#### Rendre Compte de Mission
+┌─────────────────────────────────────────────────────────────┐
+│ TERMINER MISSION #MISS-2025-1142                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 📋 INFORMATIONS                                             │
+│ ├─ Mission : Transport de fonds                             │
+│ ├─ Destination : Banque Centrale                            │
+│ ├─ Véhicule : VH-002 (Nissan Patrol)                        │
+│ └─ Départ : 27/11/2025 07:50                                │
+│                                                             │
+│ 🏁 ARRIVÉE                                                  │
+│ Date/Heure retour : *                                       │
+│ [27/11/2025] [10:30]                                        │
+│                                                             │
+│ 📊 KILOMÉTRAGE                                              │
+│ ├─ KM départ : 62,100 km                                    │
+│ └─ KM retour : * [62,175]                                   │
+│                                                             │
+│ → KM parcourus : 75 km (calculé auto)                       │
+│ → Durée : 2h 40min (calculé auto)                           │
+│ → Carburant estimé : 9.9 L (calculé auto)                   │
+│                                                             │
+│ 📝 Y a-t-il eu un incident durant la mission ?              │
+│ ⚪ Non                                                      │
+│ ⚪ Oui (décrire ci-dessous)                                 │
+│                                                             │
+│ Observations / Notes :                                      │
+│ [Mission effectuée sans problème. Trafic fluide.]           │
+│                                                             │
+│ Photos (si incident) :                                      │
+│ [📷 Ajouter photo]                                          │
+│                                                             │
+│ [✅ VALIDER & TERMINER] [ANNULER]                           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Déclarer Anomalie
+┌─────────────────────────────────────────────────────────────┐
+│ DÉCLARER ANOMALIE                                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Véhicule concerné : *                                       │
+│ [VH-002 - Nissan Patrol] ▼                                  │
+│                                                             │
+│ Description détaillée : *                                   │
+│ [Bruit anormal au niveau du moteur, surtout à              │
+│  l'accélération. Son métallique...]                         │
+│                                                             │
+│ Sévérité : *                                                │
+│ ⚪ Faible (peut attendre)                                   │
+│ ⚪ Moyenne (à traiter rapidement)                           │
+│ ⚪ Haute (urgent)                                           │
+│ ⚪ Critique (danger immédiat)                               │
+│                                                             │
+│ Localisation problème :                                     │
+│ ⚪ Moteur                                                   │
+│ ⚪ Freins                                                   │
+│ ⚪ Direction                                                │
+│ ⚪ Pneus                                                    │
+│ ⚪ Électricité                                              │
+│ ⚪ Carrosserie                                              │
+│ ⚪ Autre                                                    │
+│                                                             │
+│ Kilométrage actuel :                                        │
+│ [62,175]                                                    │
+│                                                             │
+│ Photos / Vidéos : *                                         │
+│ [📷 Ajouter photo] [🎥 Ajouter vidéo]                       │
+│                                                             │
+│ [⚠️ DÉCLARER ANOMALIE] [ANNULER]                            │
+│                                                             │
+│ → Notification automatique au gestionnaire + mécanicien     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Déclarer Accident
+┌─────────────────────────────────────────────────────────────┐
+│ DÉCLARER ACCIDENT                                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Véhicule concerné : *                                       │
+│ [VH-002 - Nissan Patrol] ▼                                  │
+│                                                             │
+│ Date et heure : *                                           │
+│ [27/11/2025] [10:15]                                        │
+│                                                             │
+│ Lieu de l'accident : *                                      │
+│ [Rond-point PK8, Avenue Bouët]                              │
+│ [📍 Position GPS : 0.4162, 9.4673]                          │
+│                                                             │
+│ Description détaillée : *                                   │
+│ [Collision latérale avec un taxi. J'étais sur la voie      │
+│  prioritaire, le taxi a grillé le feu...]                   │
+│                                                             │
+│ Type de responsabilité :                                    │
+│ ⚪ Je suis responsable                                      │
+│ ⚪ L'autre partie est responsable                           │
+│ ⚪ Responsabilité partagée                                  │
+│ ⚪ Incertain                                                │
+│                                                             │
+│ Dégâts véhicule :                                           │
+│ ⚪ Légers (rayures, éraflures)                              │
+│ ⚪ Moyens (bosses, feux cassés)                             │
+│ ⚪ Importants (déformation carrosserie)                     │
+│ ⚪ Très graves (véhicule immobilisé)                        │
+│                                                             │
+│ Blessés :                                                   │
+│ ⚪ Aucun                                                    │
+│ ⚪ Oui (préciser ci-dessous)                                │
+│                                                             │
+│ Police appelée :                                            │
+│ ⚪ Oui [📎 Joindre rapport]                                 │
+│ ⚪ Non                                                      │
+│                                                             │
+│ Témoins présents :                                          │
+│ [Nom : Jean Dupont, Tél : 07 XX XX XX XX]                   │
+│ [+ AJOUTER TÉMOIN]                                          │
+│                                                             │
+│ Photos du sinistre : * (obligatoire)                        │
+│ [📷] [📷] [📷] [+ Ajouter photos]                           │
+│                                                             │
+│ [🚨 DÉCLARER ACCIDENT] [ANNULER]                            │
+│                                                             │
+│ → Notification urgente au gestionnaire du parc+ au chef TF  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Enregistrer Kilométrage
+┌─────────────────────────────────────────────────────────────┐
+│ ENREGISTRER KILOMÉTRAGE                                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Véhicule : *                                                │
+│ [VH-002 - Nissan Patrol] ▼                                  │
+│                                                             │
+│ Kilométrage actuel : *                                      │
+│ [62,175]                                                    │
+│                                                             │
+│ KM précédent : 62,100 km (27/11/2025)                        │
+│ → Différence : 75 km                                        │
+│                                                             │
+│ Date relevé :                                               │
+│ [27/11/2025] (aujourd'hui)                                  │
+│                                                             │
+│ Notes (optionnel) :                                         │
+│ [Relevé après mission Banque Centrale]                      │
+│                                                             │
+│ [✅ ENREGISTRER] [ANNULER]                                  │
+│                                                             │
+│ → Système vérifiera les alertes (vidange, révision...)      │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Mes Documents
+┌─────────────────────────────────────────────────────────────┐
+│ MES DOCUMENTS                                                │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 📄 PERMIS DE CONDUIRE                                       │
+│ ├─ Numéro : PG-2020-012345                                  │
+│ ├─ Catégories : B, C, D                                     │
+│ ├─ Date délivrance : 15/03/2020                             │
+│ ├─ Date expiration : 15/12/2025                             │
+│ ├─ ⚠️ EXPIRE DANS 20 JOURS                                  │
+│ ├─ [📄 Voir document]                                       │
+│ └─ [📤 Mettre à jour]                                       │
+│                                                             │
+│ 🏥 CERTIFICAT MÉDICAL                                       │
+│ ├─ Date : 10/01/2025                                        │
+│ ├─ Validité : 1 an                                          │
+│ ├─ Expiration : 10/01/2026                                  │
+│ ├─ Statut : ✅ Valide                                       │
+│ └─ [📄 Voir document]                                       │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Historique
+┌─────────────────────────────────────────────────────────────┐
+│ MON HISTORIQUE - Ali Balde                                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Onglets : [Missions] [Anomalies] [Accidents]                │
+│                                                             │
+│ 🎯 MISSIONS (Ce mois : 24 missions, 3,250 km)               │
+├────────┬──────────┬─────────────────┬────────┬─────────────┤
+│ Date   │ Véhicule │ Destination     │ KM     │ Durée       │
+├────────┼──────────┼─────────────────┼────────┼─────────────┤
+│ 27/11  │ VH-002   │ Banque Centrale │ 75     │ 2h 40min    │
+│ 26/11  │ VH-002   │ Port Owendo     │ 180    │ 4h 15min    │
+│ 25/11  │ VH-005   │ Ministère       │ 45     │ 1h 30min    │
+└────────┴──────────┴─────────────────┴────────┴─────────────┘
+
+**Fonctionnalités Chauffeur :**
+- ✅ Voir missions assignées
+- ✅ Terminer mission / rendre compte
+- ✅ Déclarer anomalie (photo obligatoire)
+- ✅ Déclarer accident (photos + détails)
+- ✅ Enregistrer kilométrage
+- ✅ Consulter mes documents (permis, certificat)
+- ✅ Voir alertes me concernant
+- ✅ Historique personnel (missions, anomalies, accidents)
+- ✅ Recevoir notifications
+
+**Menu navigation :**
+SIDEBAR
+├─ 🏠 Dashboard
+├─ 🎯 Mes Missions
+│  ├─ En cours
+│  ├─ Planifiées
+│  └─ Historique
+├─ ⚠️ Signaler Anomalie
+├─ 💥 Déclarer Accident
+├─ 📝 Enregistrer KM
+├─ 📄 Mes Documents
+└─ 📊 Mon Historique
+
+---
+
+### 3.5 INSPECTEUR TECHNIQUE
+
+**Accès :** Inspections, rapports, véhicules (lecture seule)
+
+**Interfaces principales :**
+
+#### Dashboard Inspecteur
+┌─────────────────────────────────────────────────────────────┐
+│ DASHBOARD INSPECTEUR -                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 🔍 INSPECTIONS                                              │
+│ ├─ Planifiées cette semaine : 3                             │
+│ ├─ En attente de rapport : 1                                │
+│ └─ Complétées ce mois : 12                                  │
+│                                                             │
+│ ⚠️ ALERTES                                                  │
+│ ├─ 2 véhicules inspection < 30 jours                        │
+│ └─ 1 véhicule "Danger immédiat" (VH-008)                    │
+│                                                             │
+│ 📊 MES STATS (Ce mois)                                      │
+│ ├─ Inspections effectuées : 12                              │
+│ ├─ Conformes : 8 (67%)                                      │
+│ ├─ À réparer : 3 (25%)                                      │
+│ └─ Danger immédiat : 1 (8%)                                 │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Planifier Inspection
+┌─────────────────────────────────────────────────────────────┐
+│ PLANIFIER INSPECTION                                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Véhicule : *                                                │
+│ [Sélectionner véhicule] ▼                                   │
+│ → VH-001, VH-003, VH-005...                                 │
+│                                                             │
+│ Date prévue : *                                             │
+│ [28/11/2025]                                                │
+│                                                             │
+│ Type inspection :                                           │
+│ ⚪ Visite technique réglementaire                           │
+│ ⚪ Contrôle périodique interne                              │                            │
+│ ⚪ Inspection post-intervention                             │
+│ ⚪ Inspection post-accident     
+│ Notes :                                                     │
+│ [Contrôle annuel obligatoire...]                            │
+│                                                             │
+│ [✅ PLANIFIER] [ANNULER]                                    │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Inspections à faire
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INSPECTIONS À FAIRE                              [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+├────────┬──────────┬─────────────────┬──────────────┬────────────────────────┤
+│ Date   │ Véhicule │ Type            │ État         │ Actions                │
+├────────┼──────────┼─────────────────┼──────────────┼────────────────────────┤
+│ 28/11  │ VH-012   │ Visite tech.    │ 📋 Planifiée │ [▶️ DÉMARRER]          │
+│ 29/11  │ VH-005   │ Contrôle interne│ 📋 Planifiée │ [▶️ DÉMARRER]          │
+│ 30/11  │ VH-008   │ Post-accident   │ 📋 Planifiée │ [▶️ DÉMARRER]          │
+└────────┴──────────┴─────────────────┴──────────────┴────────────────────────┘
+
+#### Effectuer Inspection
+┌─────────────────────────────────────────────────────────────┐
+│ INSPECTION #INSP-2025-0089 - VH-012                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 🚗 VÉHICULE                                                 │
+│ ├─ VH-012 (Peugeot 3008)                                    │
+│ ├─ KM : 45,600 km                                           │
+│ ├─ [PHOTO VÉHICULE]                                        │
+│ └─ Historique interventions : [VOIR]                        │
+│                                                             │
+│ ✅ CHECKLIST INSPECTION                                     │
+│                                                             │
+│ 🔧 MOTEUR & MÉCANIQUE                                       │
+│ ├─ Niveau huile moteur                                     │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │  Photos : [📷 Ajouter]                                   │
+│ │  Notes : [...]                                           │
+│ │                                                           │
+│ ├─ Courroies & durites                                      │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Système refroidissement                                  │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 🛑 FREINAGE                                                 │
+│ ├─ Plaquettes avant                                         │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │  Épaisseur : [6mm] (min: 3mm)                            │
+│ │                                                           │
+│ ├─ Plaquettes arrière                                       │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Disques                                                  │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Liquide frein                                            │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 🚗 PNEUS & SUSPENSION                                       │
+│ ├─ Pneu avant gauche                                        │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │  Usure : [5mm] | Pression : [2.2 bar]                    │
+│ │                                                           │
+│ ├─ Pneu avant droit                                         │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Pneu arrière gauche                                      │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Pneu arrière droit                                       │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Amortisseurs                                             │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 🎯 DIRECTION                                                │
+│ ├─ Rotules                                                  │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Crémaillère                                              │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 💡 ÉCLAIRAGE & SIGNALISATION                                │
+│ ├─ Feux avant                                               │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Feux arrière                                             │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Clignotants                                              │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Feux de détresse                                         │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 🪟 CARROSSERIE & VITRES                                     │
+│ ├─ État général carrosserie                                 │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Pare-brise                                               │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Rétroviseurs                                             │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 🛡️ SÉCURITÉ                                                 │
+│ ├─ Ceintures sécurité                                       │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ ├─ Klaxon                                                   │
+│ │  ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                  │
+│ │                                                           │
+│ └─ Gilet + Triangle                                         │
+│    ⚪ OK  ⚪ À réparer  ⚪ Danger immédiat                   │
+│                                                             │
+│ 📋 ACTIONS REQUISES                                         │
+│ [+ AJOUTER ACTION]                                          │
+│ ├─ Remplacer plaquettes avant (priorité moyenne)            │
+│ └─ Ajuster pression pneus (priorité faible)                 │
+│                                                             │
+│ 📝 NOTES GÉNÉRALES                                          │
+│ [Véhicule en bon état général, entretien régulier...]       │
+│                                                             │
+│ 📊 STATUT GLOBAL INSPECTION                                 │
+│ ⚪ ✅ Conforme                                              │
+│ ⚪ ⚠️ Non conforme (À réparer)                              │
+│ ⚪ 🔴 Danger immédiat (Immobiliser)                         │
+│                                                             │
+│ [✅ TERMINER & GÉNÉRER RAPPORT] [💾 SAUVEGARDER BROUILLON]  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+#### Rapports Inspections
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INSPECTIONS COMPLÉTÉES                           [🔍 Rechercher]             │
+├─────────────────────────────────────────────────────────────────────────────┤
+├────────┬──────────┬─────────────┬─────────────┬─────────┬──────────────────┤
+│ Date   │ Véhicule │ Inspecteur  │ Résultat    │ Actions │ État             │
+├────────┼──────────┼─────────────┼─────────────┼─────────┼──────────────────┤
+│ 25/11  │ VH-012   │ Moussa K.   │ ✅ Conforme │ 0       │ [📄 PDF] [👁️]   │
+│ 20/11  │ VH-003   │ Moussa K.   │ ⚠️ Réparer  │ 2/3 OK  │ [📄 PDF] [👁️]   │
+│ 15/11  │ VH-008   │ Moussa K.   │ 🔴 Danger   │ 0/5 OK  │ [📄 PDF] [👁️]   │
+└────────┴──────────┴─────────────┴─────────────┴─────────┴──────────────────┘
+
+**Fonctionnalités Inspecteur :**
+- ✅ Planifier inspection
+- ✅ Effectuer checklist interactive
+- ✅ Ajouter photos par point
+- ✅ Définir actions requises
+- ✅ Générer rapport PDF
+- ✅ Notifier gestionnaire si danger
+- ✅ Suivi actions correctives
+- ✅ Historique inspections
+
+**Menu navigation :**
+SIDEBAR
+├─ 🏠 Dashboard
+├─ 📋 Planifier Inspection
+├─ 🔍 Inspections à faire
+├─ 📝 En cours
+├─ ✅ Complétées
+└─ 📊 Mes Statistiques
+
+---
+
+## 4. SYSTÈME DE NOTIFICATIONS
+
+### Types de notifications
+
+**1. Notifications Email + Pop-up (critiques)**
+**2. Notifications In-app uniquement (informatives)**
+
+### Notifications par Rôle
+
+#### GESTIONNAIRE DU PARC (notifications critiques)
+⚠️ ALERTES ACTIVES (15)
+🔴 URGENTES
+├─ Véhicule VH-004 immobilisé > 12 jours
+├─ Rupture stock : Plaquettes frein
+└─ Accident déclaré : VH-015 (24/11)
+🟠 IMPORTANTES
+├─ Vidange proche VH-005 (150 km restants)
+├─ Assurance VH-012 expire dans 25 jours
+├─ Visite technique VH-008 expire dans 15 jours
+├─ Permis chauffeur Ali expire dans 20 jours
+├─ Demande intervention > 48h sans validation (DI-234)
+└─ Outil défectueux : Clé dynamométrique
+🟡 À SURVEILLER
+├─ Stock faible : Filtre air (8 unités, seuil: 8)
+├─ Véhicule VH-003 KM non à jour depuis 8 jours
+└─ Maintenance planifiée VH-012 échéance dans 5 jours
+
+**Règles notification Gestionnaire :**
+- Véhicule immobilisé > X jours (défaut: 7j) → Email + Pop-up
+- Vidange due dans < 500 km → In-app
+- Assurance expire < 60 jours → Email + In-app
+- Visite technique expire < 30 jours → Email + In-app
+- Permis chauffeur expire < 30 jours → Email + In-app
+- Pièce en rupture stock → Email + Pop-up
+- Outil défectueux signalé → In-app
+- Demande intervention > 48h non traitée → Email
+- Accident déclaré → Email + Pop-up + SMS
+- Inspection "Danger immédiat" → Email + Pop-up
+
+#### MÉCANICIEN (notifications opérationnelles)
+🔧 NOUVELLES INTERVENTIONS (2)
+├─ INT-345 : VH-008 Freins (Priorité HAUTE)
+│  Assignée le 27/11 à 09:30
+│  Source : Anomalie #AN-567 (Chauffeur Ali)
+│  [VOIR DÉTAILS]
+│
+└─ INT-346 : VH-012 Vidange (Priorité NORMALE)
+Assignée le 27/11 à 10:15
+Source : Maintenance planifiée
+[VOIR DÉTAILS]
+⚠️ ALERTES
+└─ Pièce manquante : Plaquettes frein (rupture stock)
+
+**Règles notification Mécanicien :**
+- Nouvelle intervention assignée → In-app + Email si urgente
+- Intervention proche échéance → In-app (24h avant)
+- Pièce requise manquante en stock → In-app
+
+#### CHAUFFEUR (notifications personnelles)
+📋 NOTIFICATIONS (4)
+├─ 🟡 Votre permis expire dans 20 jours
+│  Action requise : Renouveler avant le 15/12/2025
+│  [VOIR MES DOCUMENTS]
+│
+├─ 📝 Kilométrage non enregistré depuis 7 jours
+│  Dernier relevé : 20/11/2025 (62,100 km)
+│  [ENREGISTRER MAINTENANT]
+│
+├─ 🟠 VH-002 : Vidange à prévoir dans 1,200 km
+│  Kilométrage actuel : 62,175 km
+│  Prochaine vidange : 63,500 km
+│
+└─ ⚠️ Anomalie AN-567 non résolue depuis 2 jours
+Description : Bruit moteur VH-002
+Statut : En cours (assignée mécanicien Sidy)
+[VOIR STATUT]
+
+**Règles notification Chauffeur :**
+- Permis expire < 30 jours → Email + In-app
+- Kilométrage non enregistré > 7j → In-app
+- Anomalie déclarée non résolue > 7j → In-app
+- Vidange proche (< 1000 km) → In-app
+- Mission assignée → In-app + SMS
+- Certificat médical expire < 30j → Email + In-app
+
+#### INSPECTEUR (notifications inspections)
+🔍 RAPPELS INSPECTION (2)
+├─ Inspection VH-012 prévue demain (28/11)
+│  Type : Visite technique réglementaire
+│  [VOIR DÉTAILS]
+│
+└─ VH-008 : Danger immédiat détecté (15/11)
+Actions requises : 5
+Actions réalisées : 0/5
+[VOIR RAPPORT] [RELANCER]
+
+**Règles notification Inspecteur :**
+- Inspection planifiée J-1 → Email + In-app
+- Danger immédiat détecté → Email + Pop-up (notification gestionnaire aussi)
+- Actions inspection non réalisées > 7j → In-app
+
+### Format Notifications
+
+#### Email
+Objet : [URGENT] Véhicule VH-004 immobilisé depuis 12 jours
+Bonjour [Nom Gestionnaire],
+Le véhicule VH-004 (Mercedes Sprinter) est immobilisé depuis le 15/11/2025.
+Détails :
+
+Durée immobilisation : 12 jours
+Raison : Intervention #INT-330 (Moteur)
+État intervention : En cours
+Mécanicien : Ousmane Fall
+
+Action recommandée : Vérifier l'avancement de l'intervention
+[VOIR VÉHICULE] [VOIR INTERVENTION]
+
+Système de Gestion du Parc Automobile
+
+#### Pop-up In-app
+┌──────────────────────────────────────────┐
+│ ⚠️ ALERTE CRITIQUE                       │
+├──────────────────────────────────────────┤
+│                                          │
+│ Accident déclaré                         │
+│                                          │
+│ Véhicule : VH-015 (Peugeot 508)          │
+│ Chauffeur : Fatou Diallo                 │
+│ Lieu : Rond-point PK8                    │
+│ Date : 24/11/2025 10:15                  │
+│                                          │
+│ Responsabilité : Non responsable         │
+│ Dégâts : Moyens                          │
+│                                          │
+│ [VOIR DÉTAILS] [FERMER]                  │
+│                                          │
+└──────────────────────────────────────────┘
+
+### Paramétrage Alertes (Super Admin)
+┌─────────────────────────────────────────────────────────────┐
+│ CONFIGURATION ALERTES                                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ⚙️ KILOMÉTRAGE                                              │
+│ ├─ Alerte vidange avant (km) : [1000]                       │
+│ ├─ Alerte révision avant (km) : [500]                       │
+│ └─ Alerte pneus avant (km) : [2000]                         │
+│                                                             │
+│ 📄 DOCUMENTS                                                │
+│ ├─ Alerte assurance avant (jours) : [60]                    │
+│ ├─ Alerte visite technique avant (jours) : [30]             │
+│ └─ Alerte permis chauffeur avant (jours) : [30]             │
+│                                                             │
+│ 🚗 IMMOBILISATION                                           │
+│ ├─ Seuil immobilisation (jours) : [7]                       │
+│ └─ Fréquence rappel (jours) : [3]                           │
+│                                                             │
+│ 📦 STOCK                                                    │
+│ ├─ Alerte stock par défaut : [Seuil pièce]                  │
+│ └─ Fréquence vérification : [Quotidienne]                   │
+│                                                             │
+│ 🔧 INTERVENTIONS                                            │
+│ ├─ Demande non traitée (heures) : [48]                      │
+│ └─ Maintenance en retard (jours) : [7]                      │
+│                                                             │
+│ [💾 SAUVEGARDER]                                            │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘

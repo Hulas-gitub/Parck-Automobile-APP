@@ -1,0 +1,6 @@
+yellow-400 #fbbf24 Dégradés background, liens mode sombre
+yellow-500 #eab308 Icônes du formulaire
+yellow-600 #ca8a04 Hover sur boutons et dégradés
+#d97706 Style inlineLiens mode clair
+
+php artisan make:model 

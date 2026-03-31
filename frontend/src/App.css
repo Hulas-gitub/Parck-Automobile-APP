@@ -1,0 +1,322 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* Animations pour le formulaire de login */
+@keyframes shake {
+  0%, 100% { 
+    transform: translateX(0); 
+  }
+  10%, 30%, 50%, 70%, 90% { 
+    transform: translateX(-5px); 
+  }
+  20%, 40%, 60%, 80% { 
+    transform: translateX(5px); 
+  }
+}
+
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.5s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Transitions pour le mode sombre */
+* {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+/* Mode sombre - Bleu sombre élégant */
+.dark {
+  color-scheme: dark;
+}
+
+.dark-mode-bg {
+  background: linear-gradient(to bottom right, #0f172a, #1e293b, #0f172a) !important;
+}
+
+.dark-mode-card {
+  background-color: #1e293b !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+}
+
+.dark-mode-form-bg {
+  background-color: #1e293b !important;
+}
+
+.dark-mode-text {
+  color: #f1f5f9 !important;
+}
+
+.dark-mode-text-secondary {
+  color: #cbd5e1 !important;
+}
+
+.dark-mode-input {
+  background-color: #0f172a !important;
+  border-color: #334155 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark-mode-input:focus {
+  background-color: #1e293b !important;
+  border-color: #fbbf24 !important;
+}
+
+.dark-mode-input::placeholder {
+  color: #64748b !important;
+}
+
+.dark-mode-icon {
+  color: #64748b !important;
+}
+
+.dark-mode-success {
+  background-color: #064e3b !important;
+  border-color: #10b981 !important;
+}
+
+.dark-mode-success-text {
+  color: #86efac !important;
+}
+
+.dark-mode-error {
+  background-color: #7f1d1d !important;
+  border-color: #ef4444 !important;
+}
+
+.dark-mode-error-text {
+  color: #fca5a5 !important;
+}
+
+.dark-mode-link {
+  color: #fbbf24 !important;
+}
+
+.dark-mode-link:hover {
+  color: #f59e0b !important;
+}
+
+.dark-mode-footer {
+  color: #64748b !important;
+}
+
+
+
+
+
+/* app.css */
+
+/* Variables du thème - seront remplacées dynamiquement par JavaScript */
+:root {
+  --theme-primary-color: #3B82F6;
+  --theme-secondary-color: #10B981;
+  --theme-accent-color: #F59E0B;
+  --theme-danger-color: #EF4444;
+  --theme-warning-color: #F59E0B;
+  --theme-success-color: #10B981;
+  --theme-info-color: #3B82F6;
+  --theme-sidebar-bg: #1F2937;
+  --theme-header-bg: #FFFFFF;
+  --theme-card-border: #E5E7EB;
+}
+
+/* Classes utilisant les variables du thème */
+.btn-primary {
+  background-color: var(--theme-primary-color);
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-secondary {
+  background-color: var(--theme-secondary-color);
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-danger {
+  background-color: var(--theme-danger-color);
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.sidebar {
+  background-color: var(--theme-sidebar-bg);
+  color: white;
+}
+
+.header {
+  background-color: var(--theme-header-bg);
+  border-bottom: 1px solid var(--theme-card-border);
+}
+
+.card {
+  background-color: white;
+  border: 1px solid var(--theme-card-border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.alert-success {
+  background-color: var(--theme-success-color);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+
+.alert-danger {
+  background-color: var(--theme-danger-color);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+
+.alert-warning {
+  background-color: var(--theme-warning-color);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+
+.alert-info {
+  background-color: var(--theme-info-color);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+
+/* Liens et textes colorés */
+.text-primary {
+  color: var(--theme-primary-color);
+}
+
+.text-secondary {
+  color: var(--theme-secondary-color);
+}
+
+.text-danger {
+  color: var(--theme-danger-color);
+}
+
+.text-success {
+  color: var(--theme-success-color);
+}
+
+/* Bordures colorées */
+.border-primary {
+  border-color: var(--theme-primary-color);
+}
+
+.border-card {
+  border-color: var(--theme-card-border);
+}
+
+/* Badges */
+.badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-primary {
+  background-color: var(--theme-primary-color);
+  color: white;
+}
+
+.badge-success {
+  background-color: var(--theme-success-color);
+  color: white;
+}
+
+.badge-danger {
+  background-color: var(--theme-danger-color);
+  color: white;
+}
+
+.badge-warning {
+  background-color: var(--theme-warning-color);
+  color: white;
+}
+
+/* Tes autres styles généraux... */
