@@ -8,7 +8,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
+  baseURL: import.meta.env.VITE_API_URL ,
   // Ne pas forcer Content-Type ici pour laisser axios gérer multipart/form-data automatiquement
 });
 
@@ -72,7 +72,6 @@ export const getVehicule = (immatriculation) =>
  * data peut contenir un champ "image" de type File pour upload
  */
 export const createVehicule = (data) => {
-  // Si image est un File, on utilise FormData
   if (data.image instanceof File) {
     const fd = toFormData(data);
     return api.post('/admin/vehicules', fd).then((r) => r.data);
@@ -123,6 +122,27 @@ export const createDocumentVehicule = (immatriculation, data) => {
   return api.post(`/admin/vehicules/${immatriculation}/documents`, fd).then((r) => r.data);
 };
 
+/**
+ * Modifier un document existant
+ * data peut contenir : type_document, nom_document, date_emission, date_expiration,
+ *                      compagnie_assurance, numero_contrat, type_couverture, montant_prime, notes
+ *                      et optionnellement fichier (File) pour remplacer le fichier
+ */
+export const updateDocumentVehicule = (immatriculation, documentId, data) => {
+  // Si un nouveau fichier est fourni, on utilise FormData + _method PUT
+  if (data.fichier instanceof File) {
+    const fd = new FormData();
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== null && value !== undefined) {
+        fd.append(key, value instanceof File ? value : String(value));
+      }
+    });
+    fd.append('_method', 'PUT');
+    return api.post(`/admin/vehicules/${immatriculation}/documents/${documentId}`, fd).then((r) => r.data);
+  }
+  return api.put(`/admin/vehicules/${immatriculation}/documents/${documentId}`, data).then((r) => r.data);
+};
+
 export const deleteDocumentVehicule = (immatriculation, documentId) =>
   api.delete(`/admin/vehicules/${immatriculation}/documents/${documentId}`).then((r) => r.data);
 
@@ -148,14 +168,34 @@ export const getMissionsVehicule = (immatriculation) =>
   api.get(`/admin/vehicules/${immatriculation}/missions`).then((r) => r.data);
 
 // ─────────────────────────────────────────────────────────────
-// CARBURANT D'UN VÉHICULE
+// CARBURANT D'UN VÉHICULE — CRUD COMPLET
 // ─────────────────────────────────────────────────────────────
 
+/** Liste tous les pleins d'un véhicule */
 export const getCarburantVehicule = (immatriculation) =>
   api.get(`/admin/vehicules/${immatriculation}/carburant`).then((r) => r.data);
 
+/** Détail d'un plein */
+export const getCarburantDetail = (immatriculation, id) =>
+  api.get(`/admin/vehicules/${immatriculation}/carburant/${id}`).then((r) => r.data);
+
+/**
+ * Créer un nouveau plein de carburant
+ * data: { date_plein, litres, prix_unitaire?, station?, kilometrage?, notes? }
+ */
 export const createCarburantVehicule = (immatriculation, data) =>
   api.post(`/admin/vehicules/${immatriculation}/carburant`, data).then((r) => r.data);
+
+/**
+ * Modifier un plein de carburant existant
+ * data: { date_plein?, litres?, prix_unitaire?, station?, kilometrage?, notes? }
+ */
+export const updateCarburantVehicule = (immatriculation, id, data) =>
+  api.put(`/admin/vehicules/${immatriculation}/carburant/${id}`, data).then((r) => r.data);
+
+/** Supprimer un plein de carburant */
+export const deleteCarburantVehicule = (immatriculation, id) =>
+  api.delete(`/admin/vehicules/${immatriculation}/carburant/${id}`).then((r) => r.data);
 
 // ─────────────────────────────────────────────────────────────
 // STATISTIQUES D'UN VÉHICULE

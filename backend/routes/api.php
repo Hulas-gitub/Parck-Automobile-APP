@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\VehiculesController;
+use App\Http\Controllers\Admin\DocumentExpirationController; // ← AJOUT
 
 /*
 |--------------------------------------------------------------------------
@@ -36,6 +37,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
         // KPI Véhicules détaillé (modal)
         Route::get('/dashboard/kpi-vehicules', [DashboardController::class, 'getKpiVehiculesDetail'])->name('dashboard.kpi-vehicules');
+
+        // ── Vérification expiration documents ──────────────────────────────
+        Route::get('/documents/check-expiration', [DocumentExpirationController::class, 'checkExpiration'])->name('documents.check-expiration');
 
         // =====================================================================
         // MODULE VÉHICULES
@@ -85,7 +89,12 @@ Route::middleware('auth:sanctum')->group(function () {
             // Carburant
             Route::get('/{immatriculation}/carburant',  [VehiculesController::class, 'carburant'])->name('carburant.index');
             Route::post('/{immatriculation}/carburant', [VehiculesController::class, 'storeCarburant'])->name('carburant.store');
-
+Route::get   ('/{immatriculation}/carburant',          [VehiculesController::class, 'carburant']);
+Route::post  ('/{immatriculation}/carburant',          [VehiculesController::class, 'storeCarburant']);
+Route::get   ('/{immatriculation}/carburant/{id}',     [VehiculesController::class, 'showCarburant']);
+Route::put   ('/{immatriculation}/carburant/{id}',     [VehiculesController::class, 'updateCarburant']);
+Route::delete('/{immatriculation}/carburant/{id}',     [VehiculesController::class, 'destroyCarburant']);
+Route::put   ('/{immatriculation}/documents/{id}',     [VehiculesController::class, 'updateDocument']);
             // Statistiques
             Route::get('/{immatriculation}/stats', [VehiculesController::class, 'stats'])->name('stats');
         });
