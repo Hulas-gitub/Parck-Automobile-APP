@@ -16,7 +16,7 @@ use Illuminate\Support\Str;
  *
  * Gère tout le CRUD du module Véhicules côté admin :
  *  - Liste paginée + filtres
- *  - Détail complet (fiche véhicule)
+ *  - Détail complet (fiche véhicule) avec toutes les jointures
  *  - Création / Modification / Suppression (soft delete)
  *  - Changement de statut
  *  - Documents (upload, liste, modification, suppression)
@@ -24,54 +24,56 @@ use Illuminate\Support\Str;
  *  - Missions
  *  - Carburant (CRUD complet)
  *  - Statistiques
- *  - Données de référence (catégories, marques, modèles, directions)
+ *  - Données de référence CRUD (catégories, marques, modèles, directions, années, chauffeurs)
+ *
+ * Champs véhicules pris en compte :
+ *   numero_chassis, km_prochaine_vidange, km_prochaine_revision,
+ *   consommation_moyenne, cout_acquisition, valeur_residuelle,
+ *   Couleur (colonne DB avec majuscule)
  */
 class VehiculesController extends Controller
 {
     // =========================================================================
     // CONSTANTES
     // =========================================================================
-    private const MAX_FILE_SIZE        = 10 * 1024;   // 10 Mo en Ko
-    private const ALLOWED_DOC_MIMES    = 'pdf,doc,docx,xls,xlsx,png,jpg,jpeg,webp';
-    private const ALLOWED_IMAGE_MIMES  = 'jpg,jpeg,png,webp';
-    private const IMAGE_DISK_PATH      = 'upload/admin/images/vehicules';
-    private const DOC_DISK_PATH        = 'upload/admin/document/vehicules';
+    private const MAX_FILE_SIZE       = 10 * 1024;
+    private const ALLOWED_DOC_MIMES   = 'pdf,doc,docx,xls,xlsx,png,jpg,jpeg,webp';
+    private const ALLOWED_IMAGE_MIMES = 'jpg,jpeg,png,webp';
+    private const IMAGE_DISK_PATH     = 'upload/admin/images/vehicules';
+    private const DOC_DISK_PATH       = 'upload/admin/document/vehicules';
 
-    // Mapping statuts frontend → DB
     private const STATUTS_MAP = [
-        'Disponible'    => 'disponible',
-        'En Mission'    => 'en_mission',
-        'Maintenance'   => 'en_maintenance',
-        'Immobilisé'    => 'immobilise',
-        'disponible'    => 'disponible',
-        'en_mission'    => 'en_mission',
-        'en_maintenance'=> 'en_maintenance',
-        'immobilise'    => 'immobilise',
+        'Disponible'     => 'disponible',
+        'En Mission'     => 'en_mission',
+        'Maintenance'    => 'en_maintenance',
+        'Immobilisé'     => 'immobilise',
+        'disponible'     => 'disponible',
+        'en_mission'     => 'en_mission',
+        'en_maintenance' => 'en_maintenance',
+        'immobilise'     => 'immobilise',
+        'Vendu'          => 'vendu',
+        'Retiré'         => 'retire',
+        'Hors Service'   => 'hors_service',
     ];
 
     // =========================================================================
     // HELPERS PRIVÉS
     // =========================================================================
 
-    /**
-     * Retourne l'ID de l'utilisateur authentifié de façon sécurisée.
-     */
     private function getAuthUserId(): ?int
     {
         $user = auth()->user();
         if (!$user) return null;
-
         foreach (['id', 'user_id', 'utilisateur_id'] as $prop) {
-            if (isset($user->{$prop})) {
-                return (int) $user->{$prop};
-            }
+            if (isset($user->{$prop})) return (int) $user->{$prop};
         }
-
         return null;
     }
 
     /**
-     * Convertit un véhicule DB (avec joins) en format attendu par le frontend.
+     * Convertit un véhicule DB en format frontend.
+     * Inclut TOUS les champs + jointures.
+     * Note : colonne `Couleur` avec majuscule en DB.
      */
     private function formatVehicule(object $v): array
     {
@@ -83,46 +85,74 @@ class VehiculesController extends Controller
         ][$v->statut] ?? ucfirst($v->statut);
 
         return [
-            'immatriculation'  => $v->immatriculation,
-            'marque'           => $v->marque_nom    ?? null,
-            'modele'           => $v->modele_nom    ?? null,
-            'categorie'        => $v->categorie_nom ?? null,
-            'annee'            => $v->annee_val     ?? null,
-            'direction'        => $v->direction_nom ?? null,
-            'kilometrage'      => (int)($v->kilometrage ?? 0),
-            'statut'           => $statutLabel,
-            'chauffeur'        => $v->chauffeur_nom ?? null,
-            'carburant'        => 'Diesel',
-            'puissance'        => $v->nb_places ? $v->nb_places . ' places' : null,
-            'couleur'          => $v->notes ?? null,
-            'dateAchat'        => $v->date_acquisition ?? null,
-            'prixAchat'        => (float)($v->cout_acquisition ?? 0),
-            'assuranceExpire'  => $v->date_expiration_assurance ?? null,
-            'visiteExpire'     => $v->date_expiration_visite_technique ?? null,
-            'image'            => $v->photo
-                                    ? (filter_var($v->photo, FILTER_VALIDATE_URL)
-                                        ? $v->photo
-                                        : Storage::url($v->photo))
-                                    : null,
-            'numero_chassis'   => $v->numero_chassis ?? null,
-            'nb_places'        => (int)($v->nb_places ?? 5),
-            'consommation_moyenne' => $v->consommation_moyenne,
-            'valeur_residuelle'    => $v->valeur_residuelle,
-            'est_actif'        => (bool)$v->est_actif,
+            // Identité
+            'immatriculation'         => $v->immatriculation,
+            'numero_chassis'          => $v->numero_chassis          ?? null,
+
+            // Relations (IDs pour le formulaire + noms pour l'affichage)
+            'marque'                  => $v->marque_nom               ?? null,
+            'marque_id'               => $v->marque_id                ?? null,
+            'modele'                  => $v->modele_nom               ?? null,
+            'modele_id'               => $v->modele_id                ?? null,
+            'categorie'               => $v->categorie_nom            ?? null,
+            'categorie_id'            => $v->categorie_id             ?? null,
+            'annee'                   => $v->annee_val                ?? null,
+            'annee_id'                => $v->annee_id                 ?? null,
+            'direction'               => $v->direction_nom            ?? null,
+            'direction_id'            => $v->direction_id             ?? null,
+            'chauffeur'               => $v->chauffeur_nom            ?? null,
+
+            // Caractéristiques
+            'nb_places'               => (int)($v->nb_places          ?? 5),
+            'couleur'                 => $v->Couleur                  ?? null,
+            'carburant'               => $v->type_carburant_defaut    ?? 'Diesel',
+            'type_carburant_defaut'   => $v->type_carburant_defaut    ?? null,
+            'capacite_reservoir'      => $v->capacite_reservoir_defaut ?? null,
+
+            // Kilométrage
+            'kilometrage'             => (int)($v->kilometrage        ?? 0),
+            'date_maj_km'             => $v->date_maj_km              ?? null,
+            'km_prochaine_vidange'    => $v->km_prochaine_vidange    !== null ? (int)$v->km_prochaine_vidange    : null,
+            'km_prochaine_revision'   => $v->km_prochaine_revision   !== null ? (int)$v->km_prochaine_revision   : null,
+
+            // Performance
+            'consommation_moyenne'    => $v->consommation_moyenne    !== null ? (float)$v->consommation_moyenne  : null,
+
+            // Financier
+            'cout_acquisition'        => (float)($v->cout_acquisition ?? 0),
+            'valeur_residuelle'       => $v->valeur_residuelle       !== null ? (float)$v->valeur_residuelle     : null,
+            'dateAchat'               => $v->date_acquisition        ?? null,
+
+            // Dates importantes
+            'assuranceExpire'         => $v->date_expiration_assurance         ?? null,
+            'visiteExpire'            => $v->date_expiration_visite_technique  ?? null,
+            'date_immobilisation'     => $v->date_immobilisation               ?? null,
+
+            // Image
+            'image'                   => $v->photo
+                                            ? (filter_var($v->photo, FILTER_VALIDATE_URL)
+                                                ? $v->photo
+                                                : Storage::url($v->photo))
+                                            : null,
+
+            // Statut
+            'statut'                  => $statutLabel,
+            'est_actif'               => (bool)$v->est_actif,
         ];
     }
 
     /**
-     * Requête de base véhicules avec tous les joins nécessaires.
+     * Requête de base avec TOUTES les jointures.
+     * Inclut les infos du modèle (carburant, places, réservoir, conso défaut).
      */
     private function baseQuery()
     {
         return DB::table('vehicules as v')
-            ->leftJoin('marques as ma', 'ma.id', '=', 'v.marque_id')
-            ->leftJoin('modeles as mo', 'mo.id', '=', 'v.modele_id')
-            ->leftJoin('categories_vehicules as ca', 'ca.id', '=', 'v.categorie_id')
-            ->leftJoin('annees as an', 'an.id', '=', 'v.annee_id')
-            ->leftJoin('directions as di', 'di.id', '=', 'v.direction_id')
+            ->leftJoin('marques as ma',             'ma.id', '=', 'v.marque_id')
+            ->leftJoin('modeles as mo',             'mo.id', '=', 'v.modele_id')
+            ->leftJoin('categories_vehicules as ca','ca.id', '=', 'v.categorie_id')
+            ->leftJoin('annees as an',              'an.id', '=', 'v.annee_id')
+            ->leftJoin('directions as di',          'di.id', '=', 'v.direction_id')
             ->leftJoin(DB::raw('(
                 SELECT m.vehicule_immatriculation, u.nom AS chauffeur_nom
                 FROM missions m
@@ -132,11 +162,21 @@ class VehiculesController extends Controller
             ) AS ch'), 'ch.vehicule_immatriculation', '=', 'v.immatriculation')
             ->where('v.est_supprime', 0)
             ->select(
+                // Véhicule — tous les champs nécessaires
                 'v.immatriculation',
                 'v.numero_chassis',
-                'v.kilometrage',
-                'v.statut',
+                'v.marque_id',
+                'v.modele_id',
+                'v.categorie_id',
+                'v.annee_id',
+                'v.direction_id',
                 'v.nb_places',
+                'v.kilometrage',
+                'v.date_maj_km',
+                'v.km_prochaine_vidange',
+                'v.km_prochaine_revision',
+                'v.statut',
+                'v.date_immobilisation',
                 'v.consommation_moyenne',
                 'v.date_acquisition',
                 'v.date_expiration_assurance',
@@ -144,10 +184,14 @@ class VehiculesController extends Controller
                 'v.cout_acquisition',
                 'v.valeur_residuelle',
                 'v.photo',
-                'v.notes',
+                'v.Couleur',
                 'v.est_actif',
+                // Jointures
                 'ma.nom as marque_nom',
                 'mo.nom as modele_nom',
+                'mo.type_carburant_defaut',
+                'mo.capacite_reservoir_defaut',
+                'mo.consommation_moyenne_defaut',
                 'ca.nom as categorie_nom',
                 'an.annee as annee_val',
                 'di.nom as direction_nom',
@@ -161,10 +205,8 @@ class VehiculesController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $perPage = (int)$request->get('per_page', 6);
-        $perPage = min(max($perPage, 1), 100);
-
-        $query = $this->baseQuery();
+        $perPage = min(max((int)$request->get('per_page', 9), 1), 100);
+        $query   = $this->baseQuery();
 
         if ($search = $request->get('search')) {
             $query->where(function ($q) use ($search) {
@@ -174,30 +216,16 @@ class VehiculesController extends Controller
                   ->orWhere('di.nom', 'LIKE', "%{$search}%");
             });
         }
-
-        if ($categorie = $request->get('categorie')) {
-            $query->where('ca.nom', $categorie);
-        }
-
-        if ($marque = $request->get('marque')) {
-            $query->where('ma.nom', $marque);
-        }
-
-        if ($modele = $request->get('modele')) {
-            $query->where('mo.nom', $modele);
-        }
-
-        if ($statutLabel = $request->get('statut')) {
-            $statutDB = self::STATUTS_MAP[$statutLabel] ?? strtolower($statutLabel);
-            $query->where('v.statut', $statutDB);
+        if ($cat = $request->get('categorie')) $query->where('ca.nom', $cat);
+        if ($mrq = $request->get('marque'))    $query->where('ma.nom', $mrq);
+        if ($mod = $request->get('modele'))    $query->where('mo.nom', $mod);
+        if ($sta = $request->get('statut')) {
+            $query->where('v.statut', self::STATUTS_MAP[$sta] ?? strtolower($sta));
         }
 
         $total    = $query->count();
-        $vehicles = $query
-            ->orderBy('v.date_modification', 'desc')
-            ->paginate($perPage);
-
-        $data = collect($vehicles->items())->map(fn($v) => $this->formatVehicule($v))->values();
+        $vehicles = $query->orderBy('v.date_modification', 'desc')->paginate($perPage);
+        $data     = collect($vehicles->items())->map(fn($v) => $this->formatVehicule($v))->values();
 
         return response()->json([
             'data'         => $data,
@@ -214,14 +242,8 @@ class VehiculesController extends Controller
 
     public function show(string $immatriculation): JsonResponse
     {
-        $v = $this->baseQuery()
-            ->where('v.immatriculation', $immatriculation)
-            ->first();
-
-        if (!$v) {
-            return response()->json(['message' => 'Véhicule introuvable.'], 404);
-        }
-
+        $v = $this->baseQuery()->where('v.immatriculation', $immatriculation)->first();
+        if (!$v) return response()->json(['message' => 'Véhicule introuvable.'], 404);
         return response()->json($this->formatVehicule($v));
     }
 
@@ -232,60 +254,64 @@ class VehiculesController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'immatriculation' => 'required|string|max:30|unique:vehicules,immatriculation',
-            'marque'          => 'required|string|max:100',
-            'modele'          => 'required|string|max:100',
-            'categorie'       => 'required|string|max:100',
-            'direction'       => 'required|string|max:150',
-            'annee'           => 'nullable|integer|min:1900|max:2100',
-            'kilometrage'     => 'nullable|integer|min:0',
-            'statut'          => 'nullable|string',
-            'carburant'       => 'nullable|string|max:50',
-            'puissance'       => 'nullable|string|max:50',
-            'couleur'         => 'nullable|string|max:50',
-            'dateAchat'       => 'nullable|date',
-            'prixAchat'       => 'nullable|numeric|min:0',
-            'assuranceExpire' => 'nullable|date',
-            'visiteExpire'    => 'nullable|date',
-            'image'           => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
+            'immatriculation'       => 'required|string|max:30|unique:vehicules,immatriculation',
+            'marque'                => 'required|string|max:100',
+            'modele'                => 'required|string|max:100',
+            'categorie'             => 'required|string|max:100',
+            'direction'             => 'required|string|max:150',
+            'annee'                 => 'nullable|integer|min:1900|max:2100',
+            'numero_chassis'        => 'nullable|string|max:100|unique:vehicules,numero_chassis',
+            'kilometrage'           => 'nullable|integer|min:0',
+            'nb_places'             => 'nullable|integer|min:1|max:100',
+            'statut'                => 'nullable|string',
+            'couleur'               => 'nullable|string|max:100',
+            'dateAchat'             => 'nullable|date',
+            'cout_acquisition'      => 'nullable|numeric|min:0',
+            'valeur_residuelle'     => 'nullable|numeric|min:0',
+            'consommation_moyenne'  => 'nullable|numeric|min:0',
+            'km_prochaine_vidange'  => 'nullable|integer|min:0',
+            'km_prochaine_revision' => 'nullable|integer|min:0',
+            'assuranceExpire'       => 'nullable|date',
+            'visiteExpire'          => 'nullable|date',
+            'image'                 => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $marqueId    = $this->resolveMarqueId($request->marque);
         $modeleId    = $this->resolveModeleId($request->modele, $marqueId);
         $categorieId = $this->resolveCategorieId($request->categorie);
         $directionId = $this->resolveDirectionId($request->direction);
         $anneeId     = $this->resolveAnneeId($request->annee);
-
-        $statutDB = self::STATUTS_MAP[$request->get('statut', 'Disponible')] ?? 'disponible';
+        $statutDB    = self::STATUTS_MAP[$request->get('statut', 'Disponible')] ?? 'disponible';
 
         $photoPath = null;
-        if ($request->hasFile('image')) {
-            $photoPath = $this->uploadImage($request->file('image'));
-        }
+        if ($request->hasFile('image')) $photoPath = $this->uploadImage($request->file('image'));
 
         DB::table('vehicules')->insert([
-            'immatriculation'                   => strtoupper(trim($request->immatriculation)),
-            'marque_id'                         => $marqueId,
-            'modele_id'                         => $modeleId,
-            'categorie_id'                      => $categorieId,
-            'direction_id'                      => $directionId,
-            'annee_id'                          => $anneeId,
-            'kilometrage'                       => (int)($request->kilometrage ?? 0),
-            'statut'                            => $statutDB,
-            'cout_acquisition'                  => (float)($request->prixAchat ?? 0),
-            'date_acquisition'                  => $request->dateAchat ?: null,
-            'date_expiration_assurance'         => $request->assuranceExpire ?: null,
-            'date_expiration_visite_technique'  => $request->visiteExpire ?: null,
-            'notes'                             => $request->couleur,
-            'photo'                             => $photoPath,
-            'est_actif'                         => 1,
-            'est_supprime'                      => 0,
-            'date_creation'                     => now(),
-            'date_modification'                 => now(),
+            'immatriculation'                  => strtoupper(trim($request->immatriculation)),
+            'numero_chassis'                   => $request->numero_chassis ?: null,
+            'marque_id'                        => $marqueId,
+            'modele_id'                        => $modeleId,
+            'categorie_id'                     => $categorieId,
+            'direction_id'                     => $directionId,
+            'annee_id'                         => $anneeId,
+            'nb_places'                        => (int)($request->nb_places ?? 5),
+            'kilometrage'                      => (int)($request->kilometrage ?? 0),
+            'statut'                           => $statutDB,
+            'cout_acquisition'                 => (float)($request->cout_acquisition ?? 0),
+            'valeur_residuelle'                => $request->filled('valeur_residuelle')     ? (float)$request->valeur_residuelle    : null,
+            'consommation_moyenne'             => $request->filled('consommation_moyenne')  ? (float)$request->consommation_moyenne  : null,
+            'km_prochaine_vidange'             => $request->filled('km_prochaine_vidange')  ? (int)$request->km_prochaine_vidange    : null,
+            'km_prochaine_revision'            => $request->filled('km_prochaine_revision') ? (int)$request->km_prochaine_revision   : null,
+            'date_acquisition'                 => $request->dateAchat       ?: null,
+            'date_expiration_assurance'        => $request->assuranceExpire ?: null,
+            'date_expiration_visite_technique' => $request->visiteExpire    ?: null,
+            'Couleur'                          => $request->couleur         ?: null,
+            'photo'                            => $photoPath,
+            'est_actif'                        => 1,
+            'est_supprime'                     => 0,
+            'date_creation'                    => now(),
+            'date_modification'                => now(),
         ]);
 
         $vehicule = $this->baseQuery()
@@ -302,86 +328,61 @@ class VehiculesController extends Controller
     public function update(Request $request, string $immatriculation): JsonResponse
     {
         $exists = DB::table('vehicules')
-            ->where('immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->exists();
-
-        if (!$exists) {
-            return response()->json(['message' => 'Véhicule introuvable.'], 404);
-        }
+            ->where('immatriculation', $immatriculation)->where('est_supprime', 0)->exists();
+        if (!$exists) return response()->json(['message' => 'Véhicule introuvable.'], 404);
 
         $validator = Validator::make($request->all(), [
-            'marque'          => 'nullable|string|max:100',
-            'modele'          => 'nullable|string|max:100',
-            'categorie'       => 'nullable|string|max:100',
-            'direction'       => 'nullable|string|max:150',
-            'annee'           => 'nullable|integer|min:1900|max:2100',
-            'kilometrage'     => 'nullable|integer|min:0',
-            'statut'          => 'nullable|string',
-            'chauffeur'       => 'nullable|string|max:100',
-            'couleur'         => 'nullable|string|max:50',
-            'dateAchat'       => 'nullable|date',
-            'prixAchat'       => 'nullable|numeric|min:0',
-            'assuranceExpire' => 'nullable|date',
-            'visiteExpire'    => 'nullable|date',
-            'image'           => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
+            'marque'                => 'nullable|string|max:100',
+            'modele'                => 'nullable|string|max:100',
+            'categorie'             => 'nullable|string|max:100',
+            'direction'             => 'nullable|string|max:150',
+            'annee'                 => 'nullable|integer|min:1900|max:2100',
+            'numero_chassis'        => 'nullable|string|max:100|unique:vehicules,numero_chassis,' . $immatriculation . ',immatriculation',
+            'kilometrage'           => 'nullable|integer|min:0',
+            'nb_places'             => 'nullable|integer|min:1|max:100',
+            'statut'                => 'nullable|string',
+            'couleur'               => 'nullable|string|max:100',
+            'dateAchat'             => 'nullable|date',
+            'cout_acquisition'      => 'nullable|numeric|min:0',
+            'valeur_residuelle'     => 'nullable|numeric|min:0',
+            'consommation_moyenne'  => 'nullable|numeric|min:0',
+            'km_prochaine_vidange'  => 'nullable|integer|min:0',
+            'km_prochaine_revision' => 'nullable|integer|min:0',
+            'assuranceExpire'       => 'nullable|date',
+            'visiteExpire'          => 'nullable|date',
+            'image'                 => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $updateData = ['date_modification' => now()];
 
         if ($request->filled('marque')) {
             $marqueId = $this->resolveMarqueId($request->marque);
             $updateData['marque_id'] = $marqueId;
-
             if ($request->filled('modele')) {
                 $updateData['modele_id'] = $this->resolveModeleId($request->modele, $marqueId);
             }
         }
-
-        if ($request->filled('categorie')) {
-            $updateData['categorie_id'] = $this->resolveCategorieId($request->categorie);
-        }
-
-        if ($request->filled('direction')) {
-            $updateData['direction_id'] = $this->resolveDirectionId($request->direction);
-        }
-
-        if ($request->filled('annee')) {
-            $updateData['annee_id'] = $this->resolveAnneeId($request->annee);
-        }
+        if ($request->filled('categorie'))      $updateData['categorie_id']  = $this->resolveCategorieId($request->categorie);
+        if ($request->filled('direction'))      $updateData['direction_id']  = $this->resolveDirectionId($request->direction);
+        if ($request->filled('annee'))          $updateData['annee_id']      = $this->resolveAnneeId($request->annee);
+        if ($request->has('numero_chassis'))    $updateData['numero_chassis'] = $request->numero_chassis ?: null;
+        if ($request->has('nb_places'))         $updateData['nb_places']      = (int)($request->nb_places ?? 5);
 
         if ($request->has('kilometrage')) {
             $updateData['kilometrage'] = (int)$request->kilometrage;
             $updateData['date_maj_km'] = now()->toDateString();
         }
-
-        if ($request->filled('statut')) {
-            $updateData['statut'] = self::STATUTS_MAP[$request->statut] ?? 'disponible';
-        }
-
-        if ($request->has('couleur')) {
-            $updateData['notes'] = $request->couleur;
-        }
-
-        if ($request->has('dateAchat')) {
-            $updateData['date_acquisition'] = $request->dateAchat ?: null;
-        }
-
-        if ($request->has('prixAchat')) {
-            $updateData['cout_acquisition'] = (float)$request->prixAchat;
-        }
-
-        if ($request->has('assuranceExpire')) {
-            $updateData['date_expiration_assurance'] = $request->assuranceExpire ?: null;
-        }
-
-        if ($request->has('visiteExpire')) {
-            $updateData['date_expiration_visite_technique'] = $request->visiteExpire ?: null;
-        }
+        if ($request->filled('statut'))                $updateData['statut']                             = self::STATUTS_MAP[$request->statut] ?? 'disponible';
+        if ($request->has('couleur'))                  $updateData['Couleur']                            = $request->couleur ?: null;
+        if ($request->has('dateAchat'))                $updateData['date_acquisition']                   = $request->dateAchat ?: null;
+        if ($request->has('cout_acquisition'))         $updateData['cout_acquisition']                   = (float)$request->cout_acquisition;
+        if ($request->has('valeur_residuelle'))        $updateData['valeur_residuelle']                  = $request->filled('valeur_residuelle') ? (float)$request->valeur_residuelle : null;
+        if ($request->has('consommation_moyenne'))     $updateData['consommation_moyenne']               = $request->filled('consommation_moyenne') ? (float)$request->consommation_moyenne : null;
+        if ($request->has('km_prochaine_vidange'))     $updateData['km_prochaine_vidange']               = $request->filled('km_prochaine_vidange') ? (int)$request->km_prochaine_vidange : null;
+        if ($request->has('km_prochaine_revision'))    $updateData['km_prochaine_revision']              = $request->filled('km_prochaine_revision') ? (int)$request->km_prochaine_revision : null;
+        if ($request->has('assuranceExpire'))          $updateData['date_expiration_assurance']          = $request->assuranceExpire ?: null;
+        if ($request->has('visiteExpire'))             $updateData['date_expiration_visite_technique']   = $request->visiteExpire ?: null;
 
         if ($request->hasFile('image')) {
             $old = DB::table('vehicules')->where('immatriculation', $immatriculation)->value('photo');
@@ -391,12 +392,8 @@ class VehiculesController extends Controller
             $updateData['photo'] = $this->uploadImage($request->file('image'));
         }
 
-        DB::table('vehicules')
-            ->where('immatriculation', $immatriculation)
-            ->update($updateData);
-
+        DB::table('vehicules')->where('immatriculation', $immatriculation)->update($updateData);
         $vehicule = $this->baseQuery()->where('v.immatriculation', $immatriculation)->first();
-
         return response()->json($this->formatVehicule($vehicule));
     }
 
@@ -407,52 +404,30 @@ class VehiculesController extends Controller
     public function destroy(string $immatriculation): JsonResponse
     {
         $rows = DB::table('vehicules')
-            ->where('immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->update([
-                'est_supprime'     => 1,
-                'date_suppression' => now(),
-                'date_modification'=> now(),
-            ]);
+            ->where('immatriculation', $immatriculation)->where('est_supprime', 0)
+            ->update(['est_supprime' => 1, 'date_suppression' => now(), 'date_modification' => now()]);
 
-        if (!$rows) {
-            return response()->json(['message' => 'Véhicule introuvable.'], 404);
-        }
-
+        if (!$rows) return response()->json(['message' => 'Véhicule introuvable.'], 404);
         return response()->json(['message' => 'Véhicule supprimé avec succès.']);
     }
 
     // =========================================================================
-    // 6. CHANGER LE STATUT D'UN VÉHICULE
+    // 6. CHANGER LE STATUT
     // =========================================================================
 
     public function updateStatut(Request $request, string $immatriculation): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'statut' => 'required|string',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        $validator = Validator::make($request->all(), ['statut' => 'required|string']);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $statutDB = self::STATUTS_MAP[$request->statut] ?? null;
-        if (!$statutDB) {
-            return response()->json(['message' => 'Statut invalide.'], 422);
-        }
+        if (!$statutDB) return response()->json(['message' => 'Statut invalide.'], 422);
 
         $rows = DB::table('vehicules')
-            ->where('immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->update([
-                'statut'            => $statutDB,
-                'date_modification' => now(),
-            ]);
+            ->where('immatriculation', $immatriculation)->where('est_supprime', 0)
+            ->update(['statut' => $statutDB, 'date_modification' => now()]);
 
-        if (!$rows) {
-            return response()->json(['message' => 'Véhicule introuvable.'], 404);
-        }
-
+        if (!$rows) return response()->json(['message' => 'Véhicule introuvable.'], 404);
         return response()->json(['message' => 'Statut mis à jour.', 'statut' => $request->statut]);
     }
 
@@ -473,13 +448,9 @@ class VehiculesController extends Controller
                 $statut = 'valide';
                 if ($doc->date_expiration) {
                     $diff = now()->diffInDays($doc->date_expiration, false);
-                    if ($diff < 0) {
-                        $statut = 'expire';
-                    } elseif ($diff <= 30) {
-                        $statut = 'expire_bientot';
-                    }
+                    if ($diff < 0)       $statut = 'expire';
+                    elseif ($diff <= 30) $statut = 'expire_bientot';
                 }
-
                 return [
                     'id'                       => $doc->id,
                     'vehicule_immatriculation' => $doc->vehicule_immatriculation,
@@ -503,9 +474,6 @@ class VehiculesController extends Controller
         return response()->json($docs);
     }
 
-    /**
-     * POST /api/admin/vehicules/{immatriculation}/documents
-     */
     public function storeDocument(Request $request, string $immatriculation): JsonResponse
     {
         $this->assertVehiculeExists($immatriculation);
@@ -522,19 +490,12 @@ class VehiculesController extends Controller
             'date_expiration'     => 'nullable|date',
             'notes'               => 'nullable|string',
         ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $file     = $request->file('fichier');
-        $filename = Str::uuid() . '.' . $file->getClientOriginalExtension();
-        $path     = $file->storeAs(self::DOC_DISK_PATH, $filename, 'public');
-
-        $nomDocument = $request->get('nom_document')
-            ?: ($request->type_document . ' — ' . $immatriculation);
-
-        $userId = $this->getAuthUserId();
+        $file        = $request->file('fichier');
+        $filename    = Str::uuid() . '.' . $file->getClientOriginalExtension();
+        $path        = $file->storeAs(self::DOC_DISK_PATH, $filename, 'public');
+        $nomDocument = $request->get('nom_document') ?: ($request->type_document . ' — ' . $immatriculation);
 
         $id = DB::table('documents_vehicules')->insertGetId([
             'vehicule_immatriculation' => $immatriculation,
@@ -545,58 +506,42 @@ class VehiculesController extends Controller
             'numero_contrat'           => $request->numero_contrat,
             'type_couverture'          => $request->type_couverture,
             'montant_prime'            => $request->montant_prime,
-            'date_emission'            => $request->date_emission ?: null,
+            'date_emission'            => $request->date_emission  ?: null,
             'date_expiration'          => $request->date_expiration ?: null,
-            'telecharge_par_user_id'   => $userId,
+            'telecharge_par_user_id'   => $this->getAuthUserId(),
             'notes'                    => $request->notes,
             'est_supprime'             => 0,
             'date_creation'            => now(),
             'date_modification'        => now(),
         ]);
 
-        // ── NOTIFICATIONS AUTOMATIQUES ────────────────────────────────────────
         if ($request->filled('date_expiration')) {
             try {
                 (new DocumentExpirationController())->notifierDocument($id);
             } catch (\Throwable $e) {
-                Log::error(
-                    "[storeDocument] Échec notification doc#{$id} véhicule {$immatriculation} | {$e->getMessage()}"
-                );
+                Log::error("[storeDocument] Notification doc#{$id} | {$e->getMessage()}");
             }
         }
-        // ─────────────────────────────────────────────────────────────────────
 
         $doc = DB::table('documents_vehicules')->find($id);
-
         return response()->json([
-            'id'             => $doc->id,
-            'nom_document'   => $doc->nom_document,
-            'type_document'  => $doc->type_document,
-            'url_fichier'    => $this->buildFileUrl($doc->chemin_fichier),
-            'date_expiration'=> $doc->date_expiration,
-            'statut'         => 'valide',
+            'id'              => $doc->id,
+            'nom_document'    => $doc->nom_document,
+            'type_document'   => $doc->type_document,
+            'url_fichier'     => $this->buildFileUrl($doc->chemin_fichier),
+            'date_expiration' => $doc->date_expiration,
+            'statut'          => 'valide',
         ], 201);
     }
 
-    /**
-     * PUT /api/admin/vehicules/{immatriculation}/documents/{documentId}
-     *
-     * Modifie les métadonnées d'un document (et optionnellement remplace le fichier).
-     * Si un nouveau fichier est fourni, l'ancien est supprimé du disque.
-     */
     public function updateDocument(Request $request, string $immatriculation, int $documentId): JsonResponse
     {
         $this->assertVehiculeExists($immatriculation);
 
         $doc = DB::table('documents_vehicules')
-            ->where('id', $documentId)
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->first();
-
-        if (!$doc) {
-            return response()->json(['message' => 'Document introuvable.'], 404);
-        }
+            ->where('id', $documentId)->where('vehicule_immatriculation', $immatriculation)
+            ->where('est_supprime', 0)->first();
+        if (!$doc) return response()->json(['message' => 'Document introuvable.'], 404);
 
         $validator = Validator::make($request->all(), [
             'fichier'             => 'nullable|file|mimes:' . self::ALLOWED_DOC_MIMES . '|max:' . self::MAX_FILE_SIZE,
@@ -610,132 +555,82 @@ class VehiculesController extends Controller
             'date_expiration'     => 'nullable|date',
             'notes'               => 'nullable|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $updateData = ['date_modification' => now()];
+        if ($request->filled('type_document'))   $updateData['type_document']       = $request->type_document;
+        if ($request->filled('nom_document'))    $updateData['nom_document']        = $request->nom_document;
+        if ($request->has('compagnie_assurance'))$updateData['compagnie_assurance'] = $request->compagnie_assurance;
+        if ($request->has('numero_contrat'))     $updateData['numero_contrat']      = $request->numero_contrat;
+        if ($request->has('type_couverture'))    $updateData['type_couverture']     = $request->type_couverture;
+        if ($request->has('montant_prime'))      $updateData['montant_prime']       = $request->montant_prime;
+        if ($request->has('date_emission'))      $updateData['date_emission']       = $request->date_emission  ?: null;
+        if ($request->has('date_expiration'))    $updateData['date_expiration']     = $request->date_expiration ?: null;
+        if ($request->has('notes'))              $updateData['notes']               = $request->notes;
 
-        if ($request->filled('type_document')) {
-            $updateData['type_document'] = $request->type_document;
-        }
-
-        if ($request->filled('nom_document')) {
-            $updateData['nom_document'] = $request->nom_document;
-        }
-
-        if ($request->has('compagnie_assurance')) {
-            $updateData['compagnie_assurance'] = $request->compagnie_assurance;
-        }
-
-        if ($request->has('numero_contrat')) {
-            $updateData['numero_contrat'] = $request->numero_contrat;
-        }
-
-        if ($request->has('type_couverture')) {
-            $updateData['type_couverture'] = $request->type_couverture;
-        }
-
-        if ($request->has('montant_prime')) {
-            $updateData['montant_prime'] = $request->montant_prime;
-        }
-
-        if ($request->has('date_emission')) {
-            $updateData['date_emission'] = $request->date_emission ?: null;
-        }
-
-        if ($request->has('date_expiration')) {
-            $updateData['date_expiration'] = $request->date_expiration ?: null;
-        }
-
-        if ($request->has('notes')) {
-            $updateData['notes'] = $request->notes;
-        }
-
-        // Remplacement du fichier si un nouveau est envoyé
         if ($request->hasFile('fichier')) {
-            // Suppression de l'ancien fichier du disque
             if ($doc->chemin_fichier && !filter_var($doc->chemin_fichier, FILTER_VALIDATE_URL)
                 && Storage::disk('public')->exists($doc->chemin_fichier)) {
                 Storage::disk('public')->delete($doc->chemin_fichier);
             }
-
-            $file     = $request->file('fichier');
-            $filename = Str::uuid() . '.' . $file->getClientOriginalExtension();
-            $updateData['chemin_fichier'] = $file->storeAs(self::DOC_DISK_PATH, $filename, 'public');
+            $file = $request->file('fichier');
+            $updateData['chemin_fichier'] = $file->storeAs(
+                self::DOC_DISK_PATH,
+                Str::uuid() . '.' . $file->getClientOriginalExtension(),
+                'public'
+            );
         }
 
-        DB::table('documents_vehicules')
-            ->where('id', $documentId)
-            ->update($updateData);
+        DB::table('documents_vehicules')->where('id', $documentId)->update($updateData);
 
-        // Re-déclencher les notifications si la date d'expiration a changé
         if ($request->has('date_expiration') && $request->filled('date_expiration')) {
             try {
                 (new DocumentExpirationController())->notifierDocument($documentId);
             } catch (\Throwable $e) {
-                Log::error(
-                    "[updateDocument] Échec notification doc#{$documentId} véhicule {$immatriculation} | {$e->getMessage()}"
-                );
+                Log::error("[updateDocument] Notification doc#{$documentId} | {$e->getMessage()}");
             }
         }
 
         $updated = DB::table('documents_vehicules')->find($documentId);
-
-        $statut = 'valide';
+        $statut  = 'valide';
         if ($updated->date_expiration) {
             $diff = now()->diffInDays($updated->date_expiration, false);
-            if ($diff < 0) {
-                $statut = 'expire';
-            } elseif ($diff <= 30) {
-                $statut = 'expire_bientot';
-            }
+            if ($diff < 0)       $statut = 'expire';
+            elseif ($diff <= 30) $statut = 'expire_bientot';
         }
 
         return response()->json([
-            'id'                  => $updated->id,
+            'id'                       => $updated->id,
             'vehicule_immatriculation' => $updated->vehicule_immatriculation,
-            'type_document'       => $updated->type_document,
-            'nom_document'        => $updated->nom_document,
-            'chemin_fichier'      => $updated->chemin_fichier,
-            'url_fichier'         => $this->buildFileUrl($updated->chemin_fichier),
-            'compagnie_assurance' => $updated->compagnie_assurance,
-            'numero_contrat'      => $updated->numero_contrat,
-            'type_couverture'     => $updated->type_couverture,
-            'montant_prime'       => $updated->montant_prime,
-            'date_emission'       => $updated->date_emission,
-            'date_expiration'     => $updated->date_expiration,
-            'statut'              => $statut,
-            'notes'               => $updated->notes,
-            'date_creation'       => $updated->date_creation,
-            'date_modification'   => $updated->date_modification,
+            'type_document'            => $updated->type_document,
+            'nom_document'             => $updated->nom_document,
+            'chemin_fichier'           => $updated->chemin_fichier,
+            'url_fichier'              => $this->buildFileUrl($updated->chemin_fichier),
+            'compagnie_assurance'      => $updated->compagnie_assurance,
+            'numero_contrat'           => $updated->numero_contrat,
+            'type_couverture'          => $updated->type_couverture,
+            'montant_prime'            => $updated->montant_prime,
+            'date_emission'            => $updated->date_emission,
+            'date_expiration'          => $updated->date_expiration,
+            'statut'                   => $statut,
+            'notes'                    => $updated->notes,
+            'date_creation'            => $updated->date_creation,
+            'date_modification'        => $updated->date_modification,
         ]);
     }
 
     public function destroyDocument(string $immatriculation, int $documentId): JsonResponse
     {
         $doc = DB::table('documents_vehicules')
-            ->where('id', $documentId)
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->first();
-
-        if (!$doc) {
-            return response()->json(['message' => 'Document introuvable.'], 404);
-        }
+            ->where('id', $documentId)->where('vehicule_immatriculation', $immatriculation)
+            ->where('est_supprime', 0)->first();
+        if (!$doc) return response()->json(['message' => 'Document introuvable.'], 404);
 
         if ($doc->chemin_fichier && Storage::disk('public')->exists($doc->chemin_fichier)) {
             Storage::disk('public')->delete($doc->chemin_fichier);
         }
-
-        DB::table('documents_vehicules')
-            ->where('id', $documentId)
-            ->update([
-                'est_supprime'     => 1,
-                'date_suppression' => now(),
-                'date_modification'=> now(),
-            ]);
+        DB::table('documents_vehicules')->where('id', $documentId)
+            ->update(['est_supprime' => 1, 'date_suppression' => now(), 'date_modification' => now()]);
 
         return response()->json(['message' => 'Document supprimé.']);
     }
@@ -743,19 +638,10 @@ class VehiculesController extends Controller
     public function openDocument(string $immatriculation, int $documentId): JsonResponse
     {
         $doc = DB::table('documents_vehicules')
-            ->where('id', $documentId)
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->first();
-
-        if (!$doc) {
-            return response()->json(['message' => 'Document introuvable.'], 404);
-        }
-
-        return response()->json([
-            'url' => $this->buildFileUrl($doc->chemin_fichier),
-            'nom' => $doc->nom_document,
-        ]);
+            ->where('id', $documentId)->where('vehicule_immatriculation', $immatriculation)
+            ->where('est_supprime', 0)->first();
+        if (!$doc) return response()->json(['message' => 'Document introuvable.'], 404);
+        return response()->json(['url' => $this->buildFileUrl($doc->chemin_fichier), 'nom' => $doc->nom_document]);
     }
 
     // =========================================================================
@@ -768,25 +654,14 @@ class VehiculesController extends Controller
 
         $items = DB::table('interventions as i')
             ->leftJoin('intervenants as in2', 'in2.id', '=', 'i.intervenant_id')
-            ->where('i.vehicule_immatriculation', $immatriculation)
-            ->where('i.est_supprime', 0)
+            ->where('i.vehicule_immatriculation', $immatriculation)->where('i.est_supprime', 0)
             ->orderBy('i.date_debut', 'desc')
             ->select(
-                'i.id',
-                'i.type_intervention',
-                'i.severite',
-                'i.date_debut',
-                'i.date_fin',
-                'i.km_au_moment_intervention',
-                'i.diagnostic',
-                'i.resultat',
-                'i.cout_main_oeuvre',
-                'i.cout_pieces',
-                'i.statut',
-                'i.notes',
+                'i.id', 'i.type_intervention', 'i.severite', 'i.date_debut', 'i.date_fin',
+                'i.km_au_moment_intervention', 'i.diagnostic', 'i.resultat',
+                'i.cout_main_oeuvre', 'i.cout_pieces', 'i.statut', 'i.notes',
                 'in2.nom_externe as intervenant_nom'
-            )
-            ->get();
+            )->get();
 
         return response()->json($items);
     }
@@ -796,45 +671,39 @@ class VehiculesController extends Controller
         $this->assertVehiculeExists($immatriculation);
 
         $validator = Validator::make($request->all(), [
-            'type_intervention'          => 'required|string|max:100',
-            'intervenant_id'             => 'required|integer|exists:intervenants,id',
-            'severite'                   => 'nullable|string|in:faible,normale,haute,critique',
-            'date_debut'                 => 'nullable|date',
-            'date_fin'                   => 'nullable|date|after_or_equal:date_debut',
-            'km_au_moment_intervention'  => 'nullable|integer|min:0',
-            'diagnostic'                 => 'nullable|string',
-            'cout_main_oeuvre'           => 'nullable|numeric|min:0',
-            'statut'                     => 'nullable|string|in:planifiee,en_cours,terminee,annulee',
-            'notes'                      => 'nullable|string',
+            'type_intervention'         => 'required|string|max:100',
+            'intervenant_id'            => 'required|integer|exists:intervenants,id',
+            'severite'                  => 'nullable|string|in:faible,normale,haute,critique',
+            'date_debut'                => 'nullable|date',
+            'date_fin'                  => 'nullable|date|after_or_equal:date_debut',
+            'km_au_moment_intervention' => 'nullable|integer|min:0',
+            'diagnostic'                => 'nullable|string',
+            'cout_main_oeuvre'          => 'nullable|numeric|min:0',
+            'statut'                    => 'nullable|string|in:planifiee,en_cours,terminee,annulee',
+            'notes'                     => 'nullable|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $id = DB::table('interventions')->insertGetId([
-            'vehicule_immatriculation'    => $immatriculation,
-            'intervenant_id'              => $request->intervenant_id,
-            'type_intervention'           => $request->type_intervention,
-            'severite'                    => $request->get('severite', 'normale'),
-            'date_debut'                  => $request->date_debut ?: null,
-            'date_fin'                    => $request->date_fin ?: null,
-            'km_au_moment_intervention'   => $request->km_au_moment_intervention,
-            'diagnostic'                  => $request->diagnostic,
-            'cout_main_oeuvre'            => (float)($request->cout_main_oeuvre ?? 0),
-            'cout_pieces'                 => 0,
-            'resultat'                    => 'en_attente',
-            'statut'                      => $request->get('statut', 'planifiee'),
-            'notes'                       => $request->notes,
-            'est_supprime'                => 0,
-            'date_creation'               => now(),
-            'date_modification'           => now(),
+            'vehicule_immatriculation'  => $immatriculation,
+            'intervenant_id'            => $request->intervenant_id,
+            'type_intervention'         => $request->type_intervention,
+            'severite'                  => $request->get('severite', 'normale'),
+            'date_debut'                => $request->date_debut ?: null,
+            'date_fin'                  => $request->date_fin   ?: null,
+            'km_au_moment_intervention' => $request->km_au_moment_intervention,
+            'diagnostic'                => $request->diagnostic,
+            'cout_main_oeuvre'          => (float)($request->cout_main_oeuvre ?? 0),
+            'cout_pieces'               => 0,
+            'resultat'                  => 'en_attente',
+            'statut'                    => $request->get('statut', 'planifiee'),
+            'notes'                     => $request->notes,
+            'est_supprime'              => 0,
+            'date_creation'             => now(),
+            'date_modification'         => now(),
         ]);
 
-        return response()->json(
-            DB::table('interventions')->find($id),
-            201
-        );
+        return response()->json(DB::table('interventions')->find($id), 201);
     }
 
     // =========================================================================
@@ -847,28 +716,16 @@ class VehiculesController extends Controller
 
         $items = DB::table('missions as m')
             ->leftJoin('utilisateurs as u', 'u.id', '=', 'm.chauffeur_user_id')
-            ->leftJoin('directions as d', 'd.id', '=', 'm.direction_id')
-            ->where('m.vehicule_immatriculation', $immatriculation)
-            ->where('m.est_supprime', 0)
+            ->leftJoin('directions as d',   'd.id', '=', 'm.direction_id')
+            ->where('m.vehicule_immatriculation', $immatriculation)->where('m.est_supprime', 0)
             ->orderBy('m.date_depart_prevue', 'desc')
             ->select(
-                'm.id',
-                'm.type_mission',
-                'm.destination',
-                'm.date_depart_prevue',
-                'm.date_depart_reelle',
-                'm.date_retour_reelle',
-                'm.km_depart',
-                'm.km_retour',
-                'm.carburant_consomme',
-                'm.cout_carburant',
-                'm.statut',
-                'm.reference_mission',
-                'm.observations',
-                'u.nom as chauffeur_nom',
-                'd.nom as direction_nom'
-            )
-            ->get();
+                'm.id', 'm.type_mission', 'm.destination',
+                'm.date_depart_prevue', 'm.date_depart_reelle', 'm.date_retour_reelle',
+                'm.km_depart', 'm.km_retour', 'm.carburant_consomme', 'm.cout_carburant',
+                'm.statut', 'm.reference_mission', 'm.observations',
+                'u.nom as chauffeur_nom', 'd.nom as direction_nom'
+            )->get();
 
         return response()->json($items);
     }
@@ -877,36 +734,20 @@ class VehiculesController extends Controller
     // 10. CARBURANT D'UN VÉHICULE (CRUD COMPLET)
     // =========================================================================
 
-    /**
-     * GET /api/admin/vehicules/{immatriculation}/carburant
-     *
-     * Liste tous les pleins du véhicule, enrichis avec le nom de la mission si liée.
-     */
     public function carburant(string $immatriculation): JsonResponse
     {
         $this->assertVehiculeExists($immatriculation);
 
         $items = DB::table('carnets_carburant as cc')
             ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
-            ->where('cc.vehicule_immatriculation', $immatriculation)
-            ->where('cc.est_supprime', 0)
+            ->where('cc.vehicule_immatriculation', $immatriculation)->where('cc.est_supprime', 0)
             ->orderBy('cc.date_plein', 'desc')
             ->select(
-                'cc.id',
-                'cc.vehicule_immatriculation',
-                'cc.mission_id',
-                'm.reference_mission as mission_reference',
-                'm.destination     as mission_destination',
-                'cc.date_plein',
-                'cc.kilometrage',
-                'cc.litres',
-                'cc.prix_unitaire',
-                'cc.station',
-                'cc.chemin_recu',
-                'cc.km_depuis_dernier_plein',
-                'cc.consommation_calculee',
-                'cc.notes',
-                'cc.date_creation'
+                'cc.id', 'cc.vehicule_immatriculation', 'cc.mission_id',
+                'm.reference_mission as mission_reference', 'm.destination as mission_destination',
+                'cc.date_plein', 'cc.kilometrage', 'cc.litres', 'cc.prix_unitaire',
+                'cc.station', 'cc.chemin_recu', 'cc.km_depuis_dernier_plein',
+                'cc.consommation_calculee', 'cc.notes', 'cc.date_creation'
             )
             ->get()
             ->map(function ($item) {
@@ -919,12 +760,25 @@ class VehiculesController extends Controller
         return response()->json($items);
     }
 
-    /**
-     * POST /api/admin/vehicules/{immatriculation}/carburant
-     *
-     * Crée un nouveau plein. Le kilométrage est récupéré depuis la table véhicules
-     * si non fourni. La consommation est calculée automatiquement.
-     */
+    public function showCarburant(string $immatriculation, int $carburantId): JsonResponse
+    {
+        $this->assertVehiculeExists($immatriculation);
+
+        $record = DB::table('carnets_carburant as cc')
+            ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
+            ->where('cc.id', $carburantId)->where('cc.vehicule_immatriculation', $immatriculation)
+            ->where('cc.est_supprime', 0)
+            ->select('cc.*', 'm.reference_mission as mission_reference', 'm.destination as mission_destination')
+            ->first();
+
+        if (!$record) return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
+
+        $record->cout_total = ($record->litres && $record->prix_unitaire)
+            ? round((float)$record->litres * (float)$record->prix_unitaire, 2) : null;
+
+        return response()->json($record);
+    }
+
     public function storeCarburant(Request $request, string $immatriculation): JsonResponse
     {
         $this->assertVehiculeExists($immatriculation);
@@ -938,46 +792,29 @@ class VehiculesController extends Controller
             'mission_id'    => 'nullable|integer|exists:missions,id',
             'notes'         => 'nullable|string',
         ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        // Kilométrage : utiliser celui fourni ou récupérer depuis le véhicule
         $kilometrage = $request->filled('kilometrage')
             ? (int)$request->kilometrage
             : (int)DB::table('vehicules')->where('immatriculation', $immatriculation)->value('kilometrage');
 
-        // Vérification cohérence mission/véhicule
         if ($request->filled('mission_id')) {
-            $missionOk = DB::table('missions')
+            $ok = DB::table('missions')
                 ->where('id', $request->mission_id)
                 ->where('vehicule_immatriculation', $immatriculation)
-                ->where('est_supprime', 0)
-                ->exists();
-
-            if (!$missionOk) {
-                return response()->json([
-                    'message' => 'La mission spécifiée n\'appartient pas à ce véhicule.',
-                ], 422);
-            }
+                ->where('est_supprime', 0)->exists();
+            if (!$ok) return response()->json(['message' => "La mission n'appartient pas à ce véhicule."], 422);
         }
 
-        // Dernier plein pour calculer km_depuis_dernier_plein et consommation
-        $dernierPlein = DB::table('carnets_carburant')
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->orderBy('date_plein', 'desc')
-            ->orderBy('id', 'desc')
-            ->first();
+        $dernierPlein     = DB::table('carnets_carburant')
+            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
+            ->orderBy('date_plein', 'desc')->orderBy('id', 'desc')->first();
 
         $kmDepuisDernier  = null;
         $consommationCalc = null;
 
         if ($dernierPlein && $dernierPlein->kilometrage && $kilometrage > $dernierPlein->kilometrage) {
             $kmDepuisDernier = $kilometrage - (int)$dernierPlein->kilometrage;
-
-            // Consommation en L/100km
             if ($kmDepuisDernier > 0) {
                 $consommationCalc = round(((float)$request->litres / $kmDepuisDernier) * 100, 2);
             }
@@ -990,57 +827,40 @@ class VehiculesController extends Controller
             'kilometrage'              => $kilometrage,
             'litres'                   => $request->litres,
             'prix_unitaire'            => $request->prix_unitaire ?: null,
-            'station'                  => $request->station ?: null,
+            'station'                  => $request->station       ?: null,
             'km_depuis_dernier_plein'  => $kmDepuisDernier,
             'consommation_calculee'    => $consommationCalc,
-            'notes'                    => $request->notes ?: null,
+            'notes'                    => $request->notes         ?: null,
             'est_supprime'             => 0,
             'date_creation'            => now(),
         ]);
 
-        // Mise à jour du kilométrage du véhicule si le nouveau km est supérieur
         $kmActuel = (int)DB::table('vehicules')->where('immatriculation', $immatriculation)->value('kilometrage');
         if ($kilometrage > $kmActuel) {
-            DB::table('vehicules')
-                ->where('immatriculation', $immatriculation)
-                ->update([
-                    'kilometrage'      => $kilometrage,
-                    'date_maj_km'      => now()->toDateString(),
-                    'date_modification' => now(),
-                ]);
+            DB::table('vehicules')->where('immatriculation', $immatriculation)->update([
+                'kilometrage'      => $kilometrage,
+                'date_maj_km'      => now()->toDateString(),
+                'date_modification'=> now(),
+            ]);
         }
 
         $record = DB::table('carnets_carburant as cc')
             ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
             ->where('cc.id', $id)
-            ->select(
-                'cc.*',
-                'm.reference_mission as mission_reference',
-                'm.destination as mission_destination'
-            )
+            ->select('cc.*', 'm.reference_mission as mission_reference', 'm.destination as mission_destination')
             ->first();
 
         return response()->json($record, 201);
     }
 
-    /**
-     * PUT /api/admin/vehicules/{immatriculation}/carburant/{carburantId}
-     *
-     * Modifie un enregistrement de carburant existant et recalcule la consommation.
-     */
     public function updateCarburant(Request $request, string $immatriculation, int $carburantId): JsonResponse
     {
         $this->assertVehiculeExists($immatriculation);
 
         $record = DB::table('carnets_carburant')
-            ->where('id', $carburantId)
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->first();
-
-        if (!$record) {
-            return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
-        }
+            ->where('id', $carburantId)->where('vehicule_immatriculation', $immatriculation)
+            ->where('est_supprime', 0)->first();
+        if (!$record) return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
 
         $validator = Validator::make($request->all(), [
             'date_plein'    => 'nullable|date',
@@ -1051,135 +871,56 @@ class VehiculesController extends Controller
             'mission_id'    => 'nullable|integer|exists:missions,id',
             'notes'         => 'nullable|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        // Vérification cohérence mission/véhicule
-        if ($request->filled('mission_id')) {
-            $missionOk = DB::table('missions')
-                ->where('id', $request->mission_id)
-                ->where('vehicule_immatriculation', $immatriculation)
-                ->where('est_supprime', 0)
-                ->exists();
-
-            if (!$missionOk) {
-                return response()->json([
-                    'message' => 'La mission spécifiée n\'appartient pas à ce véhicule.',
-                ], 422);
-            }
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $updateData = [];
-
         if ($request->has('date_plein'))    $updateData['date_plein']    = $request->date_plein;
         if ($request->has('litres'))        $updateData['litres']        = $request->litres;
         if ($request->has('prix_unitaire')) $updateData['prix_unitaire'] = $request->prix_unitaire ?: null;
-        if ($request->has('station'))       $updateData['station']       = $request->station ?: null;
-        if ($request->has('mission_id'))    $updateData['mission_id']    = $request->mission_id ?: null;
-        if ($request->has('notes'))         $updateData['notes']         = $request->notes ?: null;
+        if ($request->has('station'))       $updateData['station']       = $request->station       ?: null;
+        if ($request->has('mission_id'))    $updateData['mission_id']    = $request->mission_id    ?: null;
+        if ($request->has('notes'))         $updateData['notes']         = $request->notes         ?: null;
 
-        // Recalcul km_depuis_dernier_plein et consommation si kilometrage ou litres changent
         $newKm     = $request->filled('kilometrage') ? (int)$request->kilometrage : (int)$record->kilometrage;
         $newLitres = $request->filled('litres')      ? (float)$request->litres    : (float)$record->litres;
+        if ($request->filled('kilometrage')) $updateData['kilometrage'] = $newKm;
 
-        if ($request->filled('kilometrage')) {
-            $updateData['kilometrage'] = $newKm;
-        }
-
-        // Recalcul basé sur le plein précédent (hors enregistrement courant)
         $pleinPrecedent = DB::table('carnets_carburant')
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->where('id', '!=', $carburantId)
-            ->where('kilometrage', '<', $newKm)
-            ->orderBy('kilometrage', 'desc')
-            ->value('kilometrage');
+            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
+            ->where('id', '!=', $carburantId)->where('kilometrage', '<', $newKm)
+            ->orderBy('kilometrage', 'desc')->value('kilometrage');
 
         if ($pleinPrecedent && $newKm > $pleinPrecedent) {
             $kmDepuis = $newKm - (int)$pleinPrecedent;
             $updateData['km_depuis_dernier_plein'] = $kmDepuis;
-            $updateData['consommation_calculee']   = ($kmDepuis > 0)
-                ? round(($newLitres / $kmDepuis) * 100, 2)
-                : null;
+            $updateData['consommation_calculee']   = $kmDepuis > 0 ? round(($newLitres / $kmDepuis) * 100, 2) : null;
         } else {
             $updateData['km_depuis_dernier_plein'] = null;
             $updateData['consommation_calculee']   = null;
         }
 
-        DB::table('carnets_carburant')
-            ->where('id', $carburantId)
-            ->update($updateData);
+        DB::table('carnets_carburant')->where('id', $carburantId)->update($updateData);
 
         $updated = DB::table('carnets_carburant as cc')
             ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
             ->where('cc.id', $carburantId)
-            ->select(
-                'cc.*',
-                'm.reference_mission as mission_reference',
-                'm.destination as mission_destination'
-            )
+            ->select('cc.*', 'm.reference_mission as mission_reference', 'm.destination as mission_destination')
             ->first();
 
         return response()->json($updated);
     }
 
-    /**
-     * DELETE /api/admin/vehicules/{immatriculation}/carburant/{carburantId}
-     *
-     * Soft delete d'un enregistrement de carburant.
-     */
     public function destroyCarburant(string $immatriculation, int $carburantId): JsonResponse
     {
         $this->assertVehiculeExists($immatriculation);
 
         $rows = DB::table('carnets_carburant')
-            ->where('id', $carburantId)
-            ->where('vehicule_immatriculation', $immatriculation)
+            ->where('id', $carburantId)->where('vehicule_immatriculation', $immatriculation)
             ->where('est_supprime', 0)
-            ->update([
-                'est_supprime'     => 1,
-                'date_suppression' => now(),
-            ]);
+            ->update(['est_supprime' => 1, 'date_suppression' => now()]);
 
-        if (!$rows) {
-            return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
-        }
-
+        if (!$rows) return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
         return response()->json(['message' => 'Enregistrement carburant supprimé.']);
-    }
-
-    /**
-     * GET /api/admin/vehicules/{immatriculation}/carburant/{carburantId}
-     *
-     * Détail d'un seul enregistrement de carburant.
-     */
-    public function showCarburant(string $immatriculation, int $carburantId): JsonResponse
-    {
-        $this->assertVehiculeExists($immatriculation);
-
-        $record = DB::table('carnets_carburant as cc')
-            ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
-            ->where('cc.id', $carburantId)
-            ->where('cc.vehicule_immatriculation', $immatriculation)
-            ->where('cc.est_supprime', 0)
-            ->select(
-                'cc.*',
-                'm.reference_mission as mission_reference',
-                'm.destination as mission_destination'
-            )
-            ->first();
-
-        if (!$record) {
-            return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
-        }
-
-        $record->cout_total = ($record->litres && $record->prix_unitaire)
-            ? round((float)$record->litres * (float)$record->prix_unitaire, 2)
-            : null;
-
-        return response()->json($record);
     }
 
     // =========================================================================
@@ -1191,31 +932,26 @@ class VehiculesController extends Controller
         $this->assertVehiculeExists($immatriculation);
 
         $missions = DB::table('missions')
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
+            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
             ->selectRaw('COUNT(*) as total_missions, COALESCE(SUM(km_retour - km_depart), 0) as total_km')
             ->first();
 
         $carburant = DB::table('carnets_carburant')
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
+            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
             ->selectRaw('COALESCE(SUM(litres), 0) as total_litres')
             ->first();
 
-        $totalKm      = (float)($missions->total_km ?? 0);
+        $totalKm      = (float)($missions->total_km    ?? 0);
         $totalLitres  = (float)($carburant->total_litres ?? 0);
         $consoMoyenne = ($totalKm > 0) ? round($totalLitres / $totalKm * 100, 2) : 0;
 
         $maintenance = DB::table('interventions')
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
+            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
             ->selectRaw('COALESCE(SUM(cout_main_oeuvre + cout_pieces), 0) as cout_maintenance')
             ->first();
 
-        $coutMaintenance = (float)($maintenance->cout_maintenance ?? 0);
-        $coutCarburant   = DB::table('carnets_carburant')
-            ->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
+        $coutCarburant = DB::table('carnets_carburant')
+            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
             ->selectRaw('COALESCE(SUM(litres * prix_unitaire), 0) as total')
             ->value('total') ?? 0;
 
@@ -1224,182 +960,273 @@ class VehiculesController extends Controller
             'total_km'             => (int)$totalKm,
             'total_litres'         => round($totalLitres, 2),
             'consommation_moyenne' => $consoMoyenne,
-            'cout_maintenance'     => round($coutMaintenance, 2),
-            'cout_total'           => round($coutMaintenance + (float)$coutCarburant, 2),
+            'cout_maintenance'     => round((float)($maintenance->cout_maintenance ?? 0), 2),
+            'cout_total'           => round((float)($maintenance->cout_maintenance ?? 0) + (float)$coutCarburant, 2),
         ]);
     }
 
     // =========================================================================
-    // 12. DONNÉES DE RÉFÉRENCE
+    // 12. DONNÉES DE RÉFÉRENCE — CRUD COMPLET
     // =========================================================================
 
+    /**
+     * GET /api/admin/vehicules/references
+     *
+     * Retourne catégories, marques, modèles (avec marque_id pour filtrage dynamique),
+     * directions, années ET chauffeurs — alimente tous les menus déroulants du formulaire.
+     *
+     * Le tableau `chauffeurs` contient tous les utilisateurs ayant le rôle 'chauffeur'
+     * (code = 'chauffeur' dans la table roles), actifs et non supprimés.
+     */
     public function references(): JsonResponse
     {
         $categories = DB::table('categories_vehicules')
-            ->where('est_actif', 1)
-            ->whereNull('deleted_at')
-            ->orderBy('nom')
-            ->select('id', 'nom')
-            ->get();
+            ->where('est_actif', 1)->whereNull('deleted_at')->orderBy('nom')
+            ->select('id', 'nom', 'description')->get();
 
         $marques = DB::table('marques')
-            ->where('est_actif', 1)
-            ->whereNull('deleted_at')
-            ->orderBy('nom')
-            ->select('id', 'nom')
-            ->get();
+            ->where('est_actif', 1)->whereNull('deleted_at')->orderBy('nom')
+            ->select('id', 'nom', 'pays_origine')->get();
 
+        // Modèles avec marque_id + données techniques pour auto-remplissage du formulaire
         $modeles = DB::table('modeles as mo')
             ->join('marques as ma', 'ma.id', '=', 'mo.marque_id')
-            ->where('mo.est_actif', 1)
-            ->whereNull('mo.deleted_at')
-            ->orderBy('ma.nom')
-            ->orderBy('mo.nom')
-            ->select('mo.id', 'mo.nom', 'ma.nom as marque_nom')
-            ->get();
+            ->where('mo.est_actif', 1)->whereNull('mo.deleted_at')
+            ->orderBy('ma.nom')->orderBy('mo.nom')
+            ->select(
+                'mo.id', 'mo.nom', 'mo.marque_id',
+                'ma.nom as marque_nom',
+                'mo.type_carburant_defaut',
+                'mo.nb_places_defaut',
+                'mo.capacite_reservoir_defaut',
+                'mo.consommation_moyenne_defaut'
+            )->get();
 
         $directions = DB::table('directions')
-            ->where('est_supprime', 0)
-            ->orderBy('nom')
-            ->select('id', 'nom')
+            ->where('est_supprime', 0)->orderBy('nom')
+            ->select('id', 'nom')->get();
+
+        $annees = DB::table('annees')
+            ->where('est_actif', 1)->orderBy('annee', 'desc')
+            ->select('id', 'annee')->get();
+
+        // ── NOUVEAU : liste des chauffeurs ────────────────────────────────────
+        // Récupère tous les utilisateurs actifs dont le rôle a le code 'chauffeur'
+        $chauffeurs = DB::table('utilisateurs as u')
+            ->join('roles as r', 'r.id', '=', 'u.role_id')
+            ->where('r.code', 'chauffeur')
+            ->where('r.est_supprime', 0)
+            ->where('u.est_actif', 1)
+            ->where('u.est_supprime', 0)
+            ->orderBy('u.nom')
+            ->select('u.id', 'u.nom', 'u.email')
             ->get();
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json([
             'categories' => $categories,
             'marques'    => $marques,
             'modeles'    => $modeles,
             'directions' => $directions,
+            'annees'     => $annees,
+            'chauffeurs' => $chauffeurs,   // <-- ajout
         ]);
     }
 
-    // ─── CRUD Catégories ──────────────────────────────────────────────────────
+    // ── CRUD Catégories ──────────────────────────────────────────────────────
 
     public function storeCategorie(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'nom' => 'required|string|max:100|unique:categories_vehicules,nom',
+            'nom'         => 'required|string|max:100|unique:categories_vehicules,nom',
+            'description' => 'nullable|string|max:500',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $id = DB::table('categories_vehicules')->insertGetId([
-            'nom'        => $request->nom,
-            'est_actif'  => 1,
-            'created_at' => now(),
-            'updated_at' => now(),
+            'nom'         => $request->nom,
+            'description' => $request->description ?: null,
+            'est_actif'   => 1,
+            'created_at'  => now(),
+            'updated_at'  => now(),
         ]);
 
-        return response()->json(['id' => $id, 'nom' => $request->nom], 201);
+        return response()->json(['id' => $id, 'nom' => $request->nom, 'description' => $request->description], 201);
+    }
+
+    public function updateCategorie(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'nom'         => 'required|string|max:100|unique:categories_vehicules,nom,' . $id,
+            'description' => 'nullable|string|max:500',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $rows = DB::table('categories_vehicules')->where('id', $id)->whereNull('deleted_at')
+            ->update(['nom' => $request->nom, 'description' => $request->description ?: null, 'updated_at' => now()]);
+
+        if (!$rows) return response()->json(['message' => 'Catégorie introuvable.'], 404);
+        return response()->json(['id' => $id, 'nom' => $request->nom]);
     }
 
     public function destroyCategorie(int $id): JsonResponse
     {
-        $rows = DB::table('categories_vehicules')
-            ->where('id', $id)
-            ->whereNull('deleted_at')
+        $rows = DB::table('categories_vehicules')->where('id', $id)->whereNull('deleted_at')
             ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
 
-        if (!$rows) {
-            return response()->json(['message' => 'Catégorie introuvable.'], 404);
-        }
-
+        if (!$rows) return response()->json(['message' => 'Catégorie introuvable.'], 404);
         return response()->json(['message' => 'Catégorie supprimée.']);
     }
 
-    // ─── CRUD Marques ─────────────────────────────────────────────────────────
+    // ── CRUD Marques ─────────────────────────────────────────────────────────
 
     public function storeMarque(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'nom' => 'required|string|max:100|unique:marques,nom',
+            'nom'          => 'required|string|max:100|unique:marques,nom',
+            'pays_origine' => 'nullable|string|max:100',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $id = DB::table('marques')->insertGetId([
-            'nom'        => $request->nom,
+            'nom'          => $request->nom,
+            'pays_origine' => $request->pays_origine ?: null,
+            'est_actif'    => 1,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+
+        return response()->json(['id' => $id, 'nom' => $request->nom, 'pays_origine' => $request->pays_origine], 201);
+    }
+
+    public function updateMarque(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'nom'          => 'required|string|max:100|unique:marques,nom,' . $id,
+            'pays_origine' => 'nullable|string|max:100',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $rows = DB::table('marques')->where('id', $id)->whereNull('deleted_at')
+            ->update(['nom' => $request->nom, 'pays_origine' => $request->pays_origine ?: null, 'updated_at' => now()]);
+
+        if (!$rows) return response()->json(['message' => 'Marque introuvable.'], 404);
+        return response()->json(['id' => $id, 'nom' => $request->nom]);
+    }
+
+    public function destroyMarque(int $id): JsonResponse
+    {
+        $rows = DB::table('marques')->where('id', $id)->whereNull('deleted_at')
+            ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
+
+        if (!$rows) return response()->json(['message' => 'Marque introuvable.'], 404);
+        return response()->json(['message' => 'Marque supprimée.']);
+    }
+
+    // ── CRUD Modèles ─────────────────────────────────────────────────────────
+
+    public function storeModele(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'marque_id'                   => 'required|integer|exists:marques,id',
+            'categorie_id'                => 'required|integer|exists:categories_vehicules,id',
+            'nom'                         => 'required|string|max:100',
+            'nb_places_defaut'            => 'nullable|integer|min:1|max:100',
+            'type_carburant_defaut'       => 'nullable|string|in:diesel,essence,hybride,electrique',
+            'capacite_reservoir_defaut'   => 'nullable|integer|min:0',
+            'consommation_moyenne_defaut' => 'nullable|numeric|min:0',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $exists = DB::table('modeles')
+            ->where('marque_id', $request->marque_id)->where('nom', $request->nom)
+            ->whereNull('deleted_at')->exists();
+        if ($exists) return response()->json(['errors' => ['nom' => ['Ce modèle existe déjà pour cette marque.']]], 422);
+
+        $id = DB::table('modeles')->insertGetId([
+            'marque_id'                   => $request->marque_id,
+            'categorie_id'                => $request->categorie_id,
+            'nom'                         => $request->nom,
+            'nb_places_defaut'            => $request->nb_places_defaut ?? 5,
+            'type_carburant_defaut'       => $request->type_carburant_defaut       ?: null,
+            'capacite_reservoir_defaut'   => $request->capacite_reservoir_defaut   ?: null,
+            'consommation_moyenne_defaut' => $request->consommation_moyenne_defaut ?: null,
+            'est_actif'                   => 1,
+            'created_at'                  => now(),
+            'updated_at'                  => now(),
+        ]);
+
+        $modele = DB::table('modeles as mo')
+            ->join('marques as ma', 'ma.id', '=', 'mo.marque_id')
+            ->where('mo.id', $id)
+            ->select(
+                'mo.id', 'mo.nom', 'mo.marque_id', 'ma.nom as marque_nom',
+                'mo.type_carburant_defaut', 'mo.nb_places_defaut',
+                'mo.capacite_reservoir_defaut', 'mo.consommation_moyenne_defaut'
+            )->first();
+
+        return response()->json($modele, 201);
+    }
+
+    public function updateModele(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'nom'                         => 'required|string|max:100',
+            'categorie_id'                => 'nullable|integer|exists:categories_vehicules,id',
+            'nb_places_defaut'            => 'nullable|integer|min:1|max:100',
+            'type_carburant_defaut'       => 'nullable|string|in:diesel,essence,hybride,electrique',
+            'capacite_reservoir_defaut'   => 'nullable|integer|min:0',
+            'consommation_moyenne_defaut' => 'nullable|numeric|min:0',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $data = ['nom' => $request->nom, 'updated_at' => now()];
+        if ($request->has('categorie_id'))               $data['categorie_id']               = $request->categorie_id;
+        if ($request->has('nb_places_defaut'))           $data['nb_places_defaut']           = $request->nb_places_defaut ?? 5;
+        if ($request->has('type_carburant_defaut'))      $data['type_carburant_defaut']      = $request->type_carburant_defaut      ?: null;
+        if ($request->has('capacite_reservoir_defaut'))  $data['capacite_reservoir_defaut']  = $request->capacite_reservoir_defaut  ?: null;
+        if ($request->has('consommation_moyenne_defaut'))$data['consommation_moyenne_defaut']= $request->consommation_moyenne_defaut ?: null;
+
+        $rows = DB::table('modeles')->where('id', $id)->whereNull('deleted_at')->update($data);
+        if (!$rows) return response()->json(['message' => 'Modèle introuvable.'], 404);
+        return response()->json(['id' => $id, 'nom' => $request->nom]);
+    }
+
+    public function destroyModele(int $id): JsonResponse
+    {
+        $rows = DB::table('modeles')->where('id', $id)->whereNull('deleted_at')
+            ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
+
+        if (!$rows) return response()->json(['message' => 'Modèle introuvable.'], 404);
+        return response()->json(['message' => 'Modèle supprimé.']);
+    }
+
+    // ── CRUD Années ──────────────────────────────────────────────────────────
+
+    public function storeAnnee(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'annee' => 'required|integer|min:1900|max:2100|unique:annees,annee',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $id = DB::table('annees')->insertGetId([
+            'annee'      => $request->annee,
             'est_actif'  => 1,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-        return response()->json(['id' => $id, 'nom' => $request->nom], 201);
+        return response()->json(['id' => $id, 'annee' => $request->annee], 201);
     }
 
-    public function destroyMarque(int $id): JsonResponse
+    public function destroyAnnee(int $id): JsonResponse
     {
-        $rows = DB::table('marques')
-            ->where('id', $id)
-            ->whereNull('deleted_at')
-            ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
+        $rows = DB::table('annees')->where('id', $id)
+            ->update(['est_actif' => 0, 'updated_at' => now()]);
 
-        if (!$rows) {
-            return response()->json(['message' => 'Marque introuvable.'], 404);
-        }
-
-        return response()->json(['message' => 'Marque supprimée.']);
-    }
-
-    // ─── CRUD Modèles ─────────────────────────────────────────────────────────
-
-    public function storeModele(Request $request): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'marque_id'    => 'required|integer|exists:marques,id',
-            'nom'          => 'required|string|max:100',
-            'categorie_id' => 'nullable|integer|exists:categories_vehicules,id',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $exists = DB::table('modeles')
-            ->where('marque_id', $request->marque_id)
-            ->where('nom', $request->nom)
-            ->whereNull('deleted_at')
-            ->exists();
-
-        if ($exists) {
-            return response()->json(['errors' => ['nom' => ['Ce modèle existe déjà pour cette marque.']]], 422);
-        }
-
-        $categorieId = $request->categorie_id
-            ?? DB::table('categories_vehicules')->where('est_actif', 1)->value('id');
-
-        $id = DB::table('modeles')->insertGetId([
-            'marque_id'        => $request->marque_id,
-            'categorie_id'     => $categorieId,
-            'nom'              => $request->nom,
-            'nb_places_defaut' => 5,
-            'est_actif'        => 1,
-            'created_at'       => now(),
-            'updated_at'       => now(),
-        ]);
-
-        return response()->json([
-            'id'        => $id,
-            'nom'       => $request->nom,
-            'marque_id' => $request->marque_id,
-        ], 201);
-    }
-
-    public function destroyModele(int $id): JsonResponse
-    {
-        $rows = DB::table('modeles')
-            ->where('id', $id)
-            ->whereNull('deleted_at')
-            ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
-
-        if (!$rows) {
-            return response()->json(['message' => 'Modèle introuvable.'], 404);
-        }
-
-        return response()->json(['message' => 'Modèle supprimé.']);
+        if (!$rows) return response()->json(['message' => 'Année introuvable.'], 404);
+        return response()->json(['message' => 'Année désactivée.']);
     }
 
     // =========================================================================
@@ -1408,40 +1235,37 @@ class VehiculesController extends Controller
 
     private function assertVehiculeExists(string $immatriculation): void
     {
-        $exists = DB::table('vehicules')
-            ->where('immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->exists();
-
-        if (!$exists) {
+        if (!DB::table('vehicules')
+            ->where('immatriculation', $immatriculation)->where('est_supprime', 0)->exists()) {
             abort(404, 'Véhicule introuvable.');
         }
     }
 
     private function uploadImage($file): string
     {
-        $filename = Str::uuid() . '.' . $file->getClientOriginalExtension();
-        return $file->storeAs(self::IMAGE_DISK_PATH, $filename, 'public');
+        return $file->storeAs(
+            self::IMAGE_DISK_PATH,
+            Str::uuid() . '.' . $file->getClientOriginalExtension(),
+            'public'
+        );
     }
 
     private function buildFileUrl(string $chemin): string
     {
-        if (filter_var($chemin, FILTER_VALIDATE_URL)) {
-            return $chemin;
-        }
+        if (filter_var($chemin, FILTER_VALIDATE_URL)) return $chemin;
         return Storage::url($chemin);
     }
 
     private function resolveMarqueId(?string $nom): ?int
     {
         if (!$nom) return null;
-        return DB::table('marques')->where('nom', $nom)->value('id');
+        return DB::table('marques')->where('nom', $nom)->whereNull('deleted_at')->value('id');
     }
 
     private function resolveModeleId(?string $nom, ?int $marqueId): ?int
     {
         if (!$nom) return null;
-        $q = DB::table('modeles')->where('nom', $nom);
+        $q = DB::table('modeles')->where('nom', $nom)->whereNull('deleted_at');
         if ($marqueId) $q->where('marque_id', $marqueId);
         return $q->value('id');
     }
@@ -1449,13 +1273,13 @@ class VehiculesController extends Controller
     private function resolveCategorieId(?string $nom): ?int
     {
         if (!$nom) return null;
-        return DB::table('categories_vehicules')->where('nom', $nom)->value('id');
+        return DB::table('categories_vehicules')->where('nom', $nom)->whereNull('deleted_at')->value('id');
     }
 
     private function resolveDirectionId(?string $nom): ?int
     {
         if (!$nom) return null;
-        return DB::table('directions')->where('nom', $nom)->value('id');
+        return DB::table('directions')->where('nom', $nom)->where('est_supprime', 0)->value('id');
     }
 
     private function resolveAnneeId(?int $annee): ?int

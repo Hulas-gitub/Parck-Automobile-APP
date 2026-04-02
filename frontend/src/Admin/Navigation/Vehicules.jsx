@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import Sidebar from '../../components/Sidebar';
@@ -46,6 +47,8 @@ import {
   deleteMarque,
   createModele,
   deleteModele,
+  createAnnee,
+  deleteAnnee,
 } from '../../api/Admin-Axios/Vehicules-axios';
 
 // ============================================================================
@@ -252,49 +255,69 @@ const HorizontalBarChart = ({ data, colors, darkMode, title }) => {
 // ============================================================================
 // VEHICLE EXPORT DROPDOWN
 // ============================================================================
-const VehicleExportDropdown = ({ filteredVehicles, darkMode, theme }) => {
+const VehicleExportDropdown = ({ fetchAllVehicles, darkMode, theme }) => {
   const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
-  const vHeaders = ['Immatriculation', 'Marque', 'Modele', 'Categorie', 'Annee', 'Kilometrage', 'Statut', 'Chauffeur', 'Direction', 'Carburant', 'Puissance', 'Couleur', 'Date Achat', 'Prix Achat (CFA)'];
-  const vToRow   = (v) => [v.immatriculation, v.marque, v.modele, v.categorie, v.annee, v.kilometrage, v.statut, v.chauffeur || '-', v.direction, v.carburant, v.puissance, v.couleur, v.dateAchat || '-', v.prixAchat ? v.prixAchat.toLocaleString() : '-'];
-  const exportAll = (format) => {
-    const rows = filteredVehicles.map(vToRow);
-    if (format === 'excel') exportToExcel(rows, 'Vehicules_Tous', vHeaders);
-    else exportToPDF('Liste Complète des Véhicules', vHeaders, rows);
-    setOpen(false);
+  const vHeaders = ['Immatriculation','N° Chassis','Marque','Modele','Categorie','Annee','Kilometrage','Statut','Chauffeur','Direction','Carburant','Puissance','Couleur','Nb Places','Conso Moy (L/100)','Km Proch. Vidange','Km Proch. Révision','Date Achat','Coût Acquisition (CFA)','Valeur Résiduelle (CFA)'];
+  const vToRow   = (v) => [v.immatriculation, v.numero_chassis||'-', v.marque, v.modele, v.categorie, v.annee, v.kilometrage, v.statut, v.chauffeur||'-', v.direction, v.carburant, v.puissance||'-', v.couleur||'-', v.nb_places||'-', v.consommation_moyenne||'-', v.km_prochaine_vidange||'-', v.km_prochaine_revision||'-', v.dateAchat||'-', v.cout_acquisition ? v.cout_acquisition.toLocaleString() : '-', v.valeur_residuelle ? v.valeur_residuelle.toLocaleString() : '-'];
+  
+  const exportAll = async (format) => {
+    setExporting(true);
+    try {
+      const allVehicles = await fetchAllVehicles();
+      const rows = allVehicles.map(vToRow);
+      if (format === 'excel') exportToExcel(rows, 'Vehicules_Tous', vHeaders);
+      else exportToPDF('Liste Complète des Véhicules', vHeaders, rows);
+    } catch (err) {
+      console.error('Erreur lors de l\'export:', err);
+    } finally {
+      setExporting(false);
+      setOpen(false);
+    }
   };
-  const exportByGroup = (groupKey, format) => {
-    const groups = {};
-    filteredVehicles.forEach(v => { const key = v[groupKey] || 'Inconnu'; if (!groups[key]) groups[key] = []; groups[key].push(v); });
-    const label = { marque: 'Marque', categorie: 'Categorie', modele: 'Modele', statut: 'Statut' }[groupKey];
-    Object.entries(groups).forEach(([name, list]) => {
-      const rows = list.map(vToRow);
-      if (format === 'excel') exportToExcel(rows, `Vehicules_${label}_${name}`, vHeaders);
-      else exportToPDF(`Véhicules - ${label}: ${name}`, vHeaders, rows);
-    });
-    setOpen(false);
+  
+  const exportByGroup = async (groupKey, format) => {
+    setExporting(true);
+    try {
+      const allVehicles = await fetchAllVehicles();
+      const groups = {};
+      allVehicles.forEach(v => { const key = v[groupKey] || 'Inconnu'; if (!groups[key]) groups[key] = []; groups[key].push(v); });
+      const label = { marque: 'Marque', categorie: 'Categorie', modele: 'Modele', statut: 'Statut' }[groupKey];
+      Object.entries(groups).forEach(([name, list]) => {
+        const rows = list.map(vToRow);
+        if (format === 'excel') exportToExcel(rows, `Vehicules_${label}_${name}`, vHeaders);
+        else exportToPDF(`Véhicules - ${label}: ${name}`, vHeaders, rows);
+      });
+    } catch (err) {
+      console.error('Erreur lors de l\'export:', err);
+    } finally {
+      setExporting(false);
+      setOpen(false);
+    }
   };
+  
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(!open)} className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-        <i className="bi bi-download"></i> Exporter
+      <button onClick={() => setOpen(!open)} disabled={exporting} className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} ${exporting ? 'opacity-50 cursor-not-allowed' : ''}`}>
+        {exporting ? <i className="bi bi-hourglass-split animate-spin"></i> : <i className="bi bi-download"></i>} {exporting ? 'Export...' : 'Exporter'}
       </button>
       {open && (
         <div className={`absolute right-0 top-full mt-1 z-50 rounded-xl shadow-2xl border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} py-2 min-w-[360px]`}>
-          <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Tous les véhicules</p>
-          <button onClick={() => exportAll('excel')} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}><i className="bi bi-file-earmark-spreadsheet text-green-500"></i> Exporter en Excel (CSV)</button>
-          <button onClick={() => exportAll('pdf')}   className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}><i className="bi bi-file-earmark-pdf text-red-500"></i> Exporter en PDF</button>
+          <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Tous les véhicules (toutes pages)</p>
+          <button onClick={() => exportAll('excel')} disabled={exporting} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors ${exporting ? 'opacity-50' : ''}`}><i className="bi bi-file-earmark-spreadsheet text-green-500"></i> Exporter tout en Excel (CSV)</button>
+          <button onClick={() => exportAll('pdf')} disabled={exporting} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors ${exporting ? 'opacity-50' : ''}`}><i className="bi bi-file-earmark-pdf text-red-500"></i> Exporter tout en PDF</button>
           {[{ key: 'marque', label: 'Par Marque' }, { key: 'categorie', label: 'Par Catégorie' }, { key: 'modele', label: 'Par Modèle' }, { key: 'statut', label: 'Par Statut' }].map(({ key, label }) => (
             <React.Fragment key={key}>
               <div className={`my-2 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}></div>
-              <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{label}</p>
-              <button onClick={() => exportByGroup(key, 'excel')} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}><i className="bi bi-file-earmark-spreadsheet text-green-500"></i> {label} - Excel</button>
-              <button onClick={() => exportByGroup(key, 'pdf')}   className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}><i className="bi bi-file-earmark-pdf text-red-500"></i> {label} - PDF</button>
+              <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{label} (tous)</p>
+              <button onClick={() => exportByGroup(key, 'excel')} disabled={exporting} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors ${exporting ? 'opacity-50' : ''}`}><i className="bi bi-file-earmark-spreadsheet text-green-500"></i> {label} - Excel</button>
+              <button onClick={() => exportByGroup(key, 'pdf')} disabled={exporting} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors ${exporting ? 'opacity-50' : ''}`}><i className="bi bi-file-earmark-pdf text-red-500"></i> {label} - PDF</button>
             </React.Fragment>
           ))}
         </div>
@@ -306,15 +329,26 @@ const VehicleExportDropdown = ({ filteredVehicles, darkMode, theme }) => {
 // ============================================================================
 // TABLE EXPORT BUTTON
 // ============================================================================
-const TableExportButton = ({ filteredVehicles, darkMode }) => {
-  const handleExport = () => {
-    const headers = ['Immatriculation', 'Marque', 'Modele', 'Categorie', 'Annee', 'Kilometrage', 'Statut', 'Chauffeur', 'Direction'];
-    const rows    = filteredVehicles.map(v => [v.immatriculation, v.marque, v.modele, v.categorie, v.annee, v.kilometrage, v.statut, v.chauffeur || '-', v.direction]);
-    exportToExcel(rows, 'Tableau_Vehicules', headers);
+const TableExportButton = ({ fetchAllVehicles, darkMode }) => {
+  const [exporting, setExporting] = useState(false);
+  
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const allVehicles = await fetchAllVehicles();
+      const headers = ['Immatriculation','N° Chassis','Marque','Modele','Categorie','Annee','Kilometrage','Statut','Chauffeur','Direction'];
+      const rows = allVehicles.map(v => [v.immatriculation, v.numero_chassis||'-', v.marque, v.modele, v.categorie, v.annee, v.kilometrage, v.statut, v.chauffeur||'-', v.direction]);
+      exportToExcel(rows, 'Tableau_Vehicules_Tous', headers);
+    } catch (err) {
+      console.error('Erreur lors de l\'export:', err);
+    } finally {
+      setExporting(false);
+    }
   };
+  
   return (
-    <button onClick={handleExport} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${darkMode ? 'bg-green-900/30 text-green-400 hover:bg-green-900/50' : 'bg-green-50 text-green-700 hover:bg-green-100'}`} title="Exporter le tableau en Excel">
-      <i className="bi bi-file-earmark-spreadsheet"></i> Excel
+    <button onClick={handleExport} disabled={exporting} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${darkMode ? 'bg-green-900/30 text-green-400 hover:bg-green-900/50' : 'bg-green-50 text-green-700 hover:bg-green-100'} ${exporting ? 'opacity-50 cursor-not-allowed' : ''}`} title="Exporter tous les véhicules en Excel">
+      {exporting ? <i className="bi bi-hourglass-split animate-spin"></i> : <i className="bi bi-file-earmark-spreadsheet"></i>} {exporting ? 'Export...' : 'Excel (tout)'}
     </button>
   );
 };
@@ -504,7 +538,6 @@ const ModalEditDocument = ({ darkMode, theme, immatriculation, document: doc, on
             <label className={labelCls}>Notes</label>
             <textarea value={formDoc.notes} rows={2} onChange={e => setFormDoc(prev => ({ ...prev, notes: e.target.value }))} className={`${inputCls} resize-none`} />
           </div>
-          {/* Remplacement optionnel du fichier */}
           <div>
             <label className={labelCls}>Remplacer le fichier <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>(optionnel)</span></label>
             <label className={`flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${darkMode ? 'border-gray-600 hover:border-amber-500 bg-gray-800' : 'border-gray-300 hover:border-amber-400 bg-gray-50'}`}>
@@ -585,7 +618,6 @@ const ModalCarburant = ({ darkMode, theme, immatriculation, carburant: editCarbu
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
       <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-2xl w-full max-w-md shadow-2xl overflow-hidden`}>
-        {/* Header */}
         <div className="p-5 flex items-center justify-between border-b" style={{ borderColor: darkMode ? '#374151' : '#e5e7eb' }}>
           <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
             <i className={`bi ${isEdit ? 'bi-pencil-square text-amber-400' : 'bi-fuel-pump text-yellow-400'} mr-2`}></i>
@@ -593,16 +625,11 @@ const ModalCarburant = ({ darkMode, theme, immatriculation, carburant: editCarbu
           </h3>
           <button onClick={onClose} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}><i className="bi bi-x-lg"></i></button>
         </div>
-
-        {/* Body */}
         <div className="p-5 space-y-4">
-          {/* Date */}
           <div>
             <label className={labelCls}>Date du plein *</label>
             <input type="date" value={form.date_plein} onChange={e => setForm(p => ({ ...p, date_plein: e.target.value }))} className={inputCls} />
           </div>
-
-          {/* Litres + Prix */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Litres *</label>
@@ -616,16 +643,12 @@ const ModalCarburant = ({ darkMode, theme, immatriculation, carburant: editCarbu
               <input type="number" step="1" min="0" value={form.prix_unitaire} onChange={e => setForm(p => ({ ...p, prix_unitaire: e.target.value }))} placeholder="0" className={inputCls} />
             </div>
           </div>
-
-          {/* Montant calculé */}
           {(form.litres && form.prix_unitaire) && (
             <div className={`flex items-center justify-between px-4 py-3 rounded-xl ${darkMode ? 'bg-yellow-900/20 border border-yellow-800/40' : 'bg-yellow-50 border border-yellow-200'}`}>
               <span className={`text-sm ${darkMode ? 'text-yellow-300' : 'text-yellow-700'}`}><i className="bi bi-calculator mr-2"></i>Montant total</span>
               <span className={`text-sm font-bold ${darkMode ? 'text-yellow-200' : 'text-yellow-800'}`}>{montantTotal} CFA</span>
             </div>
           )}
-
-          {/* Kilométrage */}
           <div>
             <label className={labelCls}>Kilométrage au plein</label>
             <div className="relative">
@@ -633,21 +656,15 @@ const ModalCarburant = ({ darkMode, theme, immatriculation, carburant: editCarbu
               <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>km</span>
             </div>
           </div>
-
-          {/* Station */}
           <div>
             <label className={labelCls}>Station / Fournisseur</label>
             <input type="text" value={form.station} onChange={e => setForm(p => ({ ...p, station: e.target.value }))} placeholder="Ex: Total, Shell, SOGARA..." className={inputCls} />
           </div>
-
-          {/* Notes */}
           <div>
             <label className={labelCls}>Notes</label>
             <textarea value={form.notes} rows={2} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Observations éventuelles..." className={`${inputCls} resize-none`} />
           </div>
         </div>
-
-        {/* Footer */}
         <div className="p-5 border-t flex items-center justify-end gap-3" style={{ borderColor: darkMode ? '#374151' : '#e5e7eb' }}>
           <button onClick={onClose} className={`px-5 py-2.5 rounded-lg border text-sm ${darkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-700 hover:bg-gray-100'} transition-colors`}>Annuler</button>
           <button onClick={handleSubmit} disabled={loading} className="px-5 py-2.5 rounded-lg text-white text-sm font-medium hover:opacity-90 disabled:opacity-60 transition-all flex items-center gap-2" style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
@@ -663,29 +680,78 @@ const ModalCarburant = ({ darkMode, theme, immatriculation, carburant: editCarbu
 };
 
 // ============================================================================
-// COMPOSANT STATUS DROPDOWN
+// COMPOSANT STATUS DROPDOWN (avec Portal pour éviter le clipping)
 // ============================================================================
-const StatusDropdown = ({ vehicle, statuts, darkMode, theme, onChangeStatut }) => {
+const StatusDropdown = ({ vehicle, statuts, darkMode, theme, onChangeStatut, rowIndex = 0 }) => {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [dropdownStyle, setDropdownStyle] = useState({});
+  const buttonRef = useRef(null);
+  const dropdownRef = useRef(null);
+
   useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    if (open) { document.addEventListener('mousedown', handler); document.addEventListener('scroll', () => setOpen(false), true); }
-    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('scroll', () => setOpen(false), true); };
+    const handleClickOutside = (e) => {
+      // Vérifier si le clic est en dehors du bouton ET en dehors du dropdown
+      const isOutsideButton = buttonRef.current && !buttonRef.current.contains(e.target);
+      const isOutsideDropdown = dropdownRef.current && !dropdownRef.current.contains(e.target);
+      
+      if (isOutsideButton && isOutsideDropdown) {
+        setOpen(false);
+      }
+    };
+    const handleScroll = () => setOpen(false);
+    
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('scroll', handleScroll, true);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('scroll', handleScroll, true);
+    };
   }, [open]);
+
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const dropdownHeight = 200;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const showAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      
+      setDropdownStyle({
+        position: 'fixed',
+        top: showAbove ? rect.top - dropdownHeight : rect.bottom + 4,
+        left: Math.max(8, rect.right - 160), // min-w-[160px], éviter de sortir de l'écran
+        zIndex: 99999,
+        boxShadow: showAbove ? '0 -10px 40px rgba(0,0,0,0.15)' : '0 10px 40px rgba(0,0,0,0.15)'
+      });
+    }
+  }, [open]);
+
   const available = statuts.filter(s => s !== vehicle.statut);
+
+  const handleStatusClick = (e, newStatut) => {
+    e.stopPropagation();
+    setOpen(false);
+    onChangeStatut(vehicle, newStatut);
+  };
+
   return (
-    <div className="relative" ref={ref}>
-      <button onClick={(e) => { e.stopPropagation(); setOpen(!open); }} className={`p-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors ${darkMode ? 'bg-purple-900/30 text-purple-400 hover:bg-purple-900/50' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'}`} title="Changer le statut" type="button">
+    <div className="relative">
+      <button ref={buttonRef} onClick={(e) => { e.stopPropagation(); setOpen(!open); }} className={`p-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors ${darkMode ? 'bg-purple-900/30 text-purple-400 hover:bg-purple-900/50' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'}`} title="Changer le statut" type="button">
         <i className="bi bi-arrow-repeat"></i>
       </button>
-      {open && (
-        <div className={`absolute right-0 bottom-full mb-2 z-[9999] rounded-xl shadow-2xl border min-w-[160px] py-1 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`} style={{ boxShadow: '0 -10px 40px rgba(0,0,0,0.15)' }}>
+      {open && createPortal(
+        <div 
+          ref={dropdownRef}
+          className={`rounded-xl shadow-2xl border min-w-[160px] py-1 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`} 
+          style={dropdownStyle}
+        >
           <p className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Changer statut</p>
           {available.map(s => (
-            <button key={s} onClick={(e) => { e.stopPropagation(); setOpen(false); onChangeStatut(vehicle, s); }} className={`w-full text-left px-3 py-2 text-sm transition-colors ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`} type="button">{s}</button>
+            <button key={s} onClick={(e) => handleStatusClick(e, s)} className={`w-full text-left px-3 py-2 text-sm transition-colors ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`} type="button">{s}</button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -725,11 +791,16 @@ const Vehicules = () => {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [fetchKey, setFetchKey]           = useState(0);
 
+  // Références enrichies (incluant annees)
   const [customCategories, setCustomCategories] = useState([]);
   const [customMarques, setCustomMarques]       = useState([]);
   const [customModeles, setCustomModeles]       = useState({});
+  const [customAnnees, setCustomAnnees]         = useState([]);
   const [directions, setDirections]             = useState([]);
-  const [referencesIds, setReferencesIds]       = useState({ categories: {}, marques: {}, modeles: {} });
+  // IDs pour suppression : { categories: { nom: id }, marques: { nom: id }, modeles: { nom: id }, annees: { annee: id } }
+  const [referencesIds, setReferencesIds] = useState({ categories: {}, marques: {}, modeles: {} , annees: {} });
+  // Raw modeles avec toutes les données (categorie_id incluse) pour le formulaire d'ajout de modèle
+  const [rawModeles, setRawModeles] = useState([]);
 
   const [vehicleDocuments, setVehicleDocuments]       = useState([]);
   const [vehicleMaintenances, setVehicleMaintenances] = useState([]);
@@ -756,7 +827,9 @@ const Vehicules = () => {
   const [newCategory, setNewCategory]                     = useState('');
   const [newMarque, setNewMarque]                         = useState('');
   const [selectedMarqueForModel, setSelectedMarqueForModel] = useState('');
+  const [selectedCategorieForModel, setSelectedCategorieForModel] = useState('');
   const [newModele, setNewModele]                         = useState('');
+  const [newAnnee, setNewAnnee]                           = useState('');
   const [submitting, setSubmitting]                       = useState(false);
 
   // ── Modals documents ──
@@ -766,18 +839,38 @@ const Vehicules = () => {
 
   // ── Modals carburant ──
   const [showCarburantModal, setShowCarburantModal] = useState(false);
-  const [editingCarburant, setEditingCarburant]     = useState(null); // null = ajout, objet = édition
+  const [editingCarburant, setEditingCarburant]     = useState(null);
 
   const [imageFile, setImageFile]       = useState(null);
   const [imagePreview, setImagePreview] = useState('');
 
-  const itemsPerPage = 6;
-  const statuts = ['Disponible', 'En Mission', 'Maintenance', 'Immobilisé'];
+  const itemsPerPage = 9;
+  const statuts = ['Disponible', 'En Mission', 'Maintenance', 'Immobilisé','Hors Service', 'Vendu'];
 
+  // formData enrichi avec tous les nouveaux champs du backend
   const [formData, setFormData] = useState({
-    immatriculation: '', marque: '', modele: '', categorie: '', annee: new Date().getFullYear(),
-    kilometrage: 0, statut: 'Disponible', chauffeur: null, direction: '', carburant: 'Diesel',
-    puissance: '', couleur: '', dateAchat: '', prixAchat: 0, assuranceExpire: '', visiteExpire: '',
+    immatriculation:       '',
+    marque:                '',
+    modele:                '',
+    categorie:             '',
+    annee:                 new Date().getFullYear(),
+    numero_chassis:        '',
+    kilometrage:           0,
+    nb_places:             5,
+    statut:                'Disponible',
+    chauffeur:             null,
+    direction:             '',
+    carburant:             'Diesel',
+    puissance:             '',
+    couleur:               '',
+    dateAchat:             '',
+    cout_acquisition:      0,
+    valeur_residuelle:     '',
+    consommation_moyenne:  '',
+    km_prochaine_vidange:  '',
+    km_prochaine_revision: '',
+    assuranceExpire:       '',
+    visiteExpire:          '',
   });
 
   const swal      = useCallback(() => createSwal(darkMode, theme), [darkMode, theme]);
@@ -794,16 +887,30 @@ const Vehicules = () => {
       try {
         const data = await getReferences();
         if (cancelled) return;
+
         setCustomCategories(data.categories.map(c => c.nom));
         setCustomMarques(data.marques.map(m => m.nom));
+
+        // Modèles groupés par marque_nom
         const modelesMap = {};
-        data.modeles.forEach(mo => { if (!modelesMap[mo.marque_nom]) modelesMap[mo.marque_nom] = []; modelesMap[mo.marque_nom].push(mo.nom); });
+        data.modeles.forEach(mo => {
+          if (!modelesMap[mo.marque_nom]) modelesMap[mo.marque_nom] = [];
+          modelesMap[mo.marque_nom].push(mo.nom);
+        });
         setCustomModeles(modelesMap);
+        setRawModeles(data.modeles);
+
         setDirections(data.directions.map(d => d.nom));
+
+        // Années triées décroissant
+        setCustomAnnees(data.annees.map(a => a.annee));
+
+        // IDs
         const catIds = {}; data.categories.forEach(c => { catIds[c.nom] = c.id; });
         const mrqIds = {}; data.marques.forEach(m => { mrqIds[m.nom] = m.id; });
         const modIds = {}; data.modeles.forEach(mo => { modIds[mo.nom] = mo.id; });
-        setReferencesIds({ categories: catIds, marques: mrqIds, modeles: modIds });
+        const annIds = {}; data.annees.forEach(a => { annIds[a.annee] = a.id; });
+        setReferencesIds({ categories: catIds, marques: mrqIds, modeles: modIds, annees: annIds });
       } catch (err) { if (!cancelled) console.error('Erreur chargement références :', err); }
     };
     fetchReferences();
@@ -828,12 +935,32 @@ const Vehicules = () => {
     return () => { cancelled = true; };
   }, [searchTerm, filterCategorie, filterMarque, filterModele, filterStatut, currentPage, navigate, fetchKey]);
 
-  useEffect(() => {
+useEffect(() => {
     if (loading) return;
     setAnimateCards(false);
     const id = requestAnimationFrame(() => { const id2 = requestAnimationFrame(() => setAnimateCards(true)); return () => cancelAnimationFrame(id2); });
     return () => cancelAnimationFrame(id);
   }, [loading]);
+
+  // ── Fonction pour récupérer TOUS les véhicules (pour l'export) ──
+  const fetchAllVehicles = useCallback(async () => {
+    try {
+      // Récupérer tous les véhicules sans pagination (per_page très grand)
+      const data = await getVehicules({ 
+        search: searchTerm || undefined, 
+        categorie: filterCategorie || undefined, 
+        marque: filterMarque || undefined, 
+        modele: filterModele || undefined, 
+        statut: filterStatut || undefined, 
+        page: 1, 
+        per_page: 10000 // Récupérer tous les véhicules
+      });
+      return data.data ?? data;
+    } catch (err) {
+      console.error('Erreur lors de la récupération de tous les véhicules:', err);
+      return [];
+    }
+  }, [searchTerm, filterCategorie, filterMarque, filterModele, filterStatut]);
 
   // ── Chargement données détail ──
   const loadDetailData = useCallback(async (immatriculation) => {
@@ -964,25 +1091,57 @@ const Vehicules = () => {
     catch { showAlert('Erreur', 'Erreur lors de la suppression.', 'error'); }
   };
 
+  // handleAddModele — corrigé : envoie { marque_id, categorie_id, nom } au backend
   const handleAddModele = async () => {
-    if (!selectedMarqueForModel || !newModele.trim()) return;
+    if (!selectedMarqueForModel || !newModele.trim() || !selectedCategorieForModel) {
+      showAlert('Champs requis', 'Veuillez sélectionner une marque, une catégorie et saisir un nom de modèle.', 'warning'); return;
+    }
     if (customModeles[selectedMarqueForModel]?.includes(newModele.trim())) { showAlert('Doublon', 'Ce modèle existe déjà pour cette marque.', 'warning'); return; }
-    const marqueId = referencesIds.marques[selectedMarqueForModel]; if (!marqueId) return;
+    const marqueId    = referencesIds.marques[selectedMarqueForModel];
+    const categorieId = referencesIds.categories[selectedCategorieForModel];
+    if (!marqueId || !categorieId) return;
     try {
-      const res = await createModele(marqueId, newModele.trim());
+      // createModele attend un objet { marque_id, categorie_id, nom, ... }
+      const res = await createModele({ marque_id: marqueId, categorie_id: categorieId, nom: newModele.trim() });
       setCustomModeles(prev => ({ ...prev, [selectedMarqueForModel]: [...(prev[selectedMarqueForModel] || []), newModele.trim()] }));
       setReferencesIds(prev => ({ ...prev, modeles: { ...prev.modeles, [newModele.trim()]: res.id } }));
+      setRawModeles(prev => [...prev, { id: res.id, nom: newModele.trim(), marque_id: marqueId, marque_nom: selectedMarqueForModel, categorie_id: categorieId }]);
       setNewModele('');
       showAlert('Modèle ajouté', `Le modèle "${newModele.trim()}" a été créé.`, 'success');
-    } catch { showAlert('Erreur', "Erreur lors de l'ajout du modèle.", 'error'); }
+    } catch (err) {
+      const msg = err.response?.data?.errors ? Object.values(err.response.data.errors).flat().join('\n') : "Erreur lors de l'ajout du modèle.";
+      showAlert('Erreur', msg, 'error');
+    }
   };
 
   const handleDeleteModele = async (marque, modele) => {
     const id = referencesIds.modeles[modele]; if (!id) return;
     const result = await swal().fire({ icon: 'warning', title: 'Supprimer le modèle ?', text: `Le modèle "${modele}" sera supprimé.`, showCancelButton: true, confirmButtonText: 'Supprimer', cancelButtonText: 'Annuler', customClass: { popup: darkMode ? 'swal-dark-popup' : 'swal-light-popup', title: darkMode ? 'swal-dark-title' : 'swal-light-title', htmlContainer: darkMode ? 'swal-dark-html' : 'swal-light-html', confirmButton: 'swal-confirm-btn swal-danger', cancelButton: 'swal-cancel-btn' }, buttonsStyling: false });
     if (!result.isConfirmed) return;
-    try { await deleteModele(id); setCustomModeles(prev => ({ ...prev, [marque]: prev[marque].filter(m => m !== modele) })); showAlert('Supprimé', `Le modèle "${modele}" a été supprimé.`, 'success'); }
+    try { await deleteModele(id); setCustomModeles(prev => ({ ...prev, [marque]: prev[marque].filter(m => m !== modele) })); setRawModeles(prev => prev.filter(m => m.id !== id)); showAlert('Supprimé', `Le modèle "${modele}" a été supprimé.`, 'success'); }
     catch { showAlert('Erreur', 'Erreur lors de la suppression.', 'error'); }
+  };
+
+  // ── CRUD Années ──
+  const handleAddAnnee = async () => {
+    const anneeNum = parseInt(newAnnee);
+    if (!anneeNum || anneeNum < 1900 || anneeNum > 2100) { showAlert('Valeur invalide', 'Veuillez saisir une année valide (1900–2100).', 'warning'); return; }
+    if (customAnnees.includes(anneeNum)) { showAlert('Doublon', 'Cette année existe déjà.', 'warning'); return; }
+    try {
+      const res = await createAnnee(anneeNum);
+      setCustomAnnees(prev => [anneeNum, ...prev].sort((a, b) => b - a));
+      setReferencesIds(prev => ({ ...prev, annees: { ...prev.annees, [anneeNum]: res.id } }));
+      setNewAnnee('');
+      showAlert('Année ajoutée', `L'année ${anneeNum} a été ajoutée.`, 'success');
+    } catch { showAlert('Erreur', "Erreur lors de l'ajout de l'année.", 'error'); }
+  };
+
+  const handleDeleteAnnee = async (annee) => {
+    const id = referencesIds.annees[annee]; if (!id) return;
+    const result = await swal().fire({ icon: 'warning', title: 'Désactiver l\'année ?', text: `L'année ${annee} sera désactivée.`, showCancelButton: true, confirmButtonText: 'Désactiver', cancelButtonText: 'Annuler', customClass: { popup: darkMode ? 'swal-dark-popup' : 'swal-light-popup', title: darkMode ? 'swal-dark-title' : 'swal-light-title', htmlContainer: darkMode ? 'swal-dark-html' : 'swal-light-html', confirmButton: 'swal-confirm-btn swal-danger', cancelButton: 'swal-cancel-btn' }, buttonsStyling: false });
+    if (!result.isConfirmed) return;
+    try { await deleteAnnee(id); setCustomAnnees(prev => prev.filter(a => a !== annee)); showAlert('Désactivée', `L'année ${annee} a été désactivée.`, 'success'); }
+    catch { showAlert('Erreur', 'Erreur lors de la désactivation.', 'error'); }
   };
 
   // ── Handlers Documents ──
@@ -1008,7 +1167,6 @@ const Vehicules = () => {
     } catch { showAlert('Erreur', 'Erreur lors de la suppression du document.', 'error'); }
   };
 
-  // Callbacks pour les modals documents
   const onDocumentAdded = useCallback(async () => {
     showAlert('Document ajouté', 'Le document a été enregistré avec succès.', 'success');
     if (selectedVehicle) {
@@ -1025,15 +1183,8 @@ const Vehicules = () => {
   }, [selectedVehicle, showAlert]);
 
   // ── Handlers Carburant ──
-  const handleOpenAddCarburant = () => {
-    setEditingCarburant(null);
-    setShowCarburantModal(true);
-  };
-
-  const handleOpenEditCarburant = (carburant) => {
-    setEditingCarburant(carburant);
-    setShowCarburantModal(true);
-  };
+  const handleOpenAddCarburant = () => { setEditingCarburant(null); setShowCarburantModal(true); };
+  const handleOpenEditCarburant = (carburant) => { setEditingCarburant(carburant); setShowCarburantModal(true); };
 
   const handleDeleteCarburant = async (carburant) => {
     const result = await swal().fire({ icon: 'warning', title: 'Supprimer ce plein ?', html: `Plein du <strong>${new Date(carburant.date_plein).toLocaleDateString('fr-FR')}</strong> — <strong>${carburant.litres} L</strong> sera supprimé.`, showCancelButton: true, confirmButtonText: 'Supprimer', cancelButtonText: 'Annuler', customClass: { popup: darkMode ? 'swal-dark-popup' : 'swal-light-popup', title: darkMode ? 'swal-dark-title' : 'swal-light-title', htmlContainer: darkMode ? 'swal-dark-html' : 'swal-light-html', confirmButton: 'swal-confirm-btn swal-danger', cancelButton: 'swal-cancel-btn' }, buttonsStyling: false });
@@ -1057,7 +1208,30 @@ const Vehicules = () => {
   // ── Helpers modals ──
   const openEditModal = (vehicle) => {
     setSelectedVehicle(vehicle);
-    setFormData({ immatriculation: vehicle.immatriculation, marque: vehicle.marque, modele: vehicle.modele, categorie: vehicle.categorie, annee: vehicle.annee, kilometrage: vehicle.kilometrage, statut: vehicle.statut, chauffeur: vehicle.chauffeur, direction: vehicle.direction, carburant: vehicle.carburant, puissance: vehicle.puissance, couleur: vehicle.couleur, dateAchat: vehicle.dateAchat, prixAchat: vehicle.prixAchat, assuranceExpire: vehicle.assuranceExpire, visiteExpire: vehicle.visiteExpire });
+    setFormData({
+      immatriculation:       vehicle.immatriculation,
+      marque:                vehicle.marque,
+      modele:                vehicle.modele,
+      categorie:             vehicle.categorie,
+      annee:                 vehicle.annee,
+      numero_chassis:        vehicle.numero_chassis        || '',
+      kilometrage:           vehicle.kilometrage,
+      nb_places:             vehicle.nb_places             || 5,
+      statut:                vehicle.statut,
+      chauffeur:             vehicle.chauffeur,
+      direction:             vehicle.direction,
+      carburant:             vehicle.carburant,
+      puissance:             vehicle.puissance             || '',
+      couleur:               vehicle.couleur               || '',
+      dateAchat:             vehicle.dateAchat             || '',
+      cout_acquisition:      vehicle.cout_acquisition      || 0,
+      valeur_residuelle:     vehicle.valeur_residuelle     || '',
+      consommation_moyenne:  vehicle.consommation_moyenne  || '',
+      km_prochaine_vidange:  vehicle.km_prochaine_vidange  || '',
+      km_prochaine_revision: vehicle.km_prochaine_revision || '',
+      assuranceExpire:       vehicle.assuranceExpire       || '',
+      visiteExpire:          vehicle.visiteExpire          || '',
+    });
     resetImageState();
     setImagePreview(vehicle.image ? getStorageUrl(vehicle.image) : '');
     setShowEditModal(true);
@@ -1069,7 +1243,13 @@ const Vehicules = () => {
   };
 
   const resetForm = () => {
-    setFormData({ immatriculation: '', marque: '', modele: '', categorie: '', annee: new Date().getFullYear(), kilometrage: 0, statut: 'Disponible', chauffeur: null, direction: '', carburant: 'Diesel', puissance: '', couleur: '', dateAchat: '', prixAchat: 0, assuranceExpire: '', visiteExpire: '' });
+    setFormData({
+      immatriculation: '', marque: '', modele: '', categorie: '', annee: new Date().getFullYear(),
+      numero_chassis: '', kilometrage: 0, nb_places: 5, statut: 'Disponible', chauffeur: null,
+      direction: '', carburant: 'Diesel', puissance: '', couleur: '', dateAchat: '',
+      cout_acquisition: 0, valeur_residuelle: '', consommation_moyenne: '',
+      km_prochaine_vidange: '', km_prochaine_revision: '', assuranceExpire: '', visiteExpire: '',
+    });
     resetImageState();
   };
 
@@ -1083,10 +1263,14 @@ const Vehicules = () => {
   const statutData    = statuts.map(s => ({ name: s, value: vehicles.filter(v => v.statut === s).length }));
   const directionData = [...new Set(vehicles.map(v => v.direction).filter(Boolean))].map(d => ({ name: d, value: vehicles.filter(v => v.direction === d).length })).sort((a, b) => b.value - a.value);
 
+  // Styles partagés pour les champs de formulaire
+  const inputCls = (dark) => `w-full px-3 py-2.5 rounded-lg border text-sm ${dark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`;
+  const labelCls = (dark) => `block text-sm font-medium mb-1.5 ${dark ? 'text-gray-300' : 'text-gray-700'}`;
+
   // ── Composant champ image ──
   const ImageUploadField = ({ label, preview, onClear }) => (
     <div className="col-span-2">
-      <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{label}</label>
+      <label className={labelCls(darkMode)}>{label}</label>
       <div className="flex items-start gap-4">
         {preview && (
           <div className="relative flex-shrink-0">
@@ -1103,6 +1287,183 @@ const Vehicules = () => {
           <input type="file" accept=".jpg,.jpeg,.png,.webp" onChange={handleImageChange} className="hidden" />
         </label>
       </div>
+    </div>
+  );
+
+  // ── Section formulaire véhicule (partagée Ajout/Modifier) ──
+  const renderVehicleFormFields = (isEdit = false) => (
+    <div className="grid grid-cols-2 gap-4">
+
+      {/* Immatriculation */}
+      <div>
+        <label className={labelCls(darkMode)}>Immatriculation *</label>
+        <input type="text" value={formData.immatriculation} readOnly={isEdit} placeholder="AB-1234-GA"
+          onChange={e => !isEdit && setFormData({ ...formData, immatriculation: e.target.value })}
+          className={`${inputCls(darkMode)} ${isEdit ? 'opacity-60' : ''}`} />
+      </div>
+
+      {/* N° Châssis */}
+      <div>
+        <label className={labelCls(darkMode)}>N° Châssis</label>
+        <input type="text" value={formData.numero_chassis} placeholder="VIN / N° châssis"
+          onChange={e => setFormData({ ...formData, numero_chassis: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Marque */}
+      <div>
+        <label className={labelCls(darkMode)}>Marque *</label>
+        <select value={formData.marque} onChange={e => setFormData({ ...formData, marque: e.target.value, modele: '' })} className={inputCls(darkMode)}>
+          <option value="">Sélectionner</option>
+          {customMarques.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+
+      {/* Modèle */}
+      <div>
+        <label className={labelCls(darkMode)}>Modèle *</label>
+        <select value={formData.modele} onChange={e => setFormData({ ...formData, modele: e.target.value })} disabled={!formData.marque} className={`${inputCls(darkMode)} disabled:opacity-50`}>
+          <option value="">Sélectionner</option>
+          {formAvailableModeles.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+
+      {/* Catégorie */}
+      <div>
+        <label className={labelCls(darkMode)}>Catégorie *</label>
+        <select value={formData.categorie} onChange={e => setFormData({ ...formData, categorie: e.target.value })} className={inputCls(darkMode)}>
+          <option value="">Sélectionner</option>
+          {customCategories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {/* Direction */}
+      <div>
+        <label className={labelCls(darkMode)}>Direction *</label>
+        <select value={formData.direction} onChange={e => setFormData({ ...formData, direction: e.target.value })} className={inputCls(darkMode)}>
+          <option value="">Sélectionner</option>
+          {directions.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+      </div>
+
+      {/* Année */}
+      <div>
+        <label className={labelCls(darkMode)}>Année</label>
+        <select value={formData.annee} onChange={e => setFormData({ ...formData, annee: parseInt(e.target.value) || '' })} className={inputCls(darkMode)}>
+          <option value="">Sélectionner</option>
+          {customAnnees.map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+      </div>
+
+      {/* Statut */}
+      <div>
+        <label className={labelCls(darkMode)}>Statut</label>
+        <select value={formData.statut} onChange={e => setFormData({ ...formData, statut: e.target.value })} className={inputCls(darkMode)}>
+          {statuts.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {/* Carburant */}
+      <div>
+        <label className={labelCls(darkMode)}>Carburant</label>
+        <select value={formData.carburant} onChange={e => setFormData({ ...formData, carburant: e.target.value })} className={inputCls(darkMode)}>
+          {['Diesel', 'Essence', 'Hybride', 'Électrique'].map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {/* Nb places */}
+      <div>
+        <label className={labelCls(darkMode)}>Nombre de places</label>
+        <input type="number" min="1" max="100" value={formData.nb_places}
+          onChange={e => setFormData({ ...formData, nb_places: parseInt(e.target.value) || 5 })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Kilométrage */}
+      <div>
+        <label className={labelCls(darkMode)}>Kilométrage</label>
+        <input type="number" min="0" value={formData.kilometrage}
+          onChange={e => setFormData({ ...formData, kilometrage: parseInt(e.target.value) || 0 })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Puissance */}
+      <div>
+        <label className={labelCls(darkMode)}>Puissance</label>
+        <input type="text" value={formData.puissance} placeholder="Ex: 150 CV"
+          onChange={e => setFormData({ ...formData, puissance: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Couleur */}
+      <div>
+        <label className={labelCls(darkMode)}>Couleur</label>
+        <input type="text" value={formData.couleur} placeholder="Ex: Blanc"
+          onChange={e => setFormData({ ...formData, couleur: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Conso moyenne */}
+      <div>
+        <label className={labelCls(darkMode)}>Conso. moy. (L/100 km)</label>
+        <input type="number" step="0.1" min="0" value={formData.consommation_moyenne} placeholder="Ex: 8.5"
+          onChange={e => setFormData({ ...formData, consommation_moyenne: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Km prochaine vidange */}
+      <div>
+        <label className={labelCls(darkMode)}>Km proch. vidange</label>
+        <input type="number" min="0" value={formData.km_prochaine_vidange} placeholder="Ex: 130000"
+          onChange={e => setFormData({ ...formData, km_prochaine_vidange: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Km prochaine révision */}
+      <div>
+        <label className={labelCls(darkMode)}>Km proch. révision</label>
+        <input type="number" min="0" value={formData.km_prochaine_revision} placeholder="Ex: 150000"
+          onChange={e => setFormData({ ...formData, km_prochaine_revision: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Date achat */}
+      <div>
+        <label className={labelCls(darkMode)}>Date d'achat</label>
+        <input type="date" value={formData.dateAchat}
+          onChange={e => setFormData({ ...formData, dateAchat: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Coût acquisition */}
+      <div>
+        <label className={labelCls(darkMode)}>Coût d'acquisition (CFA)</label>
+        <input type="number" min="0" value={formData.cout_acquisition}
+          onChange={e => setFormData({ ...formData, cout_acquisition: parseFloat(e.target.value) || 0 })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Valeur résiduelle */}
+      <div>
+        <label className={labelCls(darkMode)}>Valeur résiduelle (CFA)</label>
+        <input type="number" min="0" value={formData.valeur_residuelle} placeholder="Optionnel"
+          onChange={e => setFormData({ ...formData, valeur_residuelle: e.target.value })}
+          className={inputCls(darkMode)} />
+      </div>
+
+      {/* Chauffeur (mode édition uniquement) */}
+      {isEdit && (
+        <div>
+          <label className={labelCls(darkMode)}>Chauffeur</label>
+          <input type="text" value={formData.chauffeur || ''} placeholder="Nom du chauffeur"
+            onChange={e => setFormData({ ...formData, chauffeur: e.target.value || null })}
+            className={inputCls(darkMode)} />
+        </div>
+      )}
+
+   
+      {/* Photo */}
+      <ImageUploadField label={isEdit ? 'Changer la photo du véhicule' : 'Photo du véhicule'} preview={imagePreview} onClear={resetImageState} />
     </div>
   );
 
@@ -1163,7 +1524,7 @@ const Vehicules = () => {
               )}
             </div>
             <div className="flex items-center gap-3">
-              <VehicleExportDropdown filteredVehicles={vehicles} darkMode={darkMode} theme={theme} />
+              <VehicleExportDropdown fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} theme={theme} />
               <button onClick={() => setShowFilterManagement(true)} className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors`}><i className="bi bi-funnel"></i> Gestion filtres</button>
               <div className={`flex rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'} overflow-hidden`}>
                 {['table', 'grid'].map((mode) => (
@@ -1184,7 +1545,7 @@ const Vehicules = () => {
           <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}>
             <div className={`px-5 py-3 flex items-center justify-between border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
               <p className={`text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}><i className="bi bi-list-ul mr-2"></i>{totalVehicles} véhicule(s)</p>
-              <TableExportButton filteredVehicles={vehicles} darkMode={darkMode} />
+              <TableExportButton fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} />
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1208,7 +1569,7 @@ const Vehicules = () => {
                                 <StableImage src={vehicle.image} alt={vehicle.marque} className="w-11 h-11 rounded-lg shadow-sm" darkMode={darkMode} />
                                 <div>
                                   <p className={`font-semibold text-sm ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{vehicle.immatriculation}</p>
-                                  <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{vehicle.marque} {vehicle.modele} - {vehicle.annee}</p>
+                                  <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{vehicle.marque} {vehicle.modele} · {vehicle.annee}</p>
                                 </div>
                               </div>
                             </td>
@@ -1221,7 +1582,7 @@ const Vehicules = () => {
                               <div className="flex items-center justify-center gap-1.5 flex-nowrap">
                                 <button onClick={() => openDetailModal(vehicle)} className={`p-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors ${darkMode ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`} title="Voir les détails"><i className="bi bi-eye"></i></button>
                                 <button onClick={() => openEditModal(vehicle)}   className={`p-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors ${darkMode ? 'bg-amber-900/30 text-amber-400 hover:bg-amber-900/50' : 'bg-amber-50 text-amber-600 hover:bg-amber-100'}`} title="Modifier"><i className="bi bi-pencil"></i></button>
-                                <StatusDropdown vehicle={vehicle} statuts={statuts} darkMode={darkMode} theme={theme} onChangeStatut={handleChangeStatut} />
+                                <StatusDropdown vehicle={vehicle} statuts={statuts} darkMode={darkMode} theme={theme} onChangeStatut={handleChangeStatut} rowIndex={rowIdx} />
                                 <button onClick={() => handleDeleteVehicle(vehicle)} className={`p-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors ${darkMode ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 hover:bg-red-100'}`} title="Supprimer"><i className="bi bi-trash"></i></button>
                               </div>
                             </td>
@@ -1251,7 +1612,7 @@ const Vehicules = () => {
           <>
             <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-4 mb-4 flex items-center justify-between`}>
               <p className={`text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}><i className="bi bi-grid-3x3-gap-fill mr-2"></i>{totalVehicles} véhicule(s) — Vue Grille</p>
-              <TableExportButton filteredVehicles={vehicles} darkMode={darkMode} />
+              <TableExportButton fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {loading
@@ -1271,7 +1632,7 @@ const Vehicules = () => {
                           <h3 className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{vehicle.immatriculation}</h3>
                           <span className={`text-xs px-2 py-0.5 rounded-full ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-600'}`}>{vehicle.categorie}</span>
                         </div>
-                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} mb-3`}>{vehicle.marque} {vehicle.modele} - {vehicle.annee}</p>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} mb-3`}>{vehicle.marque} {vehicle.modele} · {vehicle.annee}</p>
                         <div className={`flex items-center justify-between text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'} mb-4`}>
                           <span><i className="bi bi-speedometer2 mr-1"></i>{(vehicle.kilometrage || 0).toLocaleString()} km</span>
                           <span><i className="bi bi-person mr-1"></i>{vehicle.chauffeur || 'Non assigné'}</span>
@@ -1305,7 +1666,7 @@ const Vehicules = () => {
       </main>
 
       {/* ============================================================ */}
-      {/* MODAL — GESTION DES FILTRES                                   */}
+      {/* MODAL — GESTION DES FILTRES (CRUD complet + Années)          */}
       {/* ============================================================ */}
       {showFilterManagement && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1314,14 +1675,24 @@ const Vehicules = () => {
               <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Gestion des filtres</h2>
               <button onClick={() => setShowFilterManagement(false)} className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'} transition-colors`}><i className="bi bi-x-lg text-lg"></i></button>
             </div>
+            {/* Onglets */}
             <div className={`border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'} px-6 flex gap-1`}>
-              {[{ key: 'categories', label: 'Catégories', icon: 'bi-tag' }, { key: 'marques', label: 'Marques', icon: 'bi-building' }, { key: 'modeles', label: 'Modèles', icon: 'bi-car-front' }].map(tab => (
-                <button key={tab.key} onClick={() => setFilterManagementTab(tab.key)} className={`px-4 py-3 text-sm font-medium flex items-center gap-2 border-b-2 transition-all ${filterManagementTab === tab.key ? 'border-transparent text-white' : `border-transparent ${darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'}`}`} style={filterManagementTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`, borderRadius: '8px 8px 0 0' } : {}}>
+              {[
+                { key: 'categories', label: 'Catégories', icon: 'bi-tag' },
+                { key: 'marques',    label: 'Marques',    icon: 'bi-building' },
+                { key: 'modeles',    label: 'Modèles',    icon: 'bi-car-front' },
+                { key: 'annees',     label: 'Années',     icon: 'bi-calendar3' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setFilterManagementTab(tab.key)}
+                  className={`px-4 py-3 text-sm font-medium flex items-center gap-2 border-b-2 transition-all ${filterManagementTab === tab.key ? 'border-transparent text-white' : `border-transparent ${darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'}`}`}
+                  style={filterManagementTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`, borderRadius: '8px 8px 0 0' } : {}}>
                   <i className={tab.icon}></i>{tab.label}
                 </button>
               ))}
             </div>
             <div className="flex-1 overflow-y-auto p-6">
+
+              {/* ── Catégories ── */}
               {filterManagementTab === 'categories' && (
                 <div>
                   <div className="flex items-center gap-3 mb-6">
@@ -1338,6 +1709,8 @@ const Vehicules = () => {
                   </div>
                 </div>
               )}
+
+              {/* ── Marques ── */}
               {filterManagementTab === 'marques' && (
                 <div>
                   <div className="flex items-center gap-3 mb-6">
@@ -1354,15 +1727,24 @@ const Vehicules = () => {
                   </div>
                 </div>
               )}
+
+              {/* ── Modèles — avec sélection de catégorie obligatoire ── */}
               {filterManagementTab === 'modeles' && (
                 <div>
                   <div className="flex items-center gap-3 mb-6 flex-wrap">
+                    {/* Marque */}
                     <select value={selectedMarqueForModel} onChange={e => setSelectedMarqueForModel(e.target.value)} className={`px-4 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                      <option value="">Sélectionner une marque</option>
+                      <option value="">Sélect. une marque</option>
                       {customMarques.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
-                    <input type="text" value={newModele} onChange={e => setNewModele(e.target.value)} placeholder="Nouveau modèle" disabled={!selectedMarqueForModel} className={`flex-1 px-4 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none disabled:opacity-50`} onKeyDown={e => e.key === 'Enter' && handleAddModele()} />
-                    <button onClick={handleAddModele} disabled={!selectedMarqueForModel} className="px-5 py-2.5 rounded-lg text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all" style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}><i className="bi bi-plus-lg mr-2"></i>Ajouter</button>
+                    {/* Catégorie */}
+                    <select value={selectedCategorieForModel} onChange={e => setSelectedCategorieForModel(e.target.value)} className={`px-4 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
+                      <option value="">Sélect. une catégorie</option>
+                      {customCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    {/* Nom du modèle */}
+                    <input type="text" value={newModele} onChange={e => setNewModele(e.target.value)} placeholder="Nom du modèle" disabled={!selectedMarqueForModel || !selectedCategorieForModel} className={`flex-1 min-w-32 px-4 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none disabled:opacity-50`} onKeyDown={e => e.key === 'Enter' && handleAddModele()} />
+                    <button onClick={handleAddModele} disabled={!selectedMarqueForModel || !selectedCategorieForModel} className="px-5 py-2.5 rounded-lg text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all" style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}><i className="bi bi-plus-lg mr-2"></i>Ajouter</button>
                   </div>
                   {selectedMarqueForModel ? (
                     <div>
@@ -1374,6 +1756,9 @@ const Vehicules = () => {
                             <button onClick={() => handleDeleteModele(selectedMarqueForModel, modele)} className={`p-1.5 rounded ${darkMode ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-red-50 text-red-600'} transition-colors`}><i className="bi bi-trash text-sm"></i></button>
                           </div>
                         ))}
+                        {(customModeles[selectedMarqueForModel] || []).length === 0 && (
+                          <p className={`text-sm col-span-3 text-center py-6 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Aucun modèle pour cette marque</p>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -1382,6 +1767,24 @@ const Vehicules = () => {
                       <p className={`mt-3 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Sélectionnez une marque pour voir ses modèles</p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── Années ── NOUVEAU ── */}
+              {filterManagementTab === 'annees' && (
+                <div>
+                  <div className="flex items-center gap-3 mb-6">
+                    <input type="number" value={newAnnee} onChange={e => setNewAnnee(e.target.value)} placeholder="Ex : 2020" min="1900" max="2100" className={`flex-1 px-4 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} onKeyDown={e => e.key === 'Enter' && handleAddAnnee()} />
+                    <button onClick={handleAddAnnee} className="px-5 py-2.5 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-all" style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}><i className="bi bi-plus-lg mr-2"></i>Ajouter</button>
+                  </div>
+                  <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+                    {customAnnees.map(annee => (
+                      <div key={annee} className={`${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-200'} border rounded-lg p-3 flex items-center justify-between`}>
+                        <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{annee}</span>
+                        <button onClick={() => handleDeleteAnnee(annee)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-red-50 text-red-600'} transition-colors`}><i className="bi bi-x text-sm"></i></button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1402,64 +1805,7 @@ const Vehicules = () => {
               <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}><i className="bi bi-plus-circle mr-2 text-blue-400"></i>Ajouter un véhicule</h2>
               <button onClick={() => { setShowAddModal(false); resetForm(); }} className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'} transition-colors`}><i className="bi bi-x-lg text-lg"></i></button>
             </div>
-            <div className="p-6">
-              <div className="grid grid-cols-2 gap-4">
-                {[
-                  { label: 'Immatriculation *', key: 'immatriculation', type: 'text',   placeholder: 'AB-1234-GA' },
-                  { label: 'Année',              key: 'annee',           type: 'number', placeholder: '' },
-                  { label: 'Kilométrage',        key: 'kilometrage',     type: 'number', placeholder: '' },
-                  { label: 'Puissance',          key: 'puissance',       type: 'text',   placeholder: 'Ex: 150 CV' },
-                  { label: 'Couleur',            key: 'couleur',         type: 'text',   placeholder: 'Ex: Blanc' },
-                  { label: "Date d'achat",       key: 'dateAchat',       type: 'date',   placeholder: '' },
-                  { label: "Prix d'achat (CFA)", key: 'prixAchat',       type: 'number', placeholder: '' },
-                  { label: 'Expiration assurance',        key: 'assuranceExpire', type: 'date', placeholder: '' },
-                  { label: 'Expiration visite technique', key: 'visiteExpire',    type: 'date', placeholder: '' },
-                ].map((field) => (
-                  <div key={field.key}>
-                    <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{field.label}</label>
-                    <input type={field.type} value={formData[field.key] ?? ''} placeholder={field.placeholder}
-                      onChange={e => setFormData({ ...formData, [field.key]: field.type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value })}
-                      className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} />
-                  </div>
-                ))}
-                {[{ label: 'Catégorie *', key: 'categorie', options: customCategories }, { label: 'Direction *', key: 'direction', options: directions }].map(f => (
-                  <div key={f.key}>
-                    <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{f.label}</label>
-                    <select value={formData[f.key]} onChange={e => setFormData({ ...formData, [f.key]: e.target.value })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                      <option value="">Sélectionner</option>
-                      {f.options.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  </div>
-                ))}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Marque *</label>
-                  <select value={formData.marque} onChange={e => setFormData({ ...formData, marque: e.target.value, modele: '' })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                    <option value="">Sélectionner</option>
-                    {customMarques.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Modèle *</label>
-                  <select value={formData.modele} onChange={e => setFormData({ ...formData, modele: e.target.value })} disabled={!formData.marque} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none disabled:opacity-50`}>
-                    <option value="">Sélectionner</option>
-                    {formAvailableModeles.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Carburant</label>
-                  <select value={formData.carburant} onChange={e => setFormData({ ...formData, carburant: e.target.value })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                    {['Diesel', 'Essence', 'Hybride', 'Électrique'].map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Statut</label>
-                  <select value={formData.statut} onChange={e => setFormData({ ...formData, statut: e.target.value })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                    {statuts.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <ImageUploadField label="Photo du véhicule" preview={imagePreview} onClear={resetImageState} />
-              </div>
-            </div>
+            <div className="p-6">{renderVehicleFormFields(false)}</div>
             <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-end gap-3 sticky bottom-0 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
               <button onClick={() => { setShowAddModal(false); resetForm(); }} className={`px-5 py-2.5 rounded-lg border text-sm ${darkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-700 hover:bg-gray-100'} transition-colors`}>Annuler</button>
               <button onClick={handleAddVehicle} disabled={submitting || !formData.immatriculation || !formData.marque || !formData.modele || !formData.categorie || !formData.direction} className="px-5 py-2.5 rounded-lg text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all flex items-center gap-2" style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
@@ -1480,54 +1826,7 @@ const Vehicules = () => {
               <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}><i className="bi bi-pencil-square mr-2 text-blue-400"></i>Modifier — {selectedVehicle.immatriculation}</h2>
               <button onClick={() => { setShowEditModal(false); setSelectedVehicle(null); resetForm(); }} className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'} transition-colors`}><i className="bi bi-x-lg text-lg"></i></button>
             </div>
-            <div className="p-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Immatriculation</label>
-                  <input type="text" value={formData.immatriculation} readOnly className={`w-full px-3 py-2.5 rounded-lg border text-sm opacity-60 ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-100 border-gray-200 text-gray-900'}`} />
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Kilométrage</label>
-                  <input type="number" value={formData.kilometrage} onChange={e => setFormData({ ...formData, kilometrage: parseInt(e.target.value) || 0 })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} />
-                </div>
-                {[{ label: 'Catégorie *', key: 'categorie', options: customCategories }, { label: 'Direction *', key: 'direction', options: directions }, { label: 'Statut', key: 'statut', options: statuts }].map(f => (
-                  <div key={f.key}>
-                    <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{f.label}</label>
-                    <select value={formData[f.key]} onChange={e => setFormData({ ...formData, [f.key]: e.target.value })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                      {f.options.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  </div>
-                ))}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Marque *</label>
-                  <select value={formData.marque} onChange={e => setFormData({ ...formData, marque: e.target.value, modele: '' })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                    {customMarques.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Modèle *</label>
-                  <select value={formData.modele} onChange={e => setFormData({ ...formData, modele: e.target.value })} className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                    {formAvailableModeles.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                {[
-                  { label: 'Chauffeur',           key: 'chauffeur',       type: 'text',   placeholder: 'Nom du chauffeur' },
-                  { label: 'Couleur',             key: 'couleur',         type: 'text',   placeholder: 'Ex: Blanc' },
-                  { label: "Date d'achat",         key: 'dateAchat',       type: 'date',   placeholder: '' },
-                  { label: "Prix d'achat (CFA)",   key: 'prixAchat',       type: 'number', placeholder: '' },
-                  { label: 'Expiration assurance', key: 'assuranceExpire', type: 'date',   placeholder: '' },
-                  { label: 'Expiration visite',    key: 'visiteExpire',    type: 'date',   placeholder: '' },
-                ].map(field => (
-                  <div key={field.key}>
-                    <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{field.label}</label>
-                    <input type={field.type} value={formData[field.key] ?? ''} placeholder={field.placeholder}
-                      onChange={e => setFormData({ ...formData, [field.key]: field.type === 'number' ? (parseFloat(e.target.value) || 0) : (e.target.value || null) })}
-                      className={`w-full px-3 py-2.5 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} />
-                  </div>
-                ))}
-                <ImageUploadField label="Changer la photo du véhicule" preview={imagePreview} onClear={resetImageState} />
-              </div>
-            </div>
+            <div className="p-6">{renderVehicleFormFields(true)}</div>
             <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-end gap-3 sticky bottom-0 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
               <button onClick={() => { setShowEditModal(false); setSelectedVehicle(null); resetForm(); }} className={`px-5 py-2.5 rounded-lg border text-sm ${darkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-700 hover:bg-gray-100'} transition-colors`}>Annuler</button>
               <button onClick={handleEditVehicle} disabled={submitting} className="px-5 py-2.5 rounded-lg text-white text-sm font-medium hover:opacity-90 disabled:opacity-60 transition-all flex items-center gap-2" style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
@@ -1560,7 +1859,7 @@ const Vehicules = () => {
               {/* ── Colonne gauche ── */}
               <div className={`flex flex-col border-r overflow-y-auto ${darkMode ? 'border-gray-800' : 'border-gray-200'}`} style={{ width: '50%' }}>
                 <div className="flex-shrink-0 p-5" style={{ background: darkMode ? 'linear-gradient(135deg, #0c1929, #162033)' : 'linear-gradient(135deg, #1e293b, #334155)' }}>
-                  <div className="relative overflow-hidden" style={{ height: '340px', borderRadius: '16px', border: `3px solid ${theme.primary}55`, boxShadow: `0 0 30px ${theme.primary}33, 0 8px 32px rgba(0,0,0,0.4)` }}>
+                  <div className="relative overflow-hidden" style={{ height: '300px', borderRadius: '16px', border: `3px solid ${theme.primary}55`, boxShadow: `0 0 30px ${theme.primary}33, 0 8px 32px rgba(0,0,0,0.4)` }}>
                     <StableImage src={selectedVehicle.image} alt={selectedVehicle.marque} className="w-full h-full" darkMode={darkMode} />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
                     <div className="absolute bottom-4 left-4">
@@ -1569,17 +1868,25 @@ const Vehicules = () => {
                     </div>
                   </div>
                 </div>
-                <div className={`p-6 space-y-4 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
+
+                {/* Infos principales */}
+                <div className={`p-5 space-y-3 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
                   {[
-                    { icon: 'bi-speedometer2', label: 'Kilométrage',  value: `${(selectedVehicle.kilometrage || 0).toLocaleString()} km` },
-                    { icon: 'bi-person-fill',  label: 'Chauffeur',    value: selectedVehicle.chauffeur || 'Non assigné' },
-                    { icon: 'bi-building',     label: 'Direction',    value: selectedVehicle.direction },
-                    { icon: 'bi-fuel-pump',    label: 'Carburant',    value: `${selectedVehicle.carburant || '—'} · ${selectedVehicle.puissance || '—'}` },
-                    { icon: 'bi-calendar3',    label: "Date d'achat", value: selectedVehicle.dateAchat ? new Date(selectedVehicle.dateAchat).toLocaleDateString('fr-FR') : '—' },
-                    { icon: 'bi-cash-stack',   label: "Prix d'achat", value: selectedVehicle.prixAchat ? `${selectedVehicle.prixAchat.toLocaleString()} CFA` : '—' },
+                    { icon: 'bi-upc-scan',       label: 'N° Châssis',      value: selectedVehicle.numero_chassis || '—' },
+                    { icon: 'bi-speedometer2',    label: 'Kilométrage',     value: `${(selectedVehicle.kilometrage || 0).toLocaleString()} km` },
+                    { icon: 'bi-people',          label: 'Nb. places',      value: selectedVehicle.nb_places || '—' },
+                    { icon: 'bi-person-fill',     label: 'Chauffeur',       value: selectedVehicle.chauffeur || 'Non assigné' },
+                    { icon: 'bi-building',        label: 'Direction',       value: selectedVehicle.direction },
+                    { icon: 'bi-fuel-pump',       label: 'Carburant',       value: `${selectedVehicle.carburant || '—'} · ${selectedVehicle.puissance || '—'}` },
+                    { icon: 'bi-graph-up',        label: 'Conso. moy.',     value: selectedVehicle.consommation_moyenne ? `${selectedVehicle.consommation_moyenne} L/100` : '—' },
+                    { icon: 'bi-wrench',          label: 'Km proch. vidange',   value: selectedVehicle.km_prochaine_vidange ? `${parseInt(selectedVehicle.km_prochaine_vidange).toLocaleString()} km` : '—' },
+                    { icon: 'bi-tools',           label: 'Km proch. révision',  value: selectedVehicle.km_prochaine_revision ? `${parseInt(selectedVehicle.km_prochaine_revision).toLocaleString()} km` : '—' },
+                    { icon: 'bi-calendar3',       label: "Date d'achat",    value: selectedVehicle.dateAchat ? new Date(selectedVehicle.dateAchat).toLocaleDateString('fr-FR') : '—' },
+                    { icon: 'bi-cash-stack',      label: "Coût acquisition", value: selectedVehicle.cout_acquisition ? `${selectedVehicle.cout_acquisition.toLocaleString()} CFA` : '—' },
+                    { icon: 'bi-bank',            label: 'Valeur résiduelle', value: selectedVehicle.valeur_residuelle ? `${selectedVehicle.valeur_residuelle.toLocaleString()} CFA` : '—' },
                   ].map((item, i) => (
                     <div key={i} className="flex items-center gap-3">
-                      <i className={`${item.icon} text-lg w-5 text-center`} style={{ color: theme.primary }}></i>
+                      <i className={`${item.icon} text-base w-5 text-center`} style={{ color: theme.primary }}></i>
                       <div className="flex-1 flex items-center justify-between">
                         <span className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{item.label}</span>
                         <span className={`text-sm font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>{item.value}</span>
@@ -1587,7 +1894,9 @@ const Vehicules = () => {
                     </div>
                   ))}
                 </div>
-                <div className="p-6">
+
+                {/* Échéances */}
+                <div className="p-5">
                   <h4 className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}><i className="bi bi-calendar-event text-orange-400"></i>Échéances importantes</h4>
                   <div className="space-y-3">
                     {[
@@ -1636,13 +1945,45 @@ const Vehicules = () => {
                       {detailTab === 'general' && (
                         <div className="space-y-4">
                           {[
-                            { title: 'Informations véhicule', icon: 'bi-car-front', iconColor: 'text-blue-500', bg: darkMode ? 'bg-gray-800' : 'bg-blue-50', fields: [['Immatriculation', selectedVehicle.immatriculation], ['Marque', selectedVehicle.marque], ['Modèle', selectedVehicle.modele], ['Catégorie', selectedVehicle.categorie], ['Année', selectedVehicle.annee], ['Couleur', selectedVehicle.couleur || '—'], ['Carburant', selectedVehicle.carburant || '—'], ['Puissance', selectedVehicle.puissance || '—'], ['Kilométrage', `${(selectedVehicle.kilometrage || 0).toLocaleString()} km`]] },
-                            { title: 'Affectation', icon: 'bi-people', iconColor: 'text-purple-500', bg: darkMode ? 'bg-gray-800' : 'bg-purple-50', fields: [['Direction', selectedVehicle.direction], ['Chauffeur', selectedVehicle.chauffeur || 'Non assigné'], ['Statut', selectedVehicle.statut]] },
-                            { title: 'Informations financières', icon: 'bi-currency-dollar', iconColor: 'text-green-500', bg: darkMode ? 'bg-gray-800' : 'bg-green-50', fields: [["Date d'achat", selectedVehicle.dateAchat ? new Date(selectedVehicle.dateAchat).toLocaleDateString('fr-FR') : '—'], ["Prix d'achat", selectedVehicle.prixAchat ? `${selectedVehicle.prixAchat.toLocaleString()} CFA` : '—']] },
+                            {
+                              title: 'Informations véhicule', icon: 'bi-car-front', iconColor: 'text-blue-500', bg: darkMode ? 'bg-gray-800' : 'bg-blue-50',
+                              fields: [
+                                ['Immatriculation',    selectedVehicle.immatriculation],
+                                ['N° Châssis',         selectedVehicle.numero_chassis || '—'],
+                                ['Marque',             selectedVehicle.marque],
+                                ['Modèle',             selectedVehicle.modele],
+                                ['Catégorie',          selectedVehicle.categorie],
+                                ['Année',              selectedVehicle.annee],
+                                ['Couleur',            selectedVehicle.couleur || '—'],
+                                ['Carburant',          selectedVehicle.carburant || '—'],
+                                ['Puissance',          selectedVehicle.puissance || '—'],
+                                ['Nombre de places',   selectedVehicle.nb_places || '—'],
+                                ['Kilométrage',        `${(selectedVehicle.kilometrage || 0).toLocaleString()} km`],
+                                ['Conso. moy.',        selectedVehicle.consommation_moyenne ? `${selectedVehicle.consommation_moyenne} L/100` : '—'],
+                                ['Km proch. vidange',  selectedVehicle.km_prochaine_vidange ? `${parseInt(selectedVehicle.km_prochaine_vidange).toLocaleString()} km` : '—'],
+                                ['Km proch. révision', selectedVehicle.km_prochaine_revision ? `${parseInt(selectedVehicle.km_prochaine_revision).toLocaleString()} km` : '—'],
+                              ],
+                            },
+                            {
+                              title: 'Affectation', icon: 'bi-people', iconColor: 'text-purple-500', bg: darkMode ? 'bg-gray-800' : 'bg-purple-50',
+                              fields: [
+                                ['Direction', selectedVehicle.direction],
+                                ['Chauffeur', selectedVehicle.chauffeur || 'Non assigné'],
+                                ['Statut',    selectedVehicle.statut],
+                              ],
+                            },
+                            {
+                              title: 'Informations financières', icon: 'bi-currency-dollar', iconColor: 'text-green-500', bg: darkMode ? 'bg-gray-800' : 'bg-green-50',
+                              fields: [
+                                ["Date d'achat",       selectedVehicle.dateAchat ? new Date(selectedVehicle.dateAchat).toLocaleDateString('fr-FR') : '—'],
+                                ["Coût d'acquisition", selectedVehicle.cout_acquisition ? `${selectedVehicle.cout_acquisition.toLocaleString()} CFA` : '—'],
+                                ['Valeur résiduelle',  selectedVehicle.valeur_residuelle ? `${selectedVehicle.valeur_residuelle.toLocaleString()} CFA` : '—'],
+                              ],
+                            },
                           ].map((card, ci) => (
                             <div key={ci} className={`${card.bg} rounded-xl p-4`}>
                               <h3 className={`font-semibold mb-3 flex items-center gap-2 text-sm ${darkMode ? 'text-white' : 'text-gray-900'}`}><i className={`${card.icon} ${card.iconColor}`}></i>{card.title}</h3>
-                              <div className="space-y-2.5">
+                              <div className="space-y-2">
                                 {card.fields.map(([label, value], fi) => (
                                   <div key={fi} className="flex justify-between">
                                     <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{label}</span>
@@ -1690,18 +2031,9 @@ const Vehicules = () => {
                                   </div>
                                   <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                                     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${doc.statut === 'valide' ? 'bg-green-100 text-green-700' : doc.statut === 'expire_bientot' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>{doc.statut}</span>
-                                    {/* Bouton Ouvrir */}
-                                    <button onClick={() => handleOpenDocument(doc)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-gray-400 hover:text-white' : 'hover:bg-gray-200 text-gray-500 hover:text-gray-900'} transition-colors`} title="Ouvrir le document">
-                                      <i className="bi bi-eye text-sm"></i>
-                                    </button>
-                                    {/* Bouton Modifier — désormais fonctionnel */}
-                                    <button onClick={() => handleOpenEditDocument(doc)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-amber-900/40 text-amber-400 hover:text-amber-300' : 'hover:bg-amber-50 text-amber-500 hover:text-amber-700'} transition-colors`} title="Modifier le document">
-                                      <i className="bi bi-pencil-square text-sm"></i>
-                                    </button>
-                                    {/* Bouton Supprimer */}
-                                    <button onClick={() => handleDeleteDocument(doc)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-red-50 text-red-500'} transition-colors`} title="Supprimer le document">
-                                      <i className="bi bi-trash text-sm"></i>
-                                    </button>
+                                    <button onClick={() => handleOpenDocument(doc)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-gray-400 hover:text-white' : 'hover:bg-gray-200 text-gray-500 hover:text-gray-900'} transition-colors`} title="Ouvrir le document"><i className="bi bi-eye text-sm"></i></button>
+                                    <button onClick={() => handleOpenEditDocument(doc)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-amber-900/40 text-amber-400 hover:text-amber-300' : 'hover:bg-amber-50 text-amber-500 hover:text-amber-700'} transition-colors`} title="Modifier le document"><i className="bi bi-pencil-square text-sm"></i></button>
+                                    <button onClick={() => handleDeleteDocument(doc)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-red-50 text-red-500'} transition-colors`} title="Supprimer le document"><i className="bi bi-trash text-sm"></i></button>
                                   </div>
                                 </div>
                               ))
@@ -1767,10 +2099,9 @@ const Vehicules = () => {
                         </div>
                       )}
 
-                      {/* ── Carburant ── CRUD COMPLET ── */}
+                      {/* ── Carburant ── */}
                       {detailTab === 'carburant' && (
                         <div>
-                          {/* Header + bouton ajouter */}
                           <div className="flex items-center justify-between mb-4">
                             <h3 className={`font-semibold text-sm ${darkMode ? 'text-white' : 'text-gray-900'}`}>
                               Historique carburant
@@ -1780,8 +2111,6 @@ const Vehicules = () => {
                               <i className="bi bi-plus-lg"></i>Ajouter un plein
                             </button>
                           </div>
-
-                          {/* Résumé rapide si données disponibles */}
                           {vehicleCarburant.length > 0 && (
                             <div className="grid grid-cols-3 gap-3 mb-4">
                               {[
@@ -1799,8 +2128,6 @@ const Vehicules = () => {
                               ))}
                             </div>
                           )}
-
-                          {/* Liste des pleins */}
                           {vehicleCarburant.length === 0 ? (
                             <div className="text-center py-12">
                               <i className={`bi bi-fuel-pump text-5xl ${darkMode ? 'text-gray-600' : 'text-gray-300'}`}></i>
@@ -1817,43 +2144,27 @@ const Vehicules = () => {
                                   <div key={c.id} className={`${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-100'} rounded-xl border p-4 flex items-center justify-between gap-3`}
                                     style={{ animation: animateCards ? `fadeInUp 0.3s ease-out ${idx * 0.05}s both` : 'none' }}>
                                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                                      {/* Icone */}
                                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${darkMode ? 'bg-yellow-900/30' : 'bg-yellow-50'}`}>
                                         <i className="bi bi-fuel-pump text-yellow-500 text-base"></i>
                                       </div>
-                                      {/* Infos principales */}
                                       <div className="min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                          <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                                            {c.date_plein ? new Date(c.date_plein).toLocaleDateString('fr-FR') : '—'}
-                                          </span>
-                                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${darkMode ? 'bg-yellow-900/30 text-yellow-400' : 'bg-yellow-100 text-yellow-700'}`}>
-                                            {parseFloat(c.litres).toFixed(1)} L
-                                          </span>
+                                          <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{c.date_plein ? new Date(c.date_plein).toLocaleDateString('fr-FR') : '—'}</span>
+                                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${darkMode ? 'bg-yellow-900/30 text-yellow-400' : 'bg-yellow-100 text-yellow-700'}`}>{parseFloat(c.litres).toFixed(1)} L</span>
                                           {c.station && <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}><i className="bi bi-geo-alt mr-0.5"></i>{c.station}</span>}
                                         </div>
                                         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                                           {c.kilometrage && <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}><i className="bi bi-speedometer2 mr-1"></i>{parseInt(c.kilometrage).toLocaleString()} km</span>}
                                           {c.km_depuis_dernier_plein && <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>+{parseInt(c.km_depuis_dernier_plein).toLocaleString()} km</span>}
                                           {c.prix_unitaire && <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{parseFloat(c.prix_unitaire).toLocaleString()} CFA/L</span>}
+                                          {c.consommation_calculee && <span className={`text-xs font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>{parseFloat(c.consommation_calculee).toFixed(1)} L/100</span>}
                                         </div>
                                       </div>
                                     </div>
-                                    {/* Montant + actions */}
                                     <div className="flex items-center gap-2 flex-shrink-0">
-                                      {montant > 0 && (
-                                        <span className={`text-sm font-bold ${darkMode ? 'text-green-400' : 'text-green-700'}`}>
-                                          {montant.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} CFA
-                                        </span>
-                                      )}
-                                      {/* Modifier */}
-                                      <button onClick={() => handleOpenEditCarburant(c)} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-amber-900/40 text-amber-400 hover:text-amber-300' : 'hover:bg-amber-50 text-amber-500 hover:text-amber-700'}`} title="Modifier ce plein">
-                                        <i className="bi bi-pencil text-sm"></i>
-                                      </button>
-                                      {/* Supprimer */}
-                                      <button onClick={() => handleDeleteCarburant(c)} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-red-50 text-red-500'}`} title="Supprimer ce plein">
-                                        <i className="bi bi-trash text-sm"></i>
-                                      </button>
+                                      {montant > 0 && <span className={`text-sm font-bold ${darkMode ? 'text-green-400' : 'text-green-700'}`}>{montant.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} CFA</span>}
+                                      <button onClick={() => handleOpenEditCarburant(c)} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-amber-900/40 text-amber-400 hover:text-amber-300' : 'hover:bg-amber-50 text-amber-500 hover:text-amber-700'}`} title="Modifier ce plein"><i className="bi bi-pencil text-sm"></i></button>
+                                      <button onClick={() => handleDeleteCarburant(c)} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-red-50 text-red-500'}`} title="Supprimer ce plein"><i className="bi bi-trash text-sm"></i></button>
                                     </div>
                                   </div>
                                 );
@@ -1912,41 +2223,21 @@ const Vehicules = () => {
       {/* MODAL — AJOUTER DOCUMENT                                      */}
       {/* ============================================================ */}
       {showAddDocumentModal && selectedVehicle && (
-        <ModalAddDocument
-          darkMode={darkMode}
-          theme={theme}
-          immatriculation={selectedVehicle.immatriculation}
-          onClose={() => setShowAddDocumentModal(false)}
-          onSuccess={onDocumentAdded}
-        />
+        <ModalAddDocument darkMode={darkMode} theme={theme} immatriculation={selectedVehicle.immatriculation} onClose={() => setShowAddDocumentModal(false)} onSuccess={onDocumentAdded} />
       )}
 
       {/* ============================================================ */}
       {/* MODAL — MODIFIER DOCUMENT                                     */}
       {/* ============================================================ */}
       {showEditDocumentModal && selectedVehicle && editingDocument && (
-        <ModalEditDocument
-          darkMode={darkMode}
-          theme={theme}
-          immatriculation={selectedVehicle.immatriculation}
-          document={editingDocument}
-          onClose={() => { setShowEditDocumentModal(false); setEditingDocument(null); }}
-          onSuccess={onDocumentEdited}
-        />
+        <ModalEditDocument darkMode={darkMode} theme={theme} immatriculation={selectedVehicle.immatriculation} document={editingDocument} onClose={() => { setShowEditDocumentModal(false); setEditingDocument(null); }} onSuccess={onDocumentEdited} />
       )}
 
       {/* ============================================================ */}
       {/* MODAL — AJOUTER / MODIFIER CARBURANT                          */}
       {/* ============================================================ */}
       {showCarburantModal && selectedVehicle && (
-        <ModalCarburant
-          darkMode={darkMode}
-          theme={theme}
-          immatriculation={selectedVehicle.immatriculation}
-          carburant={editingCarburant}
-          onClose={() => { setShowCarburantModal(false); setEditingCarburant(null); }}
-          onSuccess={onCarburantSaved}
-        />
+        <ModalCarburant darkMode={darkMode} theme={theme} immatriculation={selectedVehicle.immatriculation} carburant={editingCarburant} onClose={() => { setShowCarburantModal(false); setEditingCarburant(null); }} onSuccess={onCarburantSaved} />
       )}
     </div>
   );
