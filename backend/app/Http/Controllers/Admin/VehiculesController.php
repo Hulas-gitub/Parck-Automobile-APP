@@ -14,22 +14,18 @@ use Illuminate\Support\Str;
 /**
  * VehiculesController
  *
- * Gère tout le CRUD du module Véhicules côté admin :
+ * Gère tout le CRUD du module Véhicules côté admin.
+ * Le carnet carburant est géré dans CarnetCarburantController.
+ *
  *  - Liste paginée + filtres
- *  - Détail complet (fiche véhicule) avec toutes les jointures
+ *  - Détail complet avec toutes les jointures
  *  - Création / Modification / Suppression (soft delete)
  *  - Changement de statut
  *  - Documents (upload, liste, modification, suppression)
  *  - Maintenances (interventions)
  *  - Missions
- *  - Carburant (CRUD complet)
  *  - Statistiques
  *  - Données de référence CRUD (catégories, marques, modèles, directions, années, chauffeurs)
- *
- * Champs véhicules pris en compte :
- *   numero_chassis, km_prochaine_vidange, km_prochaine_revision,
- *   consommation_moyenne, cout_acquisition, valeur_residuelle,
- *   Couleur (colonne DB avec majuscule)
  */
 class VehiculesController extends Controller
 {
@@ -70,11 +66,6 @@ class VehiculesController extends Controller
         return null;
     }
 
-    /**
-     * Convertit un véhicule DB en format frontend.
-     * Inclut TOUS les champs + jointures.
-     * Note : colonne `Couleur` avec majuscule en DB.
-     */
     private function formatVehicule(object $v): array
     {
         $statutLabel = [
@@ -85,11 +76,8 @@ class VehiculesController extends Controller
         ][$v->statut] ?? ucfirst($v->statut);
 
         return [
-            // Identité
             'immatriculation'         => $v->immatriculation,
             'numero_chassis'          => $v->numero_chassis          ?? null,
-
-            // Relations (IDs pour le formulaire + noms pour l'affichage)
             'marque'                  => $v->marque_nom               ?? null,
             'marque_id'               => $v->marque_id                ?? null,
             'modele'                  => $v->modele_nom               ?? null,
@@ -101,50 +89,32 @@ class VehiculesController extends Controller
             'direction'               => $v->direction_nom            ?? null,
             'direction_id'            => $v->direction_id             ?? null,
             'chauffeur'               => $v->chauffeur_nom            ?? null,
-
-            // Caractéristiques
             'nb_places'               => (int)($v->nb_places          ?? 5),
-            'couleur'                 => $v->Couleur                  ?? null,
+            'couleur'                 => $v->couleur                  ?? null,
             'carburant'               => $v->type_carburant_defaut    ?? 'Diesel',
             'type_carburant_defaut'   => $v->type_carburant_defaut    ?? null,
             'capacite_reservoir'      => $v->capacite_reservoir_defaut ?? null,
-
-            // Kilométrage
             'kilometrage'             => (int)($v->kilometrage        ?? 0),
             'date_maj_km'             => $v->date_maj_km              ?? null,
             'km_prochaine_vidange'    => $v->km_prochaine_vidange    !== null ? (int)$v->km_prochaine_vidange    : null,
             'km_prochaine_revision'   => $v->km_prochaine_revision   !== null ? (int)$v->km_prochaine_revision   : null,
-
-            // Performance
             'consommation_moyenne'    => $v->consommation_moyenne    !== null ? (float)$v->consommation_moyenne  : null,
-
-            // Financier
             'cout_acquisition'        => (float)($v->cout_acquisition ?? 0),
             'valeur_residuelle'       => $v->valeur_residuelle       !== null ? (float)$v->valeur_residuelle     : null,
             'dateAchat'               => $v->date_acquisition        ?? null,
-
-            // Dates importantes
             'assuranceExpire'         => $v->date_expiration_assurance         ?? null,
             'visiteExpire'            => $v->date_expiration_visite_technique  ?? null,
             'date_immobilisation'     => $v->date_immobilisation               ?? null,
-
-            // Image
             'image'                   => $v->photo
                                             ? (filter_var($v->photo, FILTER_VALIDATE_URL)
                                                 ? $v->photo
                                                 : Storage::url($v->photo))
                                             : null,
-
-            // Statut
             'statut'                  => $statutLabel,
             'est_actif'               => (bool)$v->est_actif,
         ];
     }
 
-    /**
-     * Requête de base avec TOUTES les jointures.
-     * Inclut les infos du modèle (carburant, places, réservoir, conso défaut).
-     */
     private function baseQuery()
     {
         return DB::table('vehicules as v')
@@ -162,7 +132,6 @@ class VehiculesController extends Controller
             ) AS ch'), 'ch.vehicule_immatriculation', '=', 'v.immatriculation')
             ->where('v.est_supprime', 0)
             ->select(
-                // Véhicule — tous les champs nécessaires
                 'v.immatriculation',
                 'v.numero_chassis',
                 'v.marque_id',
@@ -184,9 +153,8 @@ class VehiculesController extends Controller
                 'v.cout_acquisition',
                 'v.valeur_residuelle',
                 'v.photo',
-                'v.Couleur',
+                'v.couleur',
                 'v.est_actif',
-                // Jointures
                 'ma.nom as marque_nom',
                 'mo.nom as modele_nom',
                 'mo.type_carburant_defaut',
@@ -558,15 +526,15 @@ class VehiculesController extends Controller
         if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $updateData = ['date_modification' => now()];
-        if ($request->filled('type_document'))   $updateData['type_document']       = $request->type_document;
-        if ($request->filled('nom_document'))    $updateData['nom_document']        = $request->nom_document;
-        if ($request->has('compagnie_assurance'))$updateData['compagnie_assurance'] = $request->compagnie_assurance;
-        if ($request->has('numero_contrat'))     $updateData['numero_contrat']      = $request->numero_contrat;
-        if ($request->has('type_couverture'))    $updateData['type_couverture']     = $request->type_couverture;
-        if ($request->has('montant_prime'))      $updateData['montant_prime']       = $request->montant_prime;
-        if ($request->has('date_emission'))      $updateData['date_emission']       = $request->date_emission  ?: null;
-        if ($request->has('date_expiration'))    $updateData['date_expiration']     = $request->date_expiration ?: null;
-        if ($request->has('notes'))              $updateData['notes']               = $request->notes;
+        if ($request->filled('type_document'))    $updateData['type_document']       = $request->type_document;
+        if ($request->filled('nom_document'))     $updateData['nom_document']        = $request->nom_document;
+        if ($request->has('compagnie_assurance')) $updateData['compagnie_assurance'] = $request->compagnie_assurance;
+        if ($request->has('numero_contrat'))      $updateData['numero_contrat']      = $request->numero_contrat;
+        if ($request->has('type_couverture'))     $updateData['type_couverture']     = $request->type_couverture;
+        if ($request->has('montant_prime'))       $updateData['montant_prime']       = $request->montant_prime;
+        if ($request->has('date_emission'))       $updateData['date_emission']       = $request->date_emission  ?: null;
+        if ($request->has('date_expiration'))     $updateData['date_expiration']     = $request->date_expiration ?: null;
+        if ($request->has('notes'))               $updateData['notes']               = $request->notes;
 
         if ($request->hasFile('fichier')) {
             if ($doc->chemin_fichier && !filter_var($doc->chemin_fichier, FILTER_VALIDATE_URL)
@@ -731,200 +699,7 @@ class VehiculesController extends Controller
     }
 
     // =========================================================================
-    // 10. CARBURANT D'UN VÉHICULE (CRUD COMPLET)
-    // =========================================================================
-
-    public function carburant(string $immatriculation): JsonResponse
-    {
-        $this->assertVehiculeExists($immatriculation);
-
-        $items = DB::table('carnets_carburant as cc')
-            ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
-            ->where('cc.vehicule_immatriculation', $immatriculation)->where('cc.est_supprime', 0)
-            ->orderBy('cc.date_plein', 'desc')
-            ->select(
-                'cc.id', 'cc.vehicule_immatriculation', 'cc.mission_id',
-                'm.reference_mission as mission_reference', 'm.destination as mission_destination',
-                'cc.date_plein', 'cc.kilometrage', 'cc.litres', 'cc.prix_unitaire',
-                'cc.station', 'cc.chemin_recu', 'cc.km_depuis_dernier_plein',
-                'cc.consommation_calculee', 'cc.notes', 'cc.date_creation'
-            )
-            ->get()
-            ->map(function ($item) {
-                $item->cout_total = ($item->litres && $item->prix_unitaire)
-                    ? round((float)$item->litres * (float)$item->prix_unitaire, 2)
-                    : null;
-                return $item;
-            });
-
-        return response()->json($items);
-    }
-
-    public function showCarburant(string $immatriculation, int $carburantId): JsonResponse
-    {
-        $this->assertVehiculeExists($immatriculation);
-
-        $record = DB::table('carnets_carburant as cc')
-            ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
-            ->where('cc.id', $carburantId)->where('cc.vehicule_immatriculation', $immatriculation)
-            ->where('cc.est_supprime', 0)
-            ->select('cc.*', 'm.reference_mission as mission_reference', 'm.destination as mission_destination')
-            ->first();
-
-        if (!$record) return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
-
-        $record->cout_total = ($record->litres && $record->prix_unitaire)
-            ? round((float)$record->litres * (float)$record->prix_unitaire, 2) : null;
-
-        return response()->json($record);
-    }
-
-    public function storeCarburant(Request $request, string $immatriculation): JsonResponse
-    {
-        $this->assertVehiculeExists($immatriculation);
-
-        $validator = Validator::make($request->all(), [
-            'date_plein'    => 'required|date',
-            'litres'        => 'required|numeric|min:0.01',
-            'prix_unitaire' => 'nullable|numeric|min:0',
-            'station'       => 'nullable|string|max:200',
-            'kilometrage'   => 'nullable|integer|min:0',
-            'mission_id'    => 'nullable|integer|exists:missions,id',
-            'notes'         => 'nullable|string',
-        ]);
-        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
-
-        $kilometrage = $request->filled('kilometrage')
-            ? (int)$request->kilometrage
-            : (int)DB::table('vehicules')->where('immatriculation', $immatriculation)->value('kilometrage');
-
-        if ($request->filled('mission_id')) {
-            $ok = DB::table('missions')
-                ->where('id', $request->mission_id)
-                ->where('vehicule_immatriculation', $immatriculation)
-                ->where('est_supprime', 0)->exists();
-            if (!$ok) return response()->json(['message' => "La mission n'appartient pas à ce véhicule."], 422);
-        }
-
-        $dernierPlein     = DB::table('carnets_carburant')
-            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
-            ->orderBy('date_plein', 'desc')->orderBy('id', 'desc')->first();
-
-        $kmDepuisDernier  = null;
-        $consommationCalc = null;
-
-        if ($dernierPlein && $dernierPlein->kilometrage && $kilometrage > $dernierPlein->kilometrage) {
-            $kmDepuisDernier = $kilometrage - (int)$dernierPlein->kilometrage;
-            if ($kmDepuisDernier > 0) {
-                $consommationCalc = round(((float)$request->litres / $kmDepuisDernier) * 100, 2);
-            }
-        }
-
-        $id = DB::table('carnets_carburant')->insertGetId([
-            'vehicule_immatriculation' => $immatriculation,
-            'mission_id'               => $request->mission_id ?: null,
-            'date_plein'               => $request->date_plein,
-            'kilometrage'              => $kilometrage,
-            'litres'                   => $request->litres,
-            'prix_unitaire'            => $request->prix_unitaire ?: null,
-            'station'                  => $request->station       ?: null,
-            'km_depuis_dernier_plein'  => $kmDepuisDernier,
-            'consommation_calculee'    => $consommationCalc,
-            'notes'                    => $request->notes         ?: null,
-            'est_supprime'             => 0,
-            'date_creation'            => now(),
-        ]);
-
-        $kmActuel = (int)DB::table('vehicules')->where('immatriculation', $immatriculation)->value('kilometrage');
-        if ($kilometrage > $kmActuel) {
-            DB::table('vehicules')->where('immatriculation', $immatriculation)->update([
-                'kilometrage'      => $kilometrage,
-                'date_maj_km'      => now()->toDateString(),
-                'date_modification'=> now(),
-            ]);
-        }
-
-        $record = DB::table('carnets_carburant as cc')
-            ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
-            ->where('cc.id', $id)
-            ->select('cc.*', 'm.reference_mission as mission_reference', 'm.destination as mission_destination')
-            ->first();
-
-        return response()->json($record, 201);
-    }
-
-    public function updateCarburant(Request $request, string $immatriculation, int $carburantId): JsonResponse
-    {
-        $this->assertVehiculeExists($immatriculation);
-
-        $record = DB::table('carnets_carburant')
-            ->where('id', $carburantId)->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)->first();
-        if (!$record) return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
-
-        $validator = Validator::make($request->all(), [
-            'date_plein'    => 'nullable|date',
-            'litres'        => 'nullable|numeric|min:0.01',
-            'prix_unitaire' => 'nullable|numeric|min:0',
-            'station'       => 'nullable|string|max:200',
-            'kilometrage'   => 'nullable|integer|min:0',
-            'mission_id'    => 'nullable|integer|exists:missions,id',
-            'notes'         => 'nullable|string',
-        ]);
-        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
-
-        $updateData = [];
-        if ($request->has('date_plein'))    $updateData['date_plein']    = $request->date_plein;
-        if ($request->has('litres'))        $updateData['litres']        = $request->litres;
-        if ($request->has('prix_unitaire')) $updateData['prix_unitaire'] = $request->prix_unitaire ?: null;
-        if ($request->has('station'))       $updateData['station']       = $request->station       ?: null;
-        if ($request->has('mission_id'))    $updateData['mission_id']    = $request->mission_id    ?: null;
-        if ($request->has('notes'))         $updateData['notes']         = $request->notes         ?: null;
-
-        $newKm     = $request->filled('kilometrage') ? (int)$request->kilometrage : (int)$record->kilometrage;
-        $newLitres = $request->filled('litres')      ? (float)$request->litres    : (float)$record->litres;
-        if ($request->filled('kilometrage')) $updateData['kilometrage'] = $newKm;
-
-        $pleinPrecedent = DB::table('carnets_carburant')
-            ->where('vehicule_immatriculation', $immatriculation)->where('est_supprime', 0)
-            ->where('id', '!=', $carburantId)->where('kilometrage', '<', $newKm)
-            ->orderBy('kilometrage', 'desc')->value('kilometrage');
-
-        if ($pleinPrecedent && $newKm > $pleinPrecedent) {
-            $kmDepuis = $newKm - (int)$pleinPrecedent;
-            $updateData['km_depuis_dernier_plein'] = $kmDepuis;
-            $updateData['consommation_calculee']   = $kmDepuis > 0 ? round(($newLitres / $kmDepuis) * 100, 2) : null;
-        } else {
-            $updateData['km_depuis_dernier_plein'] = null;
-            $updateData['consommation_calculee']   = null;
-        }
-
-        DB::table('carnets_carburant')->where('id', $carburantId)->update($updateData);
-
-        $updated = DB::table('carnets_carburant as cc')
-            ->leftJoin('missions as m', 'm.id', '=', 'cc.mission_id')
-            ->where('cc.id', $carburantId)
-            ->select('cc.*', 'm.reference_mission as mission_reference', 'm.destination as mission_destination')
-            ->first();
-
-        return response()->json($updated);
-    }
-
-    public function destroyCarburant(string $immatriculation, int $carburantId): JsonResponse
-    {
-        $this->assertVehiculeExists($immatriculation);
-
-        $rows = DB::table('carnets_carburant')
-            ->where('id', $carburantId)->where('vehicule_immatriculation', $immatriculation)
-            ->where('est_supprime', 0)
-            ->update(['est_supprime' => 1, 'date_suppression' => now()]);
-
-        if (!$rows) return response()->json(['message' => 'Enregistrement carburant introuvable.'], 404);
-        return response()->json(['message' => 'Enregistrement carburant supprimé.']);
-    }
-
-    // =========================================================================
-    // 11. STATISTIQUES D'UN VÉHICULE
+    // 10. STATISTIQUES D'UN VÉHICULE
     // =========================================================================
 
     public function stats(string $immatriculation): JsonResponse
@@ -966,18 +741,9 @@ class VehiculesController extends Controller
     }
 
     // =========================================================================
-    // 12. DONNÉES DE RÉFÉRENCE — CRUD COMPLET
+    // 11. DONNÉES DE RÉFÉRENCE — CRUD COMPLET
     // =========================================================================
 
-    /**
-     * GET /api/admin/vehicules/references
-     *
-     * Retourne catégories, marques, modèles (avec marque_id pour filtrage dynamique),
-     * directions, années ET chauffeurs — alimente tous les menus déroulants du formulaire.
-     *
-     * Le tableau `chauffeurs` contient tous les utilisateurs ayant le rôle 'chauffeur'
-     * (code = 'chauffeur' dans la table roles), actifs et non supprimés.
-     */
     public function references(): JsonResponse
     {
         $categories = DB::table('categories_vehicules')
@@ -988,7 +754,6 @@ class VehiculesController extends Controller
             ->where('est_actif', 1)->whereNull('deleted_at')->orderBy('nom')
             ->select('id', 'nom', 'pays_origine')->get();
 
-        // Modèles avec marque_id + données techniques pour auto-remplissage du formulaire
         $modeles = DB::table('modeles as mo')
             ->join('marques as ma', 'ma.id', '=', 'mo.marque_id')
             ->where('mo.est_actif', 1)->whereNull('mo.deleted_at')
@@ -1010,8 +775,6 @@ class VehiculesController extends Controller
             ->where('est_actif', 1)->orderBy('annee', 'desc')
             ->select('id', 'annee')->get();
 
-        // ── NOUVEAU : liste des chauffeurs ────────────────────────────────────
-        // Récupère tous les utilisateurs actifs dont le rôle a le code 'chauffeur'
         $chauffeurs = DB::table('utilisateurs as u')
             ->join('roles as r', 'r.id', '=', 'u.role_id')
             ->where('r.code', 'chauffeur')
@@ -1021,7 +784,6 @@ class VehiculesController extends Controller
             ->orderBy('u.nom')
             ->select('u.id', 'u.nom', 'u.email')
             ->get();
-        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json([
             'categories' => $categories,
@@ -1029,7 +791,7 @@ class VehiculesController extends Controller
             'modeles'    => $modeles,
             'directions' => $directions,
             'annees'     => $annees,
-            'chauffeurs' => $chauffeurs,   // <-- ajout
+            'chauffeurs' => $chauffeurs,
         ]);
     }
 
@@ -1181,11 +943,11 @@ class VehiculesController extends Controller
         if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
         $data = ['nom' => $request->nom, 'updated_at' => now()];
-        if ($request->has('categorie_id'))               $data['categorie_id']               = $request->categorie_id;
-        if ($request->has('nb_places_defaut'))           $data['nb_places_defaut']           = $request->nb_places_defaut ?? 5;
-        if ($request->has('type_carburant_defaut'))      $data['type_carburant_defaut']      = $request->type_carburant_defaut      ?: null;
-        if ($request->has('capacite_reservoir_defaut'))  $data['capacite_reservoir_defaut']  = $request->capacite_reservoir_defaut  ?: null;
-        if ($request->has('consommation_moyenne_defaut'))$data['consommation_moyenne_defaut']= $request->consommation_moyenne_defaut ?: null;
+        if ($request->has('categorie_id'))                $data['categorie_id']               = $request->categorie_id;
+        if ($request->has('nb_places_defaut'))            $data['nb_places_defaut']           = $request->nb_places_defaut ?? 5;
+        if ($request->has('type_carburant_defaut'))       $data['type_carburant_defaut']      = $request->type_carburant_defaut      ?: null;
+        if ($request->has('capacite_reservoir_defaut'))   $data['capacite_reservoir_defaut']  = $request->capacite_reservoir_defaut  ?: null;
+        if ($request->has('consommation_moyenne_defaut')) $data['consommation_moyenne_defaut']= $request->consommation_moyenne_defaut ?: null;
 
         $rows = DB::table('modeles')->where('id', $id)->whereNull('deleted_at')->update($data);
         if (!$rows) return response()->json(['message' => 'Modèle introuvable.'], 404);

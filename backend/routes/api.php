@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\VehiculesController;
+use App\Http\Controllers\Admin\CarnetCarburantController;
 use App\Http\Controllers\Admin\DocumentExpirationController;
 
 /*
@@ -13,97 +14,103 @@ use App\Http\Controllers\Admin\DocumentExpirationController;
 |--------------------------------------------------------------------------
 */
 
-// ==========================================
-// Routes publiques (non authentifiées)
-// ==========================================
 Route::post('/login',    [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 
-// ==========================================
-// Routes protégées par Sanctum
-// ==========================================
 Route::middleware('auth:sanctum')->group(function () {
 
-    // ── Auth ──
-    Route::get('/user',               [AuthController::class, 'user']);
-    Route::post('/logout',            [AuthController::class, 'logout']);
-    Route::post('/refresh',           [AuthController::class, 'refresh']);
-    Route::post('/check-permission',  [AuthController::class, 'checkPermission']);
+    Route::get ('/user',             [AuthController::class, 'user']);
+    Route::post('/logout',           [AuthController::class, 'logout']);
+    Route::post('/refresh',          [AuthController::class, 'refresh']);
+    Route::post('/check-permission', [AuthController::class, 'checkPermission']);
 
-    // ── Administration ──
     Route::prefix('admin')->name('admin.')->group(function () {
 
-        // Dashboard principal
-        Route::get('/dashboard',             [DashboardController::class, 'index'])->name('dashboard');
-        Route::get('/dashboard/kpi-vehicules',[DashboardController::class, 'getKpiVehiculesDetail'])->name('dashboard.kpi-vehicules');
-
-        // ── Vérification expiration documents ──
+        Route::get('/dashboard',               [DashboardController::class, 'index'])->name('dashboard');
+        Route::get('/dashboard/kpi-vehicules', [DashboardController::class, 'getKpiVehiculesDetail'])->name('dashboard.kpi-vehicules');
         Route::get('/documents/check-expiration', [DocumentExpirationController::class, 'checkExpiration'])->name('documents.check-expiration');
 
+
+           Route::prefix('carburant')->name('carburant.global.')->group(function () {
+        Route::get('/vehicules',
+            [CarnetCarburantController::class, 'listeVehicules'])
+            ->name('vehicules');
+ 
+        Route::get('/vehicules/{immatriculation}',
+            [CarnetCarburantController::class, 'vehiculeDetail'])
+            ->name('vehicule.detail');
+    });
+ 
         // =====================================================================
-        // MODULE VÉHICULES
+        // VÉHICULES
         // =====================================================================
         Route::prefix('vehicules')->name('vehicules.')->group(function () {
 
-            // ── Données de référence (AVANT la route {immatriculation}) ───────
+            // Références
             Route::get('/references', [VehiculesController::class, 'references'])->name('references');
-
-            // CRUD Catégories
             Route::post  ('/references/categories',      [VehiculesController::class, 'storeCategorie'])->name('categories.store');
             Route::put   ('/references/categories/{id}', [VehiculesController::class, 'updateCategorie'])->name('categories.update');
             Route::delete('/references/categories/{id}', [VehiculesController::class, 'destroyCategorie'])->name('categories.destroy');
-
-            // CRUD Marques
             Route::post  ('/references/marques',         [VehiculesController::class, 'storeMarque'])->name('marques.store');
             Route::put   ('/references/marques/{id}',    [VehiculesController::class, 'updateMarque'])->name('marques.update');
             Route::delete('/references/marques/{id}',    [VehiculesController::class, 'destroyMarque'])->name('marques.destroy');
-
-            // CRUD Modèles
             Route::post  ('/references/modeles',         [VehiculesController::class, 'storeModele'])->name('modeles.store');
             Route::put   ('/references/modeles/{id}',    [VehiculesController::class, 'updateModele'])->name('modeles.update');
             Route::delete('/references/modeles/{id}',    [VehiculesController::class, 'destroyModele'])->name('modeles.destroy');
-
-            // CRUD Années
             Route::post  ('/references/annees',          [VehiculesController::class, 'storeAnnee'])->name('annees.store');
             Route::delete('/references/annees/{id}',     [VehiculesController::class, 'destroyAnnee'])->name('annees.destroy');
 
-            // ── CRUD principal véhicules ───────────────────────────────────────
+            // CRUD véhicules
             Route::get   ('/',                  [VehiculesController::class, 'index'])->name('index');
             Route::post  ('/',                  [VehiculesController::class, 'store'])->name('store');
             Route::get   ('/{immatriculation}', [VehiculesController::class, 'show'])->name('show');
             Route::put   ('/{immatriculation}', [VehiculesController::class, 'update'])->name('update');
-            Route::post  ('/{immatriculation}', [VehiculesController::class, 'update'])->name('update.post'); // Pour multipart/form-data avec _method=PUT
+            Route::post  ('/{immatriculation}', [VehiculesController::class, 'update'])->name('update.post');
             Route::delete('/{immatriculation}', [VehiculesController::class, 'destroy'])->name('destroy');
+            Route::patch ('/{immatriculation}/statut', [VehiculesController::class, 'updateStatut'])->name('statut');
 
-            // Changement de statut uniquement
-            Route::patch('/{immatriculation}/statut', [VehiculesController::class, 'updateStatut'])->name('statut');
-
-            // ── Documents d'un véhicule ───────────────────────────────────────
+            // Documents
             Route::get   ('/{immatriculation}/documents',                   [VehiculesController::class, 'documents'])->name('documents.index');
             Route::post  ('/{immatriculation}/documents',                   [VehiculesController::class, 'storeDocument'])->name('documents.store');
             Route::put   ('/{immatriculation}/documents/{documentId}',      [VehiculesController::class, 'updateDocument'])->name('documents.update');
-            Route::post  ('/{immatriculation}/documents/{documentId}',      [VehiculesController::class, 'updateDocument'])->name('documents.update.post'); // Pour multipart/form-data avec _method=PUT
+            Route::post  ('/{immatriculation}/documents/{documentId}',      [VehiculesController::class, 'updateDocument'])->name('documents.update.post');
             Route::delete('/{immatriculation}/documents/{documentId}',      [VehiculesController::class, 'destroyDocument'])->name('documents.destroy');
             Route::get   ('/{immatriculation}/documents/{documentId}/open', [VehiculesController::class, 'openDocument'])->name('documents.open');
 
-            // ── Maintenances (= interventions) ────────────────────────────────
+            // Maintenances
             Route::get ('/{immatriculation}/maintenances', [VehiculesController::class, 'maintenances'])->name('maintenances.index');
             Route::post('/{immatriculation}/maintenances', [VehiculesController::class, 'storeMaintenance'])->name('maintenances.store');
 
-            // ── Missions ──────────────────────────────────────────────────────
+            // Missions
             Route::get('/{immatriculation}/missions', [VehiculesController::class, 'missions'])->name('missions.index');
 
-            // ── Carburant (CRUD complet) ───────────────────────────────────────
-            Route::get   ('/{immatriculation}/carburant',      [VehiculesController::class, 'carburant'])->name('carburant.index');
-            Route::post  ('/{immatriculation}/carburant',      [VehiculesController::class, 'storeCarburant'])->name('carburant.store');
-            Route::get   ('/{immatriculation}/carburant/{id}', [VehiculesController::class, 'showCarburant'])->name('carburant.show');
-            Route::put   ('/{immatriculation}/carburant/{id}', [VehiculesController::class, 'updateCarburant'])->name('carburant.update');
-            Route::delete('/{immatriculation}/carburant/{id}', [VehiculesController::class, 'destroyCarburant'])->name('carburant.destroy');
-
-            // ── Statistiques ──────────────────────────────────────────────────
+            // Stats
             Route::get('/{immatriculation}/stats', [VehiculesController::class, 'stats'])->name('stats');
-        });
 
+
+            
+        // Routes CARBURANT PAR VÉHICULE (inchangées)
+        Route::get('/{immatriculation}/carburant/missions-disponibles',
+            [CarnetCarburantController::class, 'missionsDisponibles'])
+            ->name('carburant.missions-disponibles');
+ 
+        Route::get('/{immatriculation}/carburant/export/pdf',
+            [CarnetCarburantController::class, 'exportPdf'])
+            ->name('carburant.export.pdf');
+ 
+        Route::get('/{immatriculation}/carburant/export/excel',
+            [CarnetCarburantController::class, 'exportExcel'])
+            ->name('carburant.export.excel');
+ 
+        Route::get('/{immatriculation}/carburant/{id}/detail',
+            [CarnetCarburantController::class, 'showDetail'])
+            ->name('carburant.detail');
+ 
+        Route::get   ('/{immatriculation}/carburant',      [CarnetCarburantController::class, 'index'])  ->name('carburant.index');
+        Route::post  ('/{immatriculation}/carburant',      [CarnetCarburantController::class, 'store'])  ->name('carburant.store');
+        Route::get   ('/{immatriculation}/carburant/{id}', [CarnetCarburantController::class, 'show'])   ->name('carburant.show');
+        Route::put   ('/{immatriculation}/carburant/{id}', [CarnetCarburantController::class, 'update']) ->name('carburant.update');
+        Route::delete('/{immatriculation}/carburant/{id}', [CarnetCarburantController::class, 'destroy'])->name('carburant.destroy');
+ });
     });
-
 });

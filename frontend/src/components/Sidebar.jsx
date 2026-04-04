@@ -132,6 +132,13 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
           path: '/Admin/Navigation/Vehicules',
           onClick: () => navigate('/Admin/Navigation/Vehicules')
         },
+
+        {
+  icon: 'bi-fuel-pump-fill',
+  label: 'Carnet de carburant',
+  path: '/Admin/Navigation/CarnetCarburant',
+  onClick: () => navigate('/Admin/Navigation/CarnetCarburant')
+}
       ]
     },
     {

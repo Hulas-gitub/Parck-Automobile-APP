@@ -16,6 +16,7 @@ import Accidents from './Admin/Navigation/Accidents';
 import Missions from './Admin/Navigation/Missions';
 import DemandesInterventions from './Admin/Navigation/DemandesInterventions';
 import InterventionsVehicules from './Admin/Navigation/InterventionsVehicules';
+import CarnetCarburant from './Admin/Navigation/CarnetCarburant';
 // Composant pour protéger les routes
 const ProtectedRoute = ({ children }) => {
   const token = localStorage.getItem('token');
@@ -65,6 +66,15 @@ function App() {
               </ProtectedRoute>
             } 
           />
+    <Route 
+            path="/Admin/Navigation/CarnetCarburant"
+            element={
+              <ProtectedRoute>
+                <CarnetCarburant />
+              </ProtectedRoute>
+            } 
+          />
+
              <Route 
             path="/Admin/Navigation/DemandesInterventions"
             element={
