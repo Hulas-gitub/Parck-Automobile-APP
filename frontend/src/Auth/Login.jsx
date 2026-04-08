@@ -100,7 +100,7 @@ const Login = () => {
               window.location.href = '/admin/navigation/dashboard';
               break;
             case 'chef_parc':
-              window.location.href = '/dashboard-chef-parc';
+              window.location.href = '/Chef-parc-auto/Navigation/Dashboard';
               break;
             case 'chef_tf':
               window.location.href = '/dashboard-chef-tf';

@@ -1,912 +1,781 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
-// ============================================================================
-// IMPORTS DES COMPOSANTS SÉPARÉS - SIDEBAR ET HEADER
-// ============================================================================
 import Sidebar from '../../components/Sidebar';
 import Header from '../../components/Header';
-// ============================================================================
+import Swal from 'sweetalert2';
+import {
+  getUtilisateurs,
+  getUtilisateur,
+  createUtilisateur,
+  updateUtilisateur,
+  deleteUtilisateur,
+  toggleStatutUtilisateur,
+  resetPasswordUtilisateur,
+  generatePassword,
+  getRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  toggleStatutRole,
+  getDirections,
+  createDirection,
+  updateDirection,
+  deleteDirection,
+  toggleStatutDirection,
+} from '../../api/Admin-Axios/Utilisateurs-axios';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPOSANT SPINNER
+// ─────────────────────────────────────────────────────────────────────────────
+const Spinner = ({ size = 'md' }) => {
+  const s = size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-10 h-10' : 'w-6 h-6';
+  return (
+    <div className={`${s} border-2 border-current border-t-transparent rounded-full animate-spin opacity-70`} />
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER : badge statut
+// ─────────────────────────────────────────────────────────────────────────────
+const StatusBadge = ({ active, labelTrue = 'Actif', labelFalse = 'Inactif' }) => (
+  <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
+    active
+      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+      : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+  }`}>
+    {active ? labelTrue : labelFalse}
+  </span>
+);
+
+// Badge niveau accès
+const NiveauBadge = ({ niveau }) => {
+  const cls = {
+    'Complet': 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
+    'Élevé':   'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+    'Moyen':   'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
+  }[niveau] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400';
+  return <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${cls}`}>{niveau}</span>;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILISATEURS — COMPOSANT PRINCIPAL
+// ─────────────────────────────────────────────────────────────────────────────
 const Utilisateurs = () => {
-  // ── Dark mode: persiste dans localStorage, default = true (sombre) ──
-  const [darkMode, setDarkMode] = useState(() => {
-    try {
-      const saved = localStorage.getItem('fleetify_darkMode');
-      return saved !== null ? saved === 'true' : true;
-    } catch {
-      return true;
-    }
-  });
+  const { theme } = useTheme();
+  const navigate  = useNavigate();
 
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem('fleetify_darkMode') !== 'false'; }
+    catch { return true; }
+  });
   useEffect(() => {
-    try {
-      localStorage.setItem('fleetify_darkMode', String(darkMode));
-    } catch {}
+    try { localStorage.setItem('fleetify_darkMode', String(darkMode)); } catch {}
   }, [darkMode]);
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed,  setSidebarCollapsed]  = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
+  const [showProfile,       setShowProfile]       = useState(false);
+
+  // Onglets
+  const [activeTab, setActiveTab] = useState('utilisateurs');
+
+  // Données
+  const [usersData,      setUsersData]      = useState([]);
+  const [rolesData,      setRolesData]      = useState([]);
+  const [directionsData, setDirectionsData] = useState([]);
+  const [stats,          setStats]          = useState({});
+
+  // Chargement
+  const [loading,    setLoading]    = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [errors,     setErrors]     = useState({});
+
+  // Filtres
+  const [searchQuery,    setSearchQuery]    = useState('');
+  const [roleFilter,     setRoleFilter]     = useState('Tous');
+  const [statusFilter,   setStatusFilter]   = useState('Tous');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('Tous');
-  const [statusFilter, setStatusFilter] = useState('Tous');
-  const { theme } = useTheme();
-  const navigate = useNavigate();
 
-  // États pour les popups et les onglets
-  const [activeTab, setActiveTab] = useState('utilisateurs'); // utilisateurs, roles, directions
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  // Modales
+  const [showAddModal,     setShowAddModal]     = useState(false);
+  const [showEditModal,    setShowEditModal]    = useState(false);
+  const [showDeleteModal,  setShowDeleteModal]  = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [showActionMenu, setShowActionMenu] = useState(null);
-  const [currentItem, setCurrentItem] = useState(null);
+  const [currentItem,      setCurrentItem]      = useState(null);
+  const [showActionMenu,   setShowActionMenu]   = useState(null);
 
-  // États pour les formulaires
-  const [formData, setFormData] = useState({});
+  // Formulaire
+  const [formData,      setFormData]      = useState({});
+  const [generatingPwd, setGeneratingPwd] = useState(false);
+  const [showPassword,  setShowPassword]  = useState(false);
 
-  // ============================================================================
-  // DONNÉES INITIALES
-  // ============================================================================
-  
-  // Rôles
-  const [rolesData, setRolesData] = useState([
-    { 
-      id: 1, 
-      code: 'super_admin', 
-      nom: 'Super Administrateur', 
-      description: 'Accès complet au système',
-      permissions: ['Tous'],
-      niveauAcces: 'Complet',
-      nbUtilisateurs: 1,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
+  // ─────────────────────────────────────────────────────────────────────────
+  // SWEETALERT2 — helpers centralisés avec thème dynamique
+  // Adapte automatiquement le fond, le texte et les boutons au mode dark/light
+  // et aux couleurs du ThemeContext actif.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const swalBase = useCallback(() => ({
+    background:         darkMode ? '#111827' : '#ffffff',
+    color:              darkMode ? '#f9fafb' : '#111827',
+    confirmButtonColor: theme.primary,
+    customClass: {
+      popup:         darkMode ? 'swal-dark-popup'  : 'swal-light-popup',
+      confirmButton: 'swal-confirm-btn',
+      cancelButton:  'swal-cancel-btn',
     },
-    { 
-      id: 2, 
-      code: 'admin', 
-      nom: 'Administrateur', 
-      description: 'Gestion administrative',
-      permissions: ['Gestion utilisateurs', 'Gestion véhicules', 'Rapports'],
-      niveauAcces: 'Élevé',
-      nbUtilisateurs: 2,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 3, 
-      code: 'chef_parc', 
-      nom: 'Chef du Parc', 
-      description: 'Gestion du parc automobile',
-      permissions: ['Gestion véhicules', 'Maintenance', 'Affectations'],
-      niveauAcces: 'Moyen',
-      nbUtilisateurs: 1,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 4, 
-      code: 'chef_tf', 
-      nom: 'Chef Transport de Fonds', 
-      description: 'Gestion transport de fonds',
-      permissions: ['Missions TF', 'Suivi véhicules TF'],
-      niveauAcces: 'Moyen',
-      nbUtilisateurs: 1,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 5, 
-      code: 'chauffeur', 
-      nom: 'Chauffeur', 
-      description: 'Conduite de véhicules',
-      permissions: ['Voir missions', 'Signaler anomalies'],
-      niveauAcces: 'Limité',
-      nbUtilisateurs: 1,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 6, 
-      code: 'mecanicien', 
-      nom: 'Mécanicien', 
-      description: 'Maintenance et réparations',
-      permissions: ['Interventions', 'Stock pièces'],
-      niveauAcces: 'Limité',
-      nbUtilisateurs: 1,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 7, 
-      code: 'agent_pc_radio', 
-      nom: 'Agent PC Radio', 
-      description: 'Gestion PC Radio',
-      permissions: ['PC Radio', 'Suivi temps réel'],
-      niveauAcces: 'Limité',
-      nbUtilisateurs: 1,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
+  }), [darkMode, theme.primary]);
+
+  /**
+   * Succès → fermeture automatique après 1,8 s puis rechargement des données.
+   * Pas de bouton affiché.
+   */
+  const swalSuccess = useCallback((message) => {
+    Swal.fire({
+      ...swalBase(),
+      icon:              'success',
+      title:             'Succès',
+      text:              message,
+      timer:             1800,
+      timerProgressBar:  true,
+      showConfirmButton: false,
+    }).then(() => loadData());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [swalBase]);
+
+  /**
+   * Erreur → seul bouton "D'ACCORD", pas de fermeture automatique.
+   */
+  const swalError = useCallback((message) => {
+    Swal.fire({
+      ...swalBase(),
+      icon:              'error',
+      title:             'Erreur',
+      text:              message,
+      confirmButtonText: "D'ACCORD",
+      showCancelButton:  false,
+    });
+  }, [swalBase]);
+
+  /**
+   * Confirmation → retourne true si l'utilisateur clique sur Confirmer.
+   */
+  const swalConfirm = useCallback(async ({ title, text, confirmText = 'Confirmer', icon = 'warning' }) => {
+    const result = await Swal.fire({
+      ...swalBase(),
+      icon,
+      title,
+      text,
+      showCancelButton:   true,
+      confirmButtonText:  confirmText,
+      cancelButtonText:   'Annuler',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor:  darkMode ? '#374151' : '#6b7280',
+    });
+    return result.isConfirmed;
+  }, [swalBase, darkMode]);
+
+  // Fermeture menus au clic dehors
+  useEffect(() => {
+    const handler = () => { setShowActionMenu(null); setShowFilterMenu(false); };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CHARGEMENT DES DONNÉES
+  // ─────────────────────────────────────────────────────────────────────────
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (activeTab === 'utilisateurs') {
+        const params = {};
+        if (searchQuery)                    params.search  = searchQuery;
+        if (roleFilter !== 'Tous')          params.role_id = rolesData.find(r => r.nom === roleFilter)?.id;
+        if (statusFilter === 'Actif')       params.statut  = 1;
+        else if (statusFilter === 'Bloqué') params.statut  = 0;
+
+        const res = await getUtilisateurs(params);
+        if (res.data.success) {
+          setUsersData(res.data.data);
+          setStats(res.data.stats ?? {});
+        }
+      } else if (activeTab === 'roles') {
+        const params = searchQuery ? { search: searchQuery } : {};
+        const res = await getRoles(params);
+        if (res.data.success) {
+          setRolesData(res.data.data);
+          setStats(res.data.stats ?? {});
+        }
+      } else {
+        const params = searchQuery ? { search: searchQuery } : {};
+        const res = await getDirections(params);
+        if (res.data.success) {
+          setDirectionsData(res.data.data);
+          setStats(res.data.stats ?? {});
+        }
+      }
+    } catch {
+      swalError('Erreur lors du chargement des données.');
+    } finally {
+      setLoading(false);
     }
-  ]);
+  }, [activeTab, searchQuery, roleFilter, statusFilter]);
 
-  // Directions
-  const [directionsData, setDirectionsData] = useState([
-    { 
-      id: 1, 
-      code: 'DG', 
-      nom: 'Direction Générale', 
-      description: 'Direction de l\'entreprise',
-      responsable: 'Jean Mbourou',
-      nbVehicules: 5,
-      nbUtilisateurs: 3,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 2, 
-      code: 'DT', 
-      nom: 'Direction Technique', 
-      description: 'Gestion technique et maintenance',
-      responsable: 'Pierre Nzong',
-      nbVehicules: 8,
-      nbUtilisateurs: 5,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 3, 
-      code: 'TF', 
-      nom: 'Transport de Fonds', 
-      description: 'Gestion transport de fonds',
-      responsable: 'Marie Obame',
-      nbVehicules: 12,
-      nbUtilisateurs: 8,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    },
-    { 
-      id: 4, 
-      code: 'DL', 
-      nom: 'Direction Logistique', 
-      description: 'Gestion logistique',
-      responsable: 'Paul Ondo',
-      nbVehicules: 6,
-      nbUtilisateurs: 4,
-      estActif: true,
-      dateCreation: '2025-01-15 08:00:00'
-    }
-  ]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  // Utilisateurs
-  const [usersData, setUsersData] = useState([
-    { 
-      id: 1, 
-      nom: 'Jean', 
-      prenom: 'Mbourou',
-      email: 'j.mbourou@sgs.ga', 
-      telephone: '+241 77 00 00 01', 
-      roleId: 1,
-      roleName: 'Super Administrateur', 
-      directionId: 1,
-      directionName: 'Direction Générale',
-      statut: 'Actif',
-      dernierConnexion: "Aujourd'hui, 10:30",
-      initiales: 'JM',
-      couleur: '#f59e0b',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-02-03 10:30:00'
-    },
-    { 
-      id: 2, 
-      nom: 'Nzong',
-      prenom: 'Pierre', 
-      email: 'p.nzong@sgs.ga', 
-      telephone: '+241 77 00 00 02', 
-      roleId: 3,
-      roleName: 'Chef du Parc', 
-      directionId: 2,
-      directionName: 'Direction Technique',
-      statut: 'Actif',
-      dernierConnexion: "Aujourd'hui, 09:15",
-      initiales: 'PN',
-      couleur: '#3b82f6',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-02-03 09:15:00'
-    },
-    { 
-      id: 3, 
-      nom: 'Obame',
-      prenom: 'Marie', 
-      email: 'm.obame@sgs.ga', 
-      telephone: '+241 77 00 00 03', 
-      roleId: 4,
-      roleName: 'Chef TF', 
-      directionId: 3,
-      directionName: 'Transport de Fonds',
-      statut: 'Actif',
-      dernierConnexion: 'Hier, 17:45',
-      initiales: 'MO',
-      couleur: '#10b981',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-02-02 17:45:00'
-    },
-    { 
-      id: 4, 
-      nom: 'Ondo',
-      prenom: 'Paul', 
-      email: 'p.ondo@sgs.ga', 
-      telephone: '+241 77 00 00 04', 
-      roleId: 5,
-      roleName: 'Chauffeur', 
-      directionId: 4,
-      directionName: 'Direction Logistique',
-      statut: 'Actif',
-      dernierConnexion: "Aujourd'hui, 08:00",
-      initiales: 'PO',
-      couleur: '#8b5cf6',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-02-03 08:00:00'
-    },
-    { 
-      id: 5, 
-      nom: 'Essono',
-      prenom: 'Marc', 
-      email: 'm.essono@sgs.ga', 
-      telephone: '+241 77 00 00 05', 
-      roleId: 6,
-      roleName: 'Mécanicien', 
-      directionId: 2,
-      directionName: 'Direction Technique',
-      statut: 'Actif',
-      dernierConnexion: "Aujourd'hui, 07:30",
-      initiales: 'ME',
-      couleur: '#ef4444',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-02-03 07:30:00'
-    },
-    { 
-      id: 6, 
-      nom: 'Mba',
-      prenom: 'Luc', 
-      email: 'l.mba@sgs.ga', 
-      telephone: '+241 77 00 00 06', 
-      roleId: 7,
-      roleName: 'Agent PC Radio', 
-      directionId: 2,
-      directionName: 'Direction Technique',
-      statut: 'Actif',
-      dernierConnexion: "Aujourd'hui, 11:00",
-      initiales: 'LM',
-      couleur: '#ec4899',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-02-03 11:00:00'
-    },
-    { 
-      id: 7, 
-      nom: 'Nguema',
-      prenom: 'Anne', 
-      email: 'a.nguema@sgs.ga', 
-      telephone: '+241 77 00 00 07', 
-      roleId: 5,
-      roleName: 'Chauffeur', 
-      directionId: 3,
-      directionName: 'Transport de Fonds',
-      statut: 'Bloqué',
-      dernierConnexion: 'Il y a 15 jours',
-      initiales: 'AN',
-      couleur: '#6b7280',
-      dateCreation: '2025-01-15 08:00:00',
-      derniereModification: '2026-01-20 14:30:00'
-    }
-  ]);
-
-  // ============================================================================
-  // FONCTIONS CRUD
-  // ============================================================================
-
-  // UTILISATEURS
-  const handleAddUser = () => {
-    const newUser = {
-      id: usersData.length + 1,
-      nom: formData.nom,
-      prenom: formData.prenom,
-      email: formData.email,
-      telephone: formData.telephone,
-      roleId: parseInt(formData.roleId),
-      roleName: rolesData.find(r => r.id === parseInt(formData.roleId))?.nom,
-      directionId: parseInt(formData.directionId),
-      directionName: directionsData.find(d => d.id === parseInt(formData.directionId))?.nom,
-      statut: 'Actif',
-      dernierConnexion: 'Jamais',
-      initiales: `${formData.prenom.charAt(0)}${formData.nom.charAt(0)}`,
-      couleur: '#' + Math.floor(Math.random()*16777215).toString(16),
-      dateCreation: new Date().toISOString(),
-      derniereModification: new Date().toISOString()
+  // Pré-charger rôles + directions pour les selects
+  useEffect(() => {
+    const preload = async () => {
+      try {
+        const [rRes, dRes] = await Promise.all([getRoles(), getDirections()]);
+        if (rRes.data.success) setRolesData(rRes.data.data);
+        if (dRes.data.success) setDirectionsData(dRes.data.data);
+      } catch {}
     };
-    setUsersData([...usersData, newUser]);
-    setShowAddModal(false);
+    preload();
+  }, []);
+
+  const searchTimer = useRef(null);
+  const handleSearchChange = (val) => {
+    setSearchQuery(val);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(loadData, 300);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // UTILITAIRES FORMULAIRE
+  // ─────────────────────────────────────────────────────────────────────────
+  const openAdd = () => {
     setFormData({});
-    alert('✅ Utilisateur ajouté avec succès !');
-  };
-
-  const handleEditUser = () => {
-    setUsersData(usersData.map(user => 
-      user.id === currentItem.id 
-        ? {
-            ...user,
-            nom: formData.nom,
-            prenom: formData.prenom,
-            email: formData.email,
-            telephone: formData.telephone,
-            roleId: parseInt(formData.roleId),
-            roleName: rolesData.find(r => r.id === parseInt(formData.roleId))?.nom,
-            directionId: parseInt(formData.directionId),
-            directionName: directionsData.find(d => d.id === parseInt(formData.directionId))?.nom,
-            derniereModification: new Date().toISOString()
-          }
-        : user
-    ));
-    setShowEditModal(false);
-    setFormData({});
+    setErrors({});
+    setShowPassword(false);
     setCurrentItem(null);
-    alert('✅ Utilisateur modifié avec succès !');
+    setShowAddModal(true);
   };
 
-  const handleDeleteUser = () => {
-    setUsersData(usersData.filter(user => user.id !== currentItem.id));
-    setShowDeleteModal(false);
-    setCurrentItem(null);
-    alert('✅ Utilisateur supprimé avec succès !');
-  };
-
-  const handleToggleUserStatus = (user) => {
-    const newStatus = user.statut === 'Actif' ? 'Bloqué' : 'Actif';
-    setUsersData(usersData.map(u => 
-      u.id === user.id 
-        ? { ...u, statut: newStatus, derniereModification: new Date().toISOString() }
-        : u
-    ));
-    alert(`✅ Utilisateur ${newStatus === 'Actif' ? 'débloqué' : 'bloqué'} avec succès !`);
+  const openEdit = (item) => {
+    setCurrentItem(item);
+    setErrors({});
+    if (activeTab === 'utilisateurs') {
+      setFormData({
+        nom:          item.nom,
+        email:        item.email,
+        role_id:      item.roleId,
+        direction_id: item.directionId,
+      });
+    } else if (activeTab === 'roles') {
+      setFormData({
+        code:        item.code,
+        libelle:     item.nom,
+        description: item.description,
+      });
+    } else {
+      setFormData({
+        nom:  item.nom,
+        code: item.code,
+      });
+    }
+    setShowEditModal(true);
     setShowActionMenu(null);
   };
 
-  // RÔLES
-  const handleAddRole = () => {
-    const newRole = {
-      id: rolesData.length + 1,
-      code: formData.code.toLowerCase().replace(/\s+/g, '_'),
-      nom: formData.nom,
-      description: formData.description,
-      permissions: formData.permissions ? formData.permissions.split(',').map(p => p.trim()) : [],
-      niveauAcces: formData.niveauAcces,
-      nbUtilisateurs: 0,
-      estActif: true,
-      dateCreation: new Date().toISOString()
-    };
-    setRolesData([...rolesData, newRole]);
-    setShowAddModal(false);
-    setFormData({});
-    alert('✅ Rôle ajouté avec succès !');
-  };
-
-  const handleEditRole = () => {
-    setRolesData(rolesData.map(role => 
-      role.id === currentItem.id 
-        ? {
-            ...role,
-            nom: formData.nom,
-            description: formData.description,
-            permissions: formData.permissions ? formData.permissions.split(',').map(p => p.trim()) : role.permissions,
-            niveauAcces: formData.niveauAcces
-          }
-        : role
-    ));
-    setShowEditModal(false);
-    setFormData({});
-    setCurrentItem(null);
-    alert('✅ Rôle modifié avec succès !');
-  };
-
-  const handleDeleteRole = () => {
-    if (currentItem.nbUtilisateurs > 0) {
-      alert('⚠️ Impossible de supprimer un rôle assigné à des utilisateurs !');
-      return;
-    }
-    setRolesData(rolesData.filter(role => role.id !== currentItem.id));
-    setShowDeleteModal(false);
-    setCurrentItem(null);
-    alert('✅ Rôle supprimé avec succès !');
-  };
-
-  const handleToggleRoleStatus = (role) => {
-    setRolesData(rolesData.map(r => 
-      r.id === role.id 
-        ? { ...r, estActif: !r.estActif }
-        : r
-    ));
-    alert(`✅ Rôle ${!role.estActif ? 'activé' : 'désactivé'} avec succès !`);
+  const openDelete = (item) => {
+    setCurrentItem(item);
+    setShowDeleteModal(true);
     setShowActionMenu(null);
   };
 
-  // DIRECTIONS
-  const handleAddDirection = () => {
-    const newDirection = {
-      id: directionsData.length + 1,
-      code: formData.code.toUpperCase(),
-      nom: formData.nom,
-      description: formData.description,
-      responsable: formData.responsable,
-      nbVehicules: 0,
-      nbUtilisateurs: 0,
-      estActif: true,
-      dateCreation: new Date().toISOString()
-    };
-    setDirectionsData([...directionsData, newDirection]);
-    setShowAddModal(false);
-    setFormData({});
-    alert('✅ Direction ajoutée avec succès !');
-  };
-
-  const handleEditDirection = () => {
-    setDirectionsData(directionsData.map(dir => 
-      dir.id === currentItem.id 
-        ? {
-            ...dir,
-            nom: formData.nom,
-            description: formData.description,
-            responsable: formData.responsable
-          }
-        : dir
-    ));
-    setShowEditModal(false);
-    setFormData({});
-    setCurrentItem(null);
-    alert('✅ Direction modifiée avec succès !');
-  };
-
-  const handleDeleteDirection = () => {
-    if (currentItem.nbUtilisateurs > 0 || currentItem.nbVehicules > 0) {
-      alert('⚠️ Impossible de supprimer une direction avec des utilisateurs ou véhicules assignés !');
-      return;
-    }
-    setDirectionsData(directionsData.filter(dir => dir.id !== currentItem.id));
-    setShowDeleteModal(false);
-    setCurrentItem(null);
-    alert('✅ Direction supprimée avec succès !');
-  };
-
-  const handleToggleDirectionStatus = (direction) => {
-    setDirectionsData(directionsData.map(d => 
-      d.id === direction.id 
-        ? { ...d, estActif: !d.estActif }
-        : d
-    ));
-    alert(`✅ Direction ${!direction.estActif ? 'activée' : 'désactivée'} avec succès !`);
+  const openDetails = (item) => {
+    setCurrentItem(item);
+    setShowDetailsModal(true);
     setShowActionMenu(null);
   };
 
-   {/* ============================================================================ */}
-      {/* UTILISATION DU COMPOSANT SIDEBAR IMPORTÉ */}
-      {/* ============================================================================ */}
-      <Sidebar 
-        darkMode={darkMode} 
-        sidebarCollapsed={sidebarCollapsed} 
-        setSidebarCollapsed={setSidebarCollapsed}
-      />
-
-      {/* ============================================================================ */}
-      {/* UTILISATION DU COMPOSANT HEADER IMPORTÉ */}
-      {/* ============================================================================ */}
-      <Header 
-        darkMode={darkMode} 
-        setDarkMode={setDarkMode} 
-        sidebarCollapsed={sidebarCollapsed}
-        showNotifications={showNotifications}
-        setShowNotifications={setShowNotifications}
-        showProfile={showProfile}
-        setShowProfile={setShowProfile}
-      />
-
-  // ============================================================================
-  // MODALS
-  // ============================================================================
-
- // Modal Ajouter/Modifier utilisateur;roles;direction
-const FormModal = ({ show, onClose, title, onSubmit, type, initialData }) => {
-  const [localFormData, setLocalFormData] = React.useState(initialData || {});
-
-  React.useEffect(() => {
-    setLocalFormData(initialData || {});
-  }, [initialData, show]);
-
-  if (!show) return null;
-
-  const handleSubmit = () => {
-    onSubmit(localFormData);
+  const handleApiErrors = (err) => {
+    if (err.response?.data?.errors) {
+      setErrors(err.response.data.errors);
+      const firstMsg = Object.values(err.response.data.errors)[0];
+      swalError(Array.isArray(firstMsg) ? firstMsg[0] : firstMsg);
+    } else {
+      swalError(err.response?.data?.message ?? 'Une erreur est survenue.');
+    }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto`}>
-        <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
-          <div className="flex items-center justify-between">
-            <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{title}</h3>
-            <button 
-              onClick={onClose}
-              className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-100'} transition-colors`}
-            >
-              <i className={`bi bi-x-lg ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}></i>
-            </button>
+  // ─────────────────────────────────────────────────────────────────────────
+  // GÉNÉRATION MOT DE PASSE
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleGeneratePassword = async () => {
+    setGeneratingPwd(true);
+    try {
+      const res = await generatePassword(formData.nom ?? '');
+      if (res.data.success) {
+        setFormData((prev) => ({ ...prev, mot_de_passe: res.data.password }));
+        setShowPassword(true);
+      }
+    } catch {
+      swalError('Impossible de générer le mot de passe.');
+    } finally {
+      setGeneratingPwd(false);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRUD UTILISATEURS
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleAddUser = async () => {
+    setSubmitting(true);
+    setErrors({});
+    try {
+      const res = await createUtilisateur({
+        nom:          formData.nom,
+        email:        formData.email,
+        role_id:      formData.role_id,
+        direction_id: formData.direction_id || null,
+        mot_de_passe: formData.mot_de_passe,
+      });
+      if (res.data.success) {
+        setShowAddModal(false);
+        swalSuccess(res.data.message ?? 'Utilisateur créé avec succès.');
+      }
+    } catch (err) { handleApiErrors(err); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleEditUser = async () => {
+    setSubmitting(true);
+    setErrors({});
+    try {
+      const res = await updateUtilisateur(currentItem.id, {
+        nom:          formData.nom,
+        email:        formData.email,
+        role_id:      formData.role_id,
+        direction_id: formData.direction_id || null,
+      });
+      if (res.data.success) {
+        setShowEditModal(false);
+        swalSuccess(res.data.message ?? 'Utilisateur modifié avec succès.');
+      }
+    } catch (err) { handleApiErrors(err); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleDeleteUser = async () => {
+    setSubmitting(true);
+    try {
+      const res = await deleteUtilisateur(currentItem.id);
+      if (res.data.success) {
+        setShowDeleteModal(false);
+        swalSuccess(res.data.message ?? 'Utilisateur supprimé.');
+      }
+    } catch (err) {
+      setShowDeleteModal(false);
+      swalError(err.response?.data?.message ?? 'Erreur lors de la suppression.');
+    }
+    finally { setSubmitting(false); }
+  };
+
+  const handleToggleUserStatus = async (user) => {
+    setShowActionMenu(null);
+    const confirmed = await swalConfirm({
+      title:       `${user.est_actif ? 'Bloquer' : 'Débloquer'} cet utilisateur ?`,
+      text:        `Voulez-vous vraiment ${user.est_actif ? 'bloquer' : 'débloquer'} ${user.nom} ?`,
+      confirmText: user.est_actif ? 'Bloquer' : 'Débloquer',
+      icon:        'question',
+    });
+    if (!confirmed) return;
+    try {
+      const res = await toggleStatutUtilisateur(user.id);
+      if (res.data.success) swalSuccess(res.data.message ?? 'Statut mis à jour.');
+    } catch (err) { swalError(err.response?.data?.message ?? 'Erreur.'); }
+  };
+
+  const handleResetPassword = async (userId) => {
+    const confirmed = await swalConfirm({
+      title:       'Réinitialiser le mot de passe ?',
+      text:        'Un nouveau mot de passe sera généré et envoyé par email. Les sessions actives seront fermées.',
+      confirmText: 'Réinitialiser',
+      icon:        'warning',
+    });
+    if (!confirmed) return;
+    try {
+      const res = await resetPasswordUtilisateur(userId);
+      if (res.data.success) {
+        swalSuccess(res.data.message ?? 'Mot de passe réinitialisé et envoyé par email.');
+      } else {
+        swalError(res.data.message);
+      }
+    } catch (err) { swalError(err.response?.data?.message ?? 'Erreur lors de la réinitialisation.'); }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRUD RÔLES
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleAddRole = async () => {
+    setSubmitting(true);
+    setErrors({});
+    try {
+      const res = await createRole({
+        code:        formData.code,
+        libelle:     formData.libelle,
+        description: formData.description,
+      });
+      if (res.data.success) {
+        setShowAddModal(false);
+        swalSuccess(res.data.message ?? 'Rôle créé avec succès.');
+      }
+    } catch (err) { handleApiErrors(err); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleEditRole = async () => {
+    setSubmitting(true);
+    setErrors({});
+    try {
+      const res = await updateRole(currentItem.id, {
+        libelle:     formData.libelle,
+        description: formData.description,
+      });
+      if (res.data.success) {
+        setShowEditModal(false);
+        swalSuccess(res.data.message ?? 'Rôle modifié avec succès.');
+      }
+    } catch (err) { handleApiErrors(err); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleDeleteRole = async () => {
+    setSubmitting(true);
+    try {
+      const res = await deleteRole(currentItem.id);
+      if (res.data.success) {
+        setShowDeleteModal(false);
+        swalSuccess(res.data.message ?? 'Rôle supprimé.');
+      }
+    } catch (err) {
+      setShowDeleteModal(false);
+      swalError(err.response?.data?.message ?? 'Erreur lors de la suppression.');
+    }
+    finally { setSubmitting(false); }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRUD DIRECTIONS
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleAddDirection = async () => {
+    setSubmitting(true);
+    setErrors({});
+    try {
+      const res = await createDirection({
+        nom:  formData.nom,
+        code: formData.code,
+      });
+      if (res.data.success) {
+        setShowAddModal(false);
+        swalSuccess(res.data.message ?? 'Direction créée avec succès.');
+      }
+    } catch (err) { handleApiErrors(err); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleEditDirection = async () => {
+    setSubmitting(true);
+    setErrors({});
+    try {
+      const res = await updateDirection(currentItem.id, {
+        nom:  formData.nom,
+        code: formData.code,
+      });
+      if (res.data.success) {
+        setShowEditModal(false);
+        swalSuccess(res.data.message ?? 'Direction modifiée avec succès.');
+      }
+    } catch (err) { handleApiErrors(err); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleDeleteDirection = async () => {
+    setSubmitting(true);
+    try {
+      const res = await deleteDirection(currentItem.id);
+      if (res.data.success) {
+        setShowDeleteModal(false);
+        swalSuccess(res.data.message ?? 'Direction supprimée.');
+      }
+    } catch (err) {
+      setShowDeleteModal(false);
+      swalError(err.response?.data?.message ?? 'Erreur lors de la suppression.');
+    }
+    finally { setSubmitting(false); }
+  };
+
+  // Dispatch submit
+  const handleSubmitAdd    = () => { if (activeTab === 'utilisateurs') handleAddUser();    else if (activeTab === 'roles') handleAddRole();    else handleAddDirection(); };
+  const handleSubmitEdit   = () => { if (activeTab === 'utilisateurs') handleEditUser();   else if (activeTab === 'roles') handleEditRole();   else handleEditDirection(); };
+  const handleSubmitDelete = () => { if (activeTab === 'utilisateurs') handleDeleteUser(); else if (activeTab === 'roles') handleDeleteRole(); else handleDeleteDirection(); };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // STATS CARDS
+  // ─────────────────────────────────────────────────────────────────────────
+  const getStatsCards = () => {
+    if (activeTab === 'utilisateurs') return [
+      { title: 'Total Utilisateurs', value: stats.total   ?? usersData.length,                          subtitle: 'comptes créés',      icon: 'bi-people-fill',       iconBg: 'bg-blue-100 dark:bg-blue-900/40',    textColor: 'text-blue-600 dark:text-blue-400' },
+      { title: 'Actifs',             value: stats.actifs  ?? usersData.filter(u => u.est_actif).length,  subtitle: 'utilisateurs actifs', icon: 'bi-check-circle-fill', iconBg: 'bg-green-100 dark:bg-green-900/40',  textColor: 'text-green-600 dark:text-green-400' },
+      { title: 'Bloqués',            value: stats.bloques ?? usersData.filter(u => !u.est_actif).length, subtitle: 'comptes bloqués',     icon: 'bi-x-circle-fill',     iconBg: 'bg-red-100 dark:bg-red-900/40',      textColor: 'text-red-600 dark:text-red-400' },
+      { title: 'Administrateurs',    value: stats.admins  ?? 0,                                          subtitle: 'rôles admin',         icon: 'bi-shield-fill-check', iconBg: 'bg-purple-100 dark:bg-purple-900/40', textColor: 'text-purple-600 dark:text-purple-400' },
+    ];
+    if (activeTab === 'roles') return [
+      { title: 'Total Rôles',           value: stats.total                ?? rolesData.length,                         subtitle: 'rôles créés',        icon: 'bi-shield-fill',       iconBg: 'bg-blue-100 dark:bg-blue-900/40',    textColor: 'text-blue-600 dark:text-blue-400' },
+      { title: 'Rôles Actifs',          value: stats.actifs               ?? rolesData.filter(r => r.estActif).length, subtitle: 'actuellement actifs', icon: 'bi-check-circle-fill', iconBg: 'bg-green-100 dark:bg-green-900/40',  textColor: 'text-green-600 dark:text-green-400' },
+      { title: 'Utilisateurs Assignés', value: stats.utilisateursAssignes ?? rolesData.reduce((a, r) => a + r.nbUtilisateurs, 0), subtitle: 'au total', icon: 'bi-people-fill', iconBg: 'bg-purple-100 dark:bg-purple-900/40', textColor: 'text-purple-600 dark:text-purple-400' },
+      { title: 'Accès Élevé',           value: rolesData.filter(r => r.niveauAcces === 'Élevé' || r.niveauAcces === 'Complet').length, subtitle: 'accès total', icon: 'bi-key-fill', iconBg: 'bg-yellow-100 dark:bg-yellow-900/40', textColor: 'text-yellow-600 dark:text-yellow-400' },
+    ];
+    return [
+      { title: 'Total Directions',   value: stats.total  ?? directionsData.length,                              subtitle: 'directions',      icon: 'bi-building',          iconBg: 'bg-blue-100 dark:bg-blue-900/40',    textColor: 'text-blue-600 dark:text-blue-400' },
+      { title: 'Véhicules',          value: directionsData.reduce((a, d) => a + d.nbVehicules, 0),              subtitle: 'au total',        icon: 'bi-car-front-fill',    iconBg: 'bg-green-100 dark:bg-green-900/40',  textColor: 'text-green-600 dark:text-green-400' },
+      { title: 'Utilisateurs',       value: directionsData.reduce((a, d) => a + d.nbUtilisateurs, 0),           subtitle: 'au total',        icon: 'bi-people-fill',       iconBg: 'bg-purple-100 dark:bg-purple-900/40', textColor: 'text-purple-600 dark:text-purple-400' },
+      { title: 'Directions Actives', value: stats.actifs ?? directionsData.filter(d => d.estActif).length,      subtitle: 'opérationnelles', icon: 'bi-check-circle-fill', iconBg: 'bg-yellow-100 dark:bg-yellow-900/40', textColor: 'text-yellow-600 dark:text-yellow-400' },
+    ];
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // HELPERS UI
+  // ─────────────────────────────────────────────────────────────────────────
+  const dm = (dark, light) => darkMode ? dark : light;
+
+  const inputCls = `w-full px-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 transition-colors ${
+    dm('bg-gray-800 border-gray-700 text-white placeholder-gray-500',
+       'bg-white border-gray-300 text-gray-900 placeholder-gray-400')
+  }`;
+  const labelCls = `block text-xs font-semibold uppercase tracking-wide mb-1.5 ${dm('text-gray-400', 'text-gray-600')}`;
+
+  const FieldError = ({ name }) => errors[name]
+    ? <p className="text-red-500 text-xs mt-1">{Array.isArray(errors[name]) ? errors[name][0] : errors[name]}</p>
+    : null;
+
+  const uniqueRoleNames = ['Tous', ...new Set(usersData.map(u => u.roleName))];
+  const deleteName = currentItem?.nom ?? '';
+
+  // Styles tableau
+  const theadStyle = { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` };
+  const trStyle = (index) => ({
+    backgroundColor: index % 2 === 0 ? (darkMode ? '#1a2535' : '#eef2ff') : (darkMode ? '#1c1f2b' : '#f3f4f6'),
+    borderBottom: darkMode ? '1px solid #1e293b' : '1px solid #e5e7eb',
+    transition: 'background-color 0.15s ease',
+  });
+  const trHover = { backgroundColor: darkMode ? `${theme.primary}28` : `${theme.primary}15` };
+
+  const Th = ({ children }) => (
+    <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">{children}</th>
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ÉTAT VIDE / CHARGEMENT
+  // ─────────────────────────────────────────────────────────────────────────
+  const EmptyState = ({ message }) => (
+    <tr>
+      <td colSpan={10} className="px-6 py-16 text-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className={`w-14 h-14 rounded-full flex items-center justify-center ${dm('bg-gray-800', 'bg-gray-100')}`}>
+            <i className={`bi bi-inbox text-2xl ${dm('text-gray-600', 'text-gray-400')}`} />
           </div>
+          <p className={`text-sm ${dm('text-gray-400', 'text-gray-500')}`}>{message}</p>
         </div>
+      </td>
+    </tr>
+  );
 
-        <div className="p-6">
-          {type === 'utilisateur' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Nom <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.nom || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, nom: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Dupont"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Prénom <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.prenom || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, prenom: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Jean"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Email <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="email"
-                  value={localFormData.email || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, email: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="jean.dupont@sgs.ga"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Téléphone <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="tel"
-                  value={localFormData.telephone || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, telephone: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="+241 77 00 00 00"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Rôle <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={localFormData.roleId || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, roleId: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                >
-                  <option value="">Sélectionner un rôle</option>
-                  {rolesData.filter(r => r.estActif).map(role => (
-                    <option key={role.id} value={role.id}>{role.nom}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Direction <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={localFormData.directionId || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, directionId: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                >
-                  <option value="">Sélectionner une direction</option>
-                  {directionsData.filter(d => d.estActif).map(dir => (
-                    <option key={dir.id} value={dir.id}>{dir.nom}</option>
-                  ))}
-                </select>
-              </div>
-   
-            
-            </div>
-          )}
-
-          {type === 'role' && (
-            <div className="space-y-4">
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Code <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.code || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, code: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="admin"
-                  disabled={currentItem !== null}
-                />
-                {currentItem === null && (
-                  <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-600'} mt-1`}>
-                    Le code sera automatiquement formaté en minuscules
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Nom <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.nom || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, nom: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Administrateur"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Description
-                </label>
-                <textarea
-                  value={localFormData.description || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, description: e.target.value})}
-                  rows="3"
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Description du rôle"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Niveau d'accès <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={localFormData.niveauAcces || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, niveauAcces: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                >
-                  <option value="">Sélectionner</option>
-                  <option value="Complet">Complet</option>
-                  <option value="Élevé">Élevé</option>
-                  <option value="Moyen">Moyen</option>
-                  <option value="Limité">Limité</option>
-                </select>
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Permissions (séparées par des virgules)
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.permissions || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, permissions: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Gestion utilisateurs, Gestion véhicules"
-                />
-              </div>
-            </div>
-          )}
-
-          {type === 'direction' && (
-            <div className="space-y-4">
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Code <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.code || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, code: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="DG"
-                  disabled={currentItem !== null}
-                />
-                {currentItem === null && (
-                  <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-600'} mt-1`}>
-                    Le code sera automatiquement formaté en majuscules
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Nom <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.nom || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, nom: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Direction Générale"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Description
-                </label>
-                <textarea
-                  value={localFormData.description || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, description: e.target.value})}
-                  rows="3"
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Description de la direction"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
-                  Responsable
-                </label>
-                <input
-                  type="text"
-                  value={localFormData.responsable || ''}
-                  onChange={(e) => setLocalFormData({...localFormData, responsable: e.target.value})}
-                  className={`w-full px-4 py-2 rounded-lg border ${
-                    darkMode 
-                      ? 'bg-gray-800 border-gray-700 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': theme.primary }}
-                  placeholder="Nom du responsable"
-                />
-              </div>
-            </div>
-          )}
+  const LoadingState = () => (
+    <tr>
+      <td colSpan={10} className="px-6 py-16 text-center">
+        <div className="flex items-center justify-center gap-3">
+          <Spinner size="md" />
+          <span className={`text-sm ${dm('text-gray-400', 'text-gray-500')}`}>Chargement...</span>
         </div>
+      </td>
+    </tr>
+  );
 
-        <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex justify-end gap-3`}>
+  // ─────────────────────────────────────────────────────────────────────────
+  // BARRE OUTILS
+  // ─────────────────────────────────────────────────────────────────────────
+  const Toolbar = ({ count, countLabel }) => (
+    <div className={`p-5 border-b ${dm('border-gray-800', 'border-gray-100')}`}>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h3 className={`text-lg font-bold ${dm('text-white', 'text-gray-900')}`}>
+            {activeTab === 'utilisateurs' ? 'Liste des Utilisateurs' : activeTab === 'roles' ? 'Liste des Rôles' : 'Liste des Directions'}
+          </h3>
+          <p className={`text-sm ${dm('text-gray-400', 'text-gray-500')}`}>
+            {count} {countLabel} trouvé{count > 1 ? 's' : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Recherche */}
+          <div className="relative">
+            <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm ${dm('text-gray-400', 'text-gray-400')}`} />
+            <input
+              type="text"
+              placeholder="Rechercher..."
+              value={searchQuery}
+              onChange={e => handleSearchChange(e.target.value)}
+              className={`pl-9 pr-4 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 w-56 ${
+                dm('bg-gray-800 border-gray-700 text-white placeholder-gray-500',
+                   'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400')
+              }`}
+              style={{ '--tw-ring-color': theme.primary }}
+            />
+          </div>
+
+          {/* Filtres utilisateurs uniquement */}
+          {activeTab === 'utilisateurs' && (
+            <div className="relative" onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => setShowFilterMenu(p => !p)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  dm('bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-750',
+                     'bg-white border-gray-200 text-gray-700 hover:bg-gray-50')
+                }`}
+              >
+                <i className="bi bi-funnel" />
+                <span>Filtres</span>
+                {(roleFilter !== 'Tous' || statusFilter !== 'Tous') && (
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                )}
+              </button>
+              {showFilterMenu && (
+                <div className={`absolute right-0 mt-2 w-60 rounded-xl border shadow-2xl z-50 p-4 space-y-4 ${
+                  dm('bg-gray-800 border-gray-700', 'bg-white border-gray-200')
+                }`}>
+                  <div>
+                    <label className={labelCls}>Rôle</label>
+                    <select value={roleFilter} onChange={e => { setRoleFilter(e.target.value); loadData(); }} className={inputCls}>
+                      {uniqueRoleNames.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Statut</label>
+                    <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); loadData(); }} className={inputCls}>
+                      <option value="Tous">Tous</option>
+                      <option value="Actif">Actif</option>
+                      <option value="Bloqué">Bloqué</option>
+                    </select>
+                  </div>
+                  {(roleFilter !== 'Tous' || statusFilter !== 'Tous') && (
+                    <button onClick={() => { setRoleFilter('Tous'); setStatusFilter('Tous'); loadData(); }} className="text-xs text-red-500 hover:text-red-400">
+                      Réinitialiser les filtres
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Bouton ajouter */}
           <button
-            onClick={onClose}
-            className={`px-6 py-2 rounded-lg border ${
-              darkMode 
-                ? 'border-gray-700 text-gray-300 hover:bg-gray-800' 
-                : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-            } transition-colors`}
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 shadow-md transition-all"
+            style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}
           >
-            Annuler
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="px-6 py-2 rounded-lg text-white font-medium transition-all hover:opacity-90"
-            style={{
-              background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-            }}
-          >
-            {currentItem ? 'Modifier' : 'Ajouter'}
+            <i className="bi bi-plus-lg" />
+            <span>
+              {activeTab === 'utilisateurs' ? 'Ajouter un utilisateur' :
+               activeTab === 'roles' ? 'Ajouter un rôle' : 'Ajouter une direction'}
+            </span>
           </button>
         </div>
       </div>
     </div>
   );
-};
-  // Modal Supprimer
-  const DeleteModal = ({ show, onClose, onConfirm, itemName }) => {
-    if (!show) return null;
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // MENU ACTION — UTILISATEURS (avec Bloquer/Débloquer)
+  // ─────────────────────────────────────────────────────────────────────────
+  const ActionMenuUtilisateur = ({ menuKey, item }) => (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setShowActionMenu(showActionMenu === menuKey ? null : menuKey)}
+        className={`p-2 rounded-lg transition-colors ${dm('hover:bg-gray-700 text-gray-400', 'hover:bg-gray-100 text-gray-600')}`}
+      >
+        <i className="bi bi-three-dots-vertical" />
+      </button>
+      {showActionMenu === menuKey && (
+        <div className={`absolute right-0 mt-2 w-48 rounded-xl border shadow-2xl z-50 overflow-hidden ${dm('bg-gray-800 border-gray-700', 'bg-white border-gray-200')}`}>
+          <button onClick={() => openDetails(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
+            <i className="bi bi-eye-fill text-blue-500" /><span>Voir détails</span>
+          </button>
+          <button onClick={() => openEdit(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
+            <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
+          </button>
+          <button onClick={() => handleToggleUserStatus(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
+            <i className={`bi ${item.est_actif ? 'bi-lock-fill text-orange-500' : 'bi-unlock-fill text-green-500'}`} />
+            <span>{item.est_actif ? 'Bloquer' : 'Débloquer'}</span>
+          </button>
+          <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
+          <button onClick={() => openDelete(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}>
+            <i className="bi bi-trash-fill" /><span>Supprimer</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MENU ACTION — RÔLES & DIRECTIONS (sans bouton toggle statut)
+  // ─────────────────────────────────────────────────────────────────────────
+  const ActionMenuSimple = ({ menuKey, item }) => (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setShowActionMenu(showActionMenu === menuKey ? null : menuKey)}
+        className={`p-2 rounded-lg transition-colors ${dm('hover:bg-gray-700 text-gray-400', 'hover:bg-gray-100 text-gray-600')}`}
+      >
+        <i className="bi bi-three-dots-vertical" />
+      </button>
+      {showActionMenu === menuKey && (
+        <div className={`absolute right-0 mt-2 w-48 rounded-xl border shadow-2xl z-50 overflow-hidden ${dm('bg-gray-800 border-gray-700', 'bg-white border-gray-200')}`}>
+          <button onClick={() => openDetails(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
+            <i className="bi bi-eye-fill text-blue-500" /><span>Voir détails</span>
+          </button>
+          <button onClick={() => openEdit(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
+            <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
+          </button>
+          <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
+          <button onClick={() => openDelete(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}>
+            <i className="bi bi-trash-fill" /><span>Supprimer</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODALE SUPPRESSION
+  // ─────────────────────────────────────────────────────────────────────────
+  const DeleteModal = () => {
+    if (!showDeleteModal) return null;
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-xl shadow-2xl max-w-md w-full`}>
-          <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <i className="bi bi-exclamation-triangle-fill text-2xl text-red-600 dark:text-red-400"></i>
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-200')} border rounded-2xl shadow-2xl w-full max-w-md`}>
+          <div className="p-6">
+            <div className="flex gap-4 items-start mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0">
+                <i className="bi bi-exclamation-triangle-fill text-2xl text-red-600" />
               </div>
               <div>
-                <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Confirmer la suppression</h3>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
-                  Cette action est irréversible
+                <h3 className={`text-lg font-bold ${dm('text-white', 'text-gray-900')}`}>Confirmer la suppression</h3>
+                <p className={`text-sm mt-1 ${dm('text-gray-400', 'text-gray-600')}`}>
+                  Supprimer <strong className={dm('text-white', 'text-gray-900')}>{deleteName}</strong> ? Cette action est irréversible.
                 </p>
               </div>
             </div>
           </div>
-
-          <div className="p-6">
-            <p className={`${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-              Êtes-vous sûr de vouloir supprimer <strong>{itemName}</strong> ?
-            </p>
-          </div>
-
-          <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex justify-end gap-3`}>
-            <button
-              onClick={onClose}
-              className={`px-6 py-2 rounded-lg border ${
-                darkMode 
-                  ? 'border-gray-700 text-gray-300 hover:bg-gray-800' 
-                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-              } transition-colors`}
-            >
+          <div className={`flex justify-end gap-3 px-6 py-4 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+            <button onClick={() => setShowDeleteModal(false)} className={`px-5 py-2.5 rounded-lg border text-sm font-medium transition-colors ${dm('border-gray-700 text-gray-300 hover:bg-gray-800', 'border-gray-300 text-gray-700 hover:bg-gray-50')}`}>
               Annuler
             </button>
-            <button
-              onClick={onConfirm}
-              className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium transition-colors"
-            >
+            <button onClick={handleSubmitDelete} disabled={submitting} className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors disabled:opacity-60">
+              {submitting && <Spinner size="sm" />}
               Supprimer
             </button>
           </div>
@@ -915,1343 +784,624 @@ const FormModal = ({ show, onClose, title, onSubmit, type, initialData }) => {
     );
   };
 
-// Modal Détails
-const DetailsModal = ({ show, onClose, item, type }) => {
-  if (!show || !item) return null;
-
-  const handleResetPassword = async () => {
-    if (!confirm(`Voulez-vous vraiment réinitialiser le mot de passe de ${item.prenom} ${item.nom} ?`)) {
-      return;
-    }
-
-    try {
-      // Appel API pour réinitialiser le mot de passe
-      const response = await fetch('/api/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: item.id })
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        alert(`Mot de passe réinitialisé avec succès !\nNouveau mot de passe : ${data.temporaryPassword}\n\nL'utilisateur devra le changer à la prochaine connexion.`);
-      } else {
-        alert('Erreur lors de la réinitialisation du mot de passe');
-      }
-    } catch (error) {
-      console.error('Erreur:', error);
-      alert('Erreur lors de la réinitialisation du mot de passe');
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto`}>
-        <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
-          <div className="flex items-center justify-between">
-            <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-              Détails {type === 'utilisateur' ? 'de l\'utilisateur' : type === 'role' ? 'du rôle' : 'de la direction'}
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODALE DÉTAILS
+  // ─────────────────────────────────────────────────────────────────────────
+  const DetailsModal = () => {
+    if (!showDetailsModal || !currentItem) return null;
+    const item = currentItem;
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowDetailsModal(false)}>
+        <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-200')} border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
+          <div className={`flex items-center justify-between px-6 py-5 border-b ${dm('border-gray-800', 'border-gray-100')}`}>
+            <h3 className={`text-lg font-bold ${dm('text-white', 'text-gray-900')}`}>
+              Détails {activeTab === 'utilisateurs' ? "de l'utilisateur" : activeTab === 'roles' ? 'du rôle' : 'de la direction'}
             </h3>
-            <button 
-              onClick={onClose}
-              className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-100'} transition-colors`}
-            >
-              <i className={`bi bi-x-lg ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}></i>
+            <button onClick={() => setShowDetailsModal(false)} className={`p-2 rounded-lg ${dm('hover:bg-gray-800 text-gray-400', 'hover:bg-gray-100 text-gray-500')}`}>
+              <i className="bi bi-x-lg" />
             </button>
           </div>
-        </div>
-
-        <div className="p-6">
-          {type === 'utilisateur' && (
-            <div className="space-y-6">
-              <div className="flex items-center gap-4">
-                <div 
-                  className="w-20 h-20 rounded-full flex items-center justify-center text-white font-bold text-2xl"
-                  style={{ backgroundColor: item.couleur }}
-                >
-                  {item.initiales}
+          <div className="px-6 py-6">
+            {activeTab === 'utilisateurs' && (
+              <div className="space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0" style={{ backgroundColor: item.couleur }}>
+                    {item.initiales}
+                  </div>
+                  <div>
+                    <h4 className={`text-xl font-bold ${dm('text-white', 'text-gray-900')}`}>{item.nom}</h4>
+                    <p className={`text-sm ${dm('text-gray-400', 'text-gray-600')}`}>{item.roleName}</p>
+                  </div>
+                  <StatusBadge active={item.est_actif} labelTrue="Actif" labelFalse="Bloqué" />
                 </div>
-                <div>
-                  <h4 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                    {item.prenom} {item.nom}
-                  </h4>
-                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
-                    {item.roleName}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Email
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.email}</p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Téléphone
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.telephone}</p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Direction
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.directionName}</p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Statut
-                  </label>
-                  <p className="mt-1">
-                    <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                      item.statut === 'Actif' 
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                    }`}>
-                      {item.statut}
-                    </span>
-                  </p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Dernière Connexion
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.dernierConnexion}</p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Date de Création
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>
-                    {new Date(item.dateCreation).toLocaleDateString('fr-FR')}
-                  </p>
-                </div>
-              </div>
-
-              {/* Bouton Réinitialiser mot de passe */}
-              <div className={`p-4 rounded-lg border ${darkMode ? 'border-yellow-900/30 bg-yellow-900/10' : 'border-yellow-200 bg-yellow-50'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <i className={`bi bi-shield-lock text-xl ${darkMode ? 'text-yellow-400' : 'text-yellow-600'}`}></i>
-                    <div>
-                      <p className={`font-semibold ${darkMode ? 'text-yellow-400' : 'text-yellow-800'}`}>
-                        Sécurité du compte
-                      </p>
-                      <p className={`text-sm ${darkMode ? 'text-yellow-500' : 'text-yellow-700'}`}>
-                        Générer un nouveau mot de passe temporaire
-                      </p>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    { label: 'Email',               value: item.email },
+                    { label: 'Direction',            value: item.directionName },
+                    { label: 'Référence direction',  value: item.directionCode },
+                    { label: 'Dernière connexion',   value: item.dernierConnexion },
+                    { label: 'Date de création',     value: item.dateCreation ? new Date(item.dateCreation).toLocaleDateString('fr-FR') : '—' },
+                  ].map(({ label, value }) => (
+                    <div key={label}>
+                      <p className={`text-xs font-semibold uppercase tracking-wide ${dm('text-gray-500', 'text-gray-500')}`}>{label}</p>
+                      <p className={`mt-1 text-sm ${dm('text-gray-200', 'text-gray-800')}`}>{value}</p>
                     </div>
+                  ))}
+                </div>
+                <div className={`p-4 rounded-xl border ${dm('border-yellow-900/30 bg-yellow-900/10', 'border-yellow-200 bg-yellow-50')}`}>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <i className={`bi bi-shield-lock text-xl ${dm('text-yellow-400', 'text-yellow-600')}`} />
+                      <div>
+                        <p className={`font-semibold text-sm ${dm('text-yellow-400', 'text-yellow-800')}`}>Sécurité du compte</p>
+                        <p className={`text-xs ${dm('text-yellow-500', 'text-yellow-700')}`}>Générer un nouveau mot de passe temporaire</p>
+                      </div>
+                    </div>
+                    <button onClick={() => handleResetPassword(item.id)} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium transition-colors whitespace-nowrap">
+                      <i className="bi bi-key" /> Réinitialiser
+                    </button>
                   </div>
-                  <button
-                    onClick={handleResetPassword}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      darkMode
-                        ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
-                        : 'bg-yellow-600 hover:bg-yellow-700 text-white'
-                    }`}
-                  >
-                    <i className="bi bi-key mr-2"></i>
-                    Réinitialiser le mot de passe
-                  </button>
                 </div>
               </div>
-            </div>
-          )}
-
-          {type === 'role' && (
-            <div className="space-y-6">
-              <div>
-                <h4 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  {item.nom}
-                </h4>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
-                  Code: {item.code}
-                </p>
-              </div>
-
-              <div className="space-y-4">
+            )}
+            {activeTab === 'roles' && (
+              <div className="space-y-5">
                 <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Description
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.description}</p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Niveau d'accès
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.niveauAcces}</p>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Permissions
-                  </label>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {item.permissions.map((perm, idx) => (
-                      <span 
-                        key={idx}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          darkMode 
-                            ? 'bg-blue-900/30 text-blue-400' 
-                            : 'bg-blue-100 text-blue-800'
-                        }`}
-                      >
-                        {perm}
-                      </span>
-                    ))}
-                  </div>
+                  <h4 className={`text-xl font-bold ${dm('text-white', 'text-gray-900')}`}>{item.nom}</h4>
+                  <p className={`text-xs mt-1 ${dm('text-gray-400', 'text-gray-500')}`}>Référence : <span className="font-mono">{item.code}</span></p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                      Utilisateurs assignés
-                    </label>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>
-                      {item.nbUtilisateurs}
-                    </p>
+                    <p className={`text-xs font-semibold uppercase tracking-wide ${dm('text-gray-500', 'text-gray-500')}`}>Niveau d'accès</p>
+                    <p className={`mt-1 text-sm ${dm('text-gray-200', 'text-gray-800')}`}>{item.niveauAcces}</p>
                   </div>
                   <div>
-                    <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                      Statut
-                    </label>
-                    <p className="mt-1">
-                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                        item.estActif 
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                          : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                      }`}>
-                        {item.estActif ? 'Actif' : 'Inactif'}
-                      </span>
-                    </p>
+                    <p className={`text-xs font-semibold uppercase tracking-wide ${dm('text-gray-500', 'text-gray-500')}`}>Utilisateurs assignés</p>
+                    <p className={`mt-1 text-2xl font-bold ${dm('text-white', 'text-gray-900')}`}>{item.nbUtilisateurs}</p>
                   </div>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {type === 'direction' && (
-            <div className="space-y-6">
-              <div>
-                <h4 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  {item.nom}
-                </h4>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
-                  Code: {item.code}
-                </p>
-              </div>
-
-              <div className="space-y-4">
+                {item.description && (
+                  <div>
+                    <p className={`text-xs font-semibold uppercase tracking-wide ${dm('text-gray-500', 'text-gray-500')}`}>Description</p>
+                    <p className={`mt-1 text-sm ${dm('text-gray-200', 'text-gray-800')}`}>{item.description}</p>
+                  </div>
+                )}
                 <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Description
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.description}</p>
+                  <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${dm('text-gray-500', 'text-gray-500')}`}>Statut</p>
+                  <StatusBadge active={item.estActif} />
                 </div>
+              </div>
+            )}
+            {activeTab === 'directions' && (
+              <div className="space-y-5">
                 <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                    Responsable
-                  </label>
-                  <p className={`${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>{item.responsable}</p>
+                  <h4 className={`text-xl font-bold ${dm('text-white', 'text-gray-900')}`}>{item.nom}</h4>
+                  <p className={`text-xs mt-1 ${dm('text-gray-400', 'text-gray-500')}`}>Référence : <span className="font-mono">{item.code}</span></p>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
+                  {[{ label: 'Véhicules', value: item.nbVehicules }, { label: 'Utilisateurs', value: item.nbUtilisateurs }].map(({ label, value }) => (
+                    <div key={label}>
+                      <p className={`text-xs font-semibold uppercase tracking-wide ${dm('text-gray-500', 'text-gray-500')}`}>{label}</p>
+                      <p className={`mt-1 text-2xl font-bold ${dm('text-white', 'text-gray-900')}`}>{value}</p>
+                    </div>
+                  ))}
                   <div>
-                    <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                      Véhicules
-                    </label>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>
-                      {item.nbVehicules}
-                    </p>
+                    <p className={`text-xs font-semibold uppercase tracking-wide ${dm('text-gray-500', 'text-gray-500')}`}>Statut</p>
+                    <div className="mt-2"><StatusBadge active={item.estActif} /></div>
                   </div>
-                  <div>
-                    <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                      Utilisateurs
-                    </label>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'} mt-1`}>
-                      {item.nbUtilisateurs}
-                    </p>
-                  </div>
-                  <div>
-                    <label className={`text-xs font-semibold ${darkMode ? 'text-gray-500' : 'text-gray-600'} uppercase`}>
-                      Statut
-                    </label>
-                    <p className="mt-1">
-                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                        item.estActif 
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                          : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                      }`}>
-                        {item.estActif ? 'Actif' : 'Inactif'}
-                      </span>
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex justify-end gap-3`}>
-          <button
-            onClick={onClose}
-            className={`px-6 py-2 rounded-lg border ${
-              darkMode 
-                ? 'border-gray-700 text-gray-300 hover:bg-gray-800' 
-                : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-            } transition-colors`}
-          >
-            Fermer
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-  // ============================================================================
-  // FILTRAGE DES DONNÉES
-  // ============================================================================
-  const filteredUsers = usersData.filter(user => {
-    const matchesSearch = user.nom.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         user.prenom.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         user.telephone.includes(searchQuery);
-    const matchesRole = roleFilter === 'Tous' || user.roleName === roleFilter;
-    const matchesStatus = statusFilter === 'Tous' || user.statut === statusFilter;
-    
-    return matchesSearch && matchesRole && matchesStatus;
-  });
-
-  const filteredRoles = rolesData.filter(role => {
-    return role.nom.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           role.code.toLowerCase().includes(searchQuery.toLowerCase());
-  });
-
-  const filteredDirections = directionsData.filter(dir => {
-    return dir.nom.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           dir.code.toLowerCase().includes(searchQuery.toLowerCase());
-  });
-
-  // ============================================================================
-  // STATS CARDS
-  // ============================================================================
-  const getStatsForTab = () => {
-    if (activeTab === 'utilisateurs') {
-      return [
-        { 
-          title: 'Total Utilisateurs', 
-          value: usersData.length.toString(), 
-          subtitle: 'comptes créés',
-          icon: 'bi-people-fill',
-          bgColor: 'bg-blue-50 dark:bg-blue-900/20',
-          iconBg: 'bg-blue-100 dark:bg-blue-800',
-          textColor: 'text-blue-600 dark:text-blue-400'
-        },
-        { 
-          title: 'Actifs', 
-          value: usersData.filter(u => u.statut === 'Actif').length.toString(), 
-          subtitle: 'utilisateurs actifs',
-          icon: 'bi-check-circle-fill',
-          bgColor: 'bg-green-50 dark:bg-green-900/20',
-          iconBg: 'bg-green-100 dark:bg-green-800',
-          textColor: 'text-green-600 dark:text-green-400'
-        },
-        { 
-          title: 'Bloqués', 
-          value: usersData.filter(u => u.statut === 'Bloqué').length.toString(), 
-          subtitle: 'comptes bloqués',
-          icon: 'bi-x-circle-fill',
-          bgColor: 'bg-red-50 dark:bg-red-900/20',
-          iconBg: 'bg-red-100 dark:bg-red-800',
-          textColor: 'text-red-600 dark:text-red-400'
-        },
-        { 
-          title: 'Administrateurs', 
-          value: usersData.filter(u => u.roleName.includes('Admin')).length.toString(), 
-          subtitle: 'rôles admin',
-          icon: 'bi-shield-fill-check',
-          bgColor: 'bg-purple-50 dark:bg-purple-900/20',
-          iconBg: 'bg-purple-100 dark:bg-purple-800',
-          textColor: 'text-purple-600 dark:text-purple-400'
-        }
-      ];
-    } else if (activeTab === 'roles') {
-      return [
-        { 
-          title: 'Total Rôles', 
-          value: rolesData.length.toString(), 
-          subtitle: 'rôles créés',
-          icon: 'bi-shield-fill',
-          bgColor: 'bg-blue-50 dark:bg-blue-5000/20',
-          iconBg: 'bg-blue-100 dark:bg-blue-800',
-          textColor: 'text-blue-600 dark:text-blue-800'
-        },
-        { 
-          title: 'Rôles Actifs', 
-          value: rolesData.filter(r => r.estActif).length.toString(), 
-          subtitle: 'actuellement actifs',
-          icon: 'bi-check-circle-fill',
-          bgColor: 'bg-green-50 dark:bg-green-900/20',
-          iconBg: 'bg-green-100 dark:bg-green-800',
-          textColor: 'text-green-600 dark:text-green-400'
-        },
-        { 
-          title: 'Utilisateurs Assignés', 
-          value: rolesData.reduce((acc, r) => acc + r.nbUtilisateurs, 0).toString(), 
-          subtitle: 'au total',
-          icon: 'bi-people-fill',
-          bgColor: 'bg-purple-50 dark:bg-purple-900/20',
-          iconBg: 'bg-purple-100 dark:bg-purple-800',
-          textColor: 'text-purple-600 dark:text-purple-400'
-        },
-        { 
-          title: 'Accès Complet', 
-          value: rolesData.filter(r => r.niveauAcces === 'Complet').length.toString(), 
-          subtitle: 'accès total',
-          icon: 'bi-key-fill',
-          bgColor: 'bg-yellow-50 dark:bg-yellow-900/20',
-          iconBg: 'bg-yellow-100 dark:bg-yellow-800',
-          textColor: 'text-yellow-600 dark:text-yellow-400'
-        }
-      ];
-    } else {
-      return [
-        { 
-          title: 'Total Directions', 
-          value: directionsData.length.toString(), 
-          subtitle: 'directions actives',
-          icon: 'bi-building',
-          bgColor: 'bg-blue-50 dark:bg-blue-900/20',
-          iconBg: 'bg-blue-100 dark:bg-blue-800',
-          textColor: 'text-blue-600 dark:text-blue-400'
-        },
-        { 
-          title: 'Véhicules', 
-          value: directionsData.reduce((acc, d) => acc + d.nbVehicules, 0).toString(), 
-          subtitle: 'au total',
-          icon: 'bi-car-front-fill',
-          bgColor: 'bg-green-50 dark:bg-green-900/20',
-          iconBg: 'bg-green-100 dark:bg-green-800',
-          textColor: 'text-green-600 dark:text-green-400'
-        },
-        { 
-          title: 'Utilisateurs', 
-          value: directionsData.reduce((acc, d) => acc + d.nbUtilisateurs, 0).toString(), 
-          subtitle: 'au total',
-          icon: 'bi-people-fill',
-          bgColor: 'bg-purple-50 dark:bg-purple-900/20',
-          iconBg: 'bg-purple-100 dark:bg-purple-800',
-          textColor: 'text-purple-600 dark:text-purple-400'
-        },
-        { 
-          title: 'Directions Actives', 
-          value: directionsData.filter(d => d.estActif).length.toString(), 
-          subtitle: 'opérationnelles',
-          icon: 'bi-check-circle-fill',
-          bgColor: 'bg-yellow-50 dark:bg-yellow-900/20',
-          iconBg: 'bg-yellow-100 dark:bg-yellow-800',
-          textColor: 'text-yellow-600 dark:text-yellow-400'
-        }
-      ];
-    }
-  };
-
-  const uniqueRoles = ['Tous', ...new Set(usersData.map(u => u.roleName))];
-
-  return (
-    <div className={`${darkMode ? 'bg-gray-950' : 'bg-gray-50'} min-h-screen transition-colors duration-300`}>
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
-      
-      <Sidebar 
-        darkMode={darkMode} 
-        sidebarCollapsed={sidebarCollapsed} 
-        setSidebarCollapsed={setSidebarCollapsed}
-        theme={theme}
-        navigate={navigate}
-      />
-
-      <Header 
-        darkMode={darkMode} 
-        setDarkMode={setDarkMode} 
-        sidebarCollapsed={sidebarCollapsed}
-        theme={theme}
-        showNotifications={showNotifications}
-        setShowNotifications={setShowNotifications}
-        showProfile={showProfile}
-        setShowProfile={setShowProfile}
-      />
-
-      <main 
-        className="transition-all duration-300 pt-24 px-6 pb-6"
-        style={{ marginLeft: sidebarCollapsed ? '5rem' : '18rem' }}
-      >
-        {/* Onglets de navigation */}
-        <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm mb-6 p-2`}>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setActiveTab('utilisateurs')}
-              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
-                activeTab === 'utilisateurs'
-                  ? 'text-white shadow-md'
-                  : `${darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-50'}`
-              }`}
-              style={activeTab === 'utilisateurs' ? {
-                background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-              } : {}}
-            >
-              <i className="bi bi-people-fill text-xl"></i>
-              <span>Utilisateurs</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs ${
-                activeTab === 'utilisateurs'
-                  ? 'bg-white/20'
-                  : `${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`
-              }`}>
-                {usersData.length}
-              </span>
-            </button>
-            <button
-              onClick={() => setActiveTab('roles')}
-              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
-                activeTab === 'roles'
-                  ? 'text-white shadow-md'
-                  : `${darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-50'}`
-              }`}
-              style={activeTab === 'roles' ? {
-                background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-              } : {}}
-            >
-              <i className="bi bi-shield-fill text-xl"></i>
-              <span>Rôles</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs ${
-                activeTab === 'roles'
-                  ? 'bg-white/20'
-                  : `${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`
-              }`}>
-                {rolesData.length}
-              </span>
-            </button>
-            <button
-              onClick={() => setActiveTab('directions')}
-              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
-                activeTab === 'directions'
-                  ? 'text-white shadow-md'
-                  : `${darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-50'}`
-              }`}
-              style={activeTab === 'directions' ? {
-                background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-              } : {}}
-            >
-              <i className="bi bi-building text-xl"></i>
-              <span>Directions</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs ${
-                activeTab === 'directions'
-                  ? 'bg-white/20'
-                  : `${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`
-              }`}>
-                {directionsData.length}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-          {getStatsForTab().map((card, idx) => (
-            <div 
-              key={idx}
-              className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl p-6 border shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 cursor-pointer group`}
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex-1">
-                  <p className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'} mb-1`}>
-                    {card.title}
-                  </p>
-                  <h3 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'} mb-1`}>
-                    {card.value}
-                  </h3>
-                  <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                    {card.subtitle}
-                  </p>
-                </div>
-                <div className={`${card.iconBg} ${card.textColor} p-3 rounded-lg group-hover:scale-110 transition-transform`}>
-                  <i className={card.icon} style={{ fontSize: '1.5rem' }}></i>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-{activeTab === 'utilisateurs' && (
-  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}>
-    <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-            Liste des Utilisateurs
-          </h3>
-          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {filteredUsers.length} utilisateur{filteredUsers.length > 1 ? 's' : ''} trouvé{filteredUsers.length > 1 ? 's' : ''}
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <i className={`bi bi-search absolute left-3 top-1/2 transform -translate-y-1/2 ${darkMode ? 'text-gray-400' : 'text-gray-400'}`}></i>
-            <input 
-              type="text"
-              placeholder="Rechercher..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={`pl-10 pr-4 py-2 rounded-lg border ${
-                darkMode 
-                  ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-400' 
-                  : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-              } focus:outline-none focus:ring-2 w-64`}
-              style={{ '--tw-ring-color': theme.primary }}
-            />
-          </div>
-
-          <div className="relative">
-            <button
-              onClick={() => setShowFilterMenu(!showFilterMenu)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${
-                darkMode 
-                  ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-750' 
-                  : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-              } transition-colors`}
-            >
-              <i className="bi bi-funnel"></i>
-              <span className="text-sm font-medium">Filtres</span>
-            </button>
-
-            {showFilterMenu && (
-              <div className={`absolute right-0 mt-2 w-64 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-lg shadow-xl z-50 p-4`}>
-                <div className="mb-4">
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-400' : 'text-gray-600'} mb-2 block`}>
-                    Rôle
-                  </label>
-                  <select
-                    value={roleFilter}
-                    onChange={(e) => setRoleFilter(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-lg border ${
-                      darkMode 
-                        ? 'bg-gray-900 border-gray-700 text-white' 
-                        : 'bg-gray-50 border-gray-200 text-gray-900'
-                    } text-sm`}
-                  >
-                    {uniqueRoles.map((role, idx) => (
-                      <option key={idx} value={role}>{role}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className={`text-xs font-semibold ${darkMode ? 'text-gray-400' : 'text-gray-600'} mb-2 block`}>
-                    Statut
-                  </label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-lg border ${
-                      darkMode 
-                        ? 'bg-gray-900 border-gray-700 text-white' 
-                        : 'bg-gray-50 border-gray-200 text-gray-900'
-                    } text-sm`}
-                  >
-                    <option value="Tous">Tous</option>
-                    <option value="Actif">Actif</option>
-                    <option value="Bloqué">Bloqué</option>
-                  </select>
                 </div>
               </div>
             )}
           </div>
-
-          <button
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${
-              darkMode 
-                ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-750' 
-                : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-            } transition-colors`}
-          >
-            <i className="bi bi-download"></i>
-            <span className="text-sm font-medium">Exporter</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setFormData({});
-              setCurrentItem(null);
-              setShowAddModal(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 shadow-md hover:shadow-lg"
-            style={{
-              background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-            }}
-          >
-            <i className="bi bi-plus-lg"></i>
-            <span>Ajouter un utilisateur</span>
-          </button>
+          <div className={`flex justify-end px-6 py-4 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+            <button onClick={() => setShowDetailsModal(false)} className={`px-5 py-2.5 rounded-lg border text-sm font-medium transition-colors ${dm('border-gray-700 text-gray-300 hover:bg-gray-800', 'border-gray-300 text-gray-700 hover:bg-gray-50')}`}>
+              Fermer
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    );
+  };
 
-    <div className="overflow-x-auto">
-      <table className="w-full">
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODALE FORMULAIRE
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderFormModal = (show, onClose, isEdit) => {
+    if (!show) return null;
 
-        {/* ✅ THEAD — vraie couleur du thème actif */}
-        <thead
-          style={{
-            background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`,
-          }}
+    const title = isEdit
+      ? `Modifier ${activeTab === 'utilisateurs' ? "l'utilisateur" : activeTab === 'roles' ? 'le rôle' : 'la direction'}`
+      : `Ajouter ${activeTab === 'utilisateurs' ? 'un utilisateur' : activeTab === 'roles' ? 'un rôle' : 'une direction'}`;
+
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+        <div
+          className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-200')} border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto`}
+          onClick={e => e.stopPropagation()}
         >
-          <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Utilisateur
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Contact
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Rôle
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Direction
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Statut
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Actions
-            </th>
-          </tr>
-        </thead>
+          {/* Header */}
+          <div className={`flex items-center justify-between px-6 py-5 border-b ${dm('border-gray-800', 'border-gray-100')}`}>
+            <h3 className={`text-lg font-bold ${dm('text-white', 'text-gray-900')}`}>{title}</h3>
+            <button onClick={onClose} className={`p-2 rounded-lg transition-colors ${dm('hover:bg-gray-800 text-gray-400', 'hover:bg-gray-100 text-gray-500')}`}>
+              <i className="bi bi-x-lg" />
+            </button>
+          </div>
 
-        {/* ✅ TBODY — lignes alternées : bleu pastel / gris pastel */}
-        <tbody>
-          {filteredUsers.map((user, index) => (
-            <tr
-              key={user.id}
-              style={{
-                backgroundColor: index % 2 === 0
-                  ? darkMode ? '#1a2535' : '#eef2ff'
-                  : darkMode ? '#1c1f2b' : '#f3f4f6',
-                borderBottom: darkMode ? '1px solid #1e293b' : '1px solid #e5e7eb',
-                transition: 'background-color 0.15s ease'
-              }}
-              onMouseEnter={e => e.currentTarget.style.backgroundColor = darkMode ? `${theme.primary}30` : `${theme.primary}18`}
-              onMouseLeave={e => e.currentTarget.style.backgroundColor = index % 2 === 0
-                ? darkMode ? '#1a2535' : '#eef2ff'
-                : darkMode ? '#1c1f2b' : '#f3f4f6'
-              }
-            >
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="flex items-center gap-3">
-                  <div 
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
-                    style={{ backgroundColor: user.couleur }}
-                  >
-                    {user.initiales}
+          {/* Body */}
+          <div className="px-6 py-6 space-y-5">
+
+            {/* ── FORMULAIRE UTILISATEUR ── */}
+            {activeTab === 'utilisateurs' && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>Nom complet <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      value={formData.nom ?? ''}
+                      onChange={e => setFormData(p => ({ ...p, nom: e.target.value }))}
+                      placeholder="Dupont Jean"
+                      className={inputCls}
+                      autoComplete="off"
+                    />
+                    <FieldError name="nom" />
                   </div>
                   <div>
-                    <p className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                      {user.prenom} {user.nom}
-                    </p>
-                    <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      {user.dernierConnexion}
-                    </p>
+                    <label className={labelCls}>Email <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      inputMode="email"
+                      value={formData.email ?? ''}
+                      onChange={e => setFormData(p => ({ ...p, email: e.target.value }))}
+                      placeholder="jean.dupont@sgs-gabon.com"
+                      className={inputCls}
+                      autoComplete="off"
+                    />
+                    <FieldError name="email" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Rôle <span className="text-red-500">*</span></label>
+                    <select
+                      value={formData.role_id ?? ''}
+                      onChange={e => setFormData(p => ({ ...p, role_id: e.target.value }))}
+                      className={inputCls}
+                    >
+                      <option value="">Sélectionner un rôle</option>
+                      {rolesData.filter(r => r.estActif).map(r => (
+                        <option key={r.id} value={r.id}>{r.nom}</option>
+                      ))}
+                    </select>
+                    <FieldError name="role_id" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Direction</label>
+                    <select
+                      value={formData.direction_id ?? ''}
+                      onChange={e => setFormData(p => ({ ...p, direction_id: e.target.value }))}
+                      className={inputCls}
+                    >
+                      <option value="">Aucune direction</option>
+                      {directionsData.filter(d => d.estActif).map(d => (
+                        <option key={d.id} value={d.id}>{d.nom}</option>
+                      ))}
+                    </select>
+                    <FieldError name="direction_id" />
                   </div>
                 </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {user.email}
-                </p>
-                <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-600'}`}>
-                  {user.telephone}
-                </p>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                  user.roleName === 'Super Administrateur' 
-                    ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-5000/30 dark:text-yellow-800'
-                    : user.roleName.includes('Chef')
-                    ? 'bg-purple-100 text-purple-800 dark:bg-purple-5000/30 dark:text-purple-800'
-                    : 'bg-blue-100 text-blue-800 dark:bg-blue-5000/30 dark:text-blue-800'
-                }`}>
-                  {user.roleName}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {user.directionName}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                  user.statut === 'Actif' 
-                    ? 'bg-green-100 text-green-800 dark:bg-green-5000/30 dark:text-green-800'
-                    : 'bg-red-100 text-red-800 dark:bg-red-5000/30 dark:text-red-800'
-                }`}>
-                  {user.statut}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="relative">
-                  <button
-                    onClick={() => setShowActionMenu(showActionMenu === user.id ? null : user.id)}
-                    className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
-                  >
-                    <i className={`bi bi-three-dots-vertical ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}></i>
-                  </button>
 
-                  {showActionMenu === user.id && (
-                    <div className={`absolute right-0 mt-2 w-48 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-lg shadow-xl z-50`}>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(user);
-                          setShowDetailsModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-eye-fill text-blue-500"></i>
-                        <span>Voir détails</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(user);
-                          setFormData({
-                            nom: user.nom,
-                            prenom: user.prenom,
-                            email: user.email,
-                            telephone: user.telephone,
-                            roleId: user.roleId,
-                            directionId: user.directionId
-                          });
-                          setShowEditModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-pencil-fill text-yellow-500"></i>
-                        <span>Modifier</span>
-                      </button>
-                      
-                      <button
-                        onClick={() => handleToggleUserStatus(user)}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className={`bi ${user.statut === 'Actif' ? 'bi-lock-fill text-orange-500' : 'bi-unlock-fill text-green-500'}`}></i>
-                        <span>{user.statut === 'Actif' ? 'Bloquer' : 'Débloquer'}</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(user);
-                          setShowDeleteModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-trash-fill"></i>
-                        <span>Supprimer</span>
-                      </button>
-                    </div>
-                  )}
+                {/* Mot de passe — création uniquement */}
+                {!isEdit && (
+                  <div>
+                    <label className={labelCls}>Mot de passe <span className="text-red-500">*</span></label>
+                    <button
+                      type="button"
+                      onClick={handleGeneratePassword}
+                      disabled={generatingPwd}
+                      className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold border transition-colors mb-3 ${
+                        dm('border-indigo-500 text-indigo-300 hover:bg-indigo-900/30 bg-indigo-900/20',
+                           'border-indigo-400 text-indigo-700 hover:bg-indigo-50 bg-indigo-50')
+                      } disabled:opacity-50`}
+                    >
+                      {generatingPwd ? <Spinner size="sm" /> : <i className="bi bi-magic text-base" />}
+                      <span>{generatingPwd ? 'Génération...' : 'Générer un mot de passe sécurisé'}</span>
+                    </button>
+                    {formData.mot_de_passe ? (
+                      <div className={`flex items-center justify-between gap-3 px-4 py-3 rounded-lg ${dm('bg-gray-800 border border-gray-700', 'bg-gray-100 border border-gray-200')}`}>
+                        <span className={`font-mono text-sm tracking-widest ${dm('text-emerald-400', 'text-emerald-700')}`}>
+                          {showPassword ? formData.mot_de_passe : '••••••••••••'}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => setShowPassword(p => !p)} className={`p-1.5 rounded ${dm('text-gray-400 hover:text-gray-200', 'text-gray-500 hover:text-gray-700')}`}>
+                            <i className={`bi ${showPassword ? 'bi-eye-slash' : 'bi-eye'}`} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(formData.mot_de_passe);
+                              Swal.fire({
+                                ...swalBase(),
+                                icon: 'success',
+                                title: 'Copié !',
+                                text: 'Mot de passe copié dans le presse-papier.',
+                                timer: 1200,
+                                timerProgressBar: true,
+                                showConfirmButton: false,
+                              });
+                            }}
+                            className={`p-1.5 rounded ${dm('text-gray-400 hover:text-gray-200', 'text-gray-500 hover:text-gray-700')}`}
+                          >
+                            <i className="bi bi-clipboard" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>
+                        Cliquez sur le bouton ci-dessus pour générer un mot de passe sécurisé.
+                      </p>
+                    )}
+                    <FieldError name="mot_de_passe" />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── FORMULAIRE RÔLE ── */}
+            {activeTab === 'roles' && (
+              <>
+                <div>
+                  <label className={labelCls}>Référence <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={formData.code ?? ''}
+                    onChange={e => setFormData(p => ({ ...p, code: e.target.value }))}
+                    placeholder="chef_parc"
+                    className={inputCls}
+                    disabled={isEdit}
+                    autoComplete="off"
+                  />
+                  {!isEdit && <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>Sera converti en minuscules avec underscores.</p>}
+                  <FieldError name="code" />
                 </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                <div>
+                  <label className={labelCls}>Libellé <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={formData.libelle ?? ''}
+                    onChange={e => setFormData(p => ({ ...p, libelle: e.target.value }))}
+                    placeholder="Chef du Parc"
+                    className={inputCls}
+                    autoComplete="off"
+                  />
+                  <FieldError name="libelle" />
+                </div>
+                <div>
+                  <label className={labelCls}>Description</label>
+                  <textarea
+                    rows={3}
+                    value={formData.description ?? ''}
+                    onChange={e => setFormData(p => ({ ...p, description: e.target.value }))}
+                    placeholder="Description du rôle..."
+                    className={inputCls + ' resize-none'}
+                  />
+                  <FieldError name="description" />
+                </div>
+              </>
+            )}
 
-    <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
-      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-        Affichage de {filteredUsers.length} utilisateurs
-      </p>
-    </div>
-  </div>
-)}
-       {activeTab === 'roles' && (
-  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}>
-    <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-            Liste des Rôles
-          </h3>
-          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {filteredRoles.length} rôle{filteredRoles.length > 1 ? 's' : ''} trouvé{filteredRoles.length > 1 ? 's' : ''}
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <i className={`bi bi-search absolute left-3 top-1/2 transform -translate-y-1/2 ${darkMode ? 'text-gray-400' : 'text-gray-400'}`}></i>
-            <input 
-              type="text"
-              placeholder="Rechercher..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={`pl-10 pr-4 py-2 rounded-lg border ${
-                darkMode 
-                  ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-400' 
-                  : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-              } focus:outline-none focus:ring-2 w-64`}
-              style={{ '--tw-ring-color': theme.primary }}
-            />
+            {/* ── FORMULAIRE DIRECTION ── */}
+            {activeTab === 'directions' && (
+              <>
+                <div>
+                  <label className={labelCls}>Nom <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={formData.nom ?? ''}
+                    onChange={e => setFormData(p => ({ ...p, nom: e.target.value }))}
+                    placeholder="Direction Générale"
+                    className={inputCls}
+                    autoComplete="off"
+                  />
+                  <FieldError name="nom" />
+                </div>
+                <div>
+                  <label className={labelCls}>Référence</label>
+                  <input
+                    type="text"
+                    value={formData.code ?? ''}
+                    onChange={e => setFormData(p => ({ ...p, code: e.target.value }))}
+                    placeholder="DG"
+                    className={inputCls}
+                    disabled={isEdit}
+                    autoComplete="off"
+                  />
+                  {!isEdit && <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>Sera converti en MAJUSCULES.</p>}
+                  <FieldError name="reference" />
+                </div>
+              </>
+            )}
           </div>
 
-          <button
-            onClick={() => {
-              setFormData({});
-              setCurrentItem(null);
-              setShowAddModal(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 shadow-md hover:shadow-lg"
-            style={{
-              background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-            }}
-          >
-            <i className="bi bi-plus-lg"></i>
-            <span>Ajouter</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <div className="overflow-x-auto">
-      <table className="w-full">
-
-        {/* ✅ THEAD — vraie couleur du thème actif */}
-        <thead
-          style={{
-            background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`,
-          }}
-        >
-          <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Rôle
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Description
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Niveau d'accès
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Utilisateurs
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Statut
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Actions
-            </th>
-          </tr>
-        </thead>
-
-        {/* ✅ TBODY — lignes alternées : bleu pastel / gris pastel */}
-        <tbody>
-          {filteredRoles.map((role, index) => (
-            <tr
-              key={role.id}
-              style={{
-                backgroundColor: index % 2 === 0
-                  ? darkMode ? '#1a2535' : '#eef2ff'
-                  : darkMode ? '#1c1f2b' : '#f3f4f6',
-                borderBottom: darkMode ? '1px solid #1e293b' : '1px solid #e5e7eb',
-                transition: 'background-color 0.15s ease'
-              }}
-              onMouseEnter={e => e.currentTarget.style.backgroundColor = darkMode ? `${theme.primary}30` : `${theme.primary}18`}
-              onMouseLeave={e => e.currentTarget.style.backgroundColor = index % 2 === 0
-                ? darkMode ? '#1a2535' : '#eef2ff'
-                : darkMode ? '#1c1f2b' : '#f3f4f6'
-              }
+          {/* Footer */}
+          <div className={`flex justify-end gap-3 px-6 py-5 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+            <button
+              onClick={onClose}
+              className={`px-5 py-2.5 rounded-lg border text-sm font-medium transition-colors ${
+                dm('border-gray-700 text-gray-300 hover:bg-gray-800', 'border-gray-300 text-gray-700 hover:bg-gray-50')
+              }`}
             >
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div>
-                  <p className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                    {role.nom}
-                  </p>
-                  <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {role.code}
-                  </p>
-                </div>
-              </td>
-              <td className="px-6 py-4">
-                <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {role.description}
-                </p>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                  role.niveauAcces === 'Complet' 
-                    ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
-                    : role.niveauAcces === 'Élevé'
-                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                    : role.niveauAcces === 'Moyen'
-                    ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
-                    : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400'
-                }`}>
-                  {role.niveauAcces}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  {role.nbUtilisateurs}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                  role.estActif 
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                    : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                }`}>
-                  {role.estActif ? 'Actif' : 'Inactif'}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="relative">
-                  <button
-                    onClick={() => setShowActionMenu(showActionMenu === `role-${role.id}` ? null : `role-${role.id}`)}
-                    className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
-                  >
-                    <i className={`bi bi-three-dots-vertical ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}></i>
-                  </button>
-
-                  {showActionMenu === `role-${role.id}` && (
-                    <div className={`absolute right-0 mt-2 w-48 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-lg shadow-xl z-50`}>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(role);
-                          setShowDetailsModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-eye-fill text-blue-500"></i>
-                        <span>Voir détails</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(role);
-                          setFormData({
-                            code: role.code,
-                            nom: role.nom,
-                            description: role.description,
-                            niveauAcces: role.niveauAcces,
-                            permissions: role.permissions.join(', ')
-                          });
-                          setShowEditModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-pencil-fill text-yellow-500"></i>
-                        <span>Modifier</span>
-                      </button>
-                      <button
-                        onClick={() => handleToggleRoleStatus(role)}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className={`bi ${role.estActif ? 'bi-toggle-on text-green-500' : 'bi-toggle-off text-gray-500'}`}></i>
-                        <span>{role.estActif ? 'Désactiver' : 'Activer'}</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(role);
-                          setShowDeleteModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-trash-fill"></i>
-                        <span>Supprimer</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-
-    <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
-      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-        Affichage de {filteredRoles.length} rôles
-      </p>
-    </div>
-  </div>
-)}
-
-    {activeTab === 'directions' && (
-  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}>
-    <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-            Liste des Directions
-          </h3>
-          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {filteredDirections.length} direction{filteredDirections.length > 1 ? 's' : ''} trouvée{filteredDirections.length > 1 ? 's' : ''}
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <i className={`bi bi-search absolute left-3 top-1/2 transform -translate-y-1/2 ${darkMode ? 'text-gray-400' : 'text-gray-400'}`}></i>
-            <input 
-              type="text"
-              placeholder="Rechercher..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={`pl-10 pr-4 py-2 rounded-lg border ${
-                darkMode 
-                  ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-400' 
-                  : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-              } focus:outline-none focus:ring-2 w-64`}
-              style={{ '--tw-ring-color': theme.primary }}
-            />
+              Annuler
+            </button>
+            <button
+              onClick={isEdit ? handleSubmitEdit : handleSubmitAdd}
+              disabled={submitting || (!isEdit && activeTab === 'utilisateurs' && !formData.mot_de_passe)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 disabled:opacity-60"
+              style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}
+            >
+              {submitting && <Spinner size="sm" />}
+              {isEdit ? 'Enregistrer' : 'Ajouter'}
+            </button>
           </div>
-
-          <button
-            onClick={() => {
-              setFormData({});
-              setCurrentItem(null);
-              setShowAddModal(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 shadow-md hover:shadow-lg"
-            style={{
-              background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`
-            }}
-          >
-            <i className="bi bi-plus-lg"></i>
-            <span>Ajouter</span>
-          </button>
         </div>
       </div>
-    </div>
+    );
+  };
 
-    <div className="overflow-x-auto">
-      <table className="w-full">
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER PRINCIPAL
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <div className={`${dm('bg-gray-950', 'bg-gray-50')} min-h-screen transition-colors duration-300`}>
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
 
-        {/* ✅ THEAD — vraie couleur du thème actif */}
-        <thead
-          style={{
-            background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})`,
-          }}
-        >
-          <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Direction
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Description
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Responsable
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Véhicules
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Utilisateurs
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Statut
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
-              Actions
-            </th>
-          </tr>
-        </thead>
+      {/* ── Styles globaux + SweetAlert2 thème ── */}
+      <style>{`
+        @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        .animate-fade-in { animation: fade-in 0.2s ease; }
 
-        {/* ✅ TBODY — lignes alternées : bleu pastel / gris pastel */}
-        <tbody>
-          {filteredDirections.map((dir, index) => (
-            <tr
-              key={dir.id}
-              style={{
-                backgroundColor: index % 2 === 0
-                  ? darkMode ? '#1a2535' : '#eef2ff'
-                  : darkMode ? '#1c1f2b' : '#f3f4f6',
-                borderBottom: darkMode ? '1px solid #1e293b' : '1px solid #e5e7eb',
-                transition: 'background-color 0.15s ease'
-              }}
-              onMouseEnter={e => e.currentTarget.style.backgroundColor = darkMode ? `${theme.primary}30` : `${theme.primary}18`}
-              onMouseLeave={e => e.currentTarget.style.backgroundColor = index % 2 === 0
-                ? darkMode ? '#1a2535' : '#eef2ff'
-                : darkMode ? '#1c1f2b' : '#f3f4f6'
-              }
-            >
-              <td className="px-6 py-4 whitespace-nowrap">
+        /* SweetAlert2 — popup dark */
+        .swal-dark-popup  { border: 1px solid #1e293b !important; border-radius: 16px !important; }
+        /* SweetAlert2 — popup light */
+        .swal-light-popup { border: 1px solid #e5e7eb !important; border-radius: 16px !important; }
+        /* Boutons */
+        .swal-confirm-btn { font-weight: 600 !important; border-radius: 8px !important; padding: 10px 24px !important; font-size: 14px !important; }
+        .swal-cancel-btn  { font-weight: 500 !important; border-radius: 8px !important; padding: 10px 20px !important; font-size: 14px !important; }
+      `}</style>
+
+      <Sidebar darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} theme={theme} navigate={navigate} />
+      <Header darkMode={darkMode} setDarkMode={setDarkMode} sidebarCollapsed={sidebarCollapsed} theme={theme}
+        showNotifications={showNotifications} setShowNotifications={setShowNotifications}
+        showProfile={showProfile} setShowProfile={setShowProfile} />
+
+      <main className="transition-all duration-300 pt-24 px-6 pb-8" style={{ marginLeft: sidebarCollapsed ? '5rem' : '18rem' }}>
+
+        {/* ONGLETS */}
+        <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm mb-6 p-2`}>
+          <div className="flex gap-2">
+            {[
+              { key: 'utilisateurs', icon: 'bi-people-fill', label: 'Utilisateurs', count: usersData.length },
+              { key: 'roles',        icon: 'bi-shield-fill',  label: 'Rôles',        count: rolesData.length },
+              { key: 'directions',   icon: 'bi-building',     label: 'Directions',   count: directionsData.length },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => { setActiveTab(tab.key); setSearchQuery(''); }}
+                className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all text-sm ${
+                  activeTab === tab.key ? 'text-white shadow-md' : dm('text-gray-400 hover:bg-gray-800', 'text-gray-600 hover:bg-gray-50')
+                }`}
+                style={activeTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}
+              >
+                <i className={`bi ${tab.icon} text-base`} />
+                <span>{tab.label}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.key ? 'bg-white/20 text-white' : dm('bg-gray-800 text-gray-400', 'bg-gray-100 text-gray-600')}`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* STATS CARDS */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {getStatsCards().map((card, i) => (
+            <div key={i} className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl p-5 border shadow-sm hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5`}>
+              <div className="flex items-start justify-between">
                 <div>
-                  <p className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                    {dir.nom}
-                  </p>
-                  <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Code: {dir.code}
-                  </p>
+                  <p className={`text-xs font-medium mb-1 ${dm('text-gray-400', 'text-gray-600')}`}>{card.title}</p>
+                  <p className={`text-3xl font-bold ${dm('text-white', 'text-gray-900')}`}>{card.value ?? '—'}</p>
+                  <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>{card.subtitle}</p>
                 </div>
-              </td>
-              <td className="px-6 py-4">
-                <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {dir.description}
-                </p>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {dir.responsable}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  {dir.nbVehicules}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  {dir.nbUtilisateurs}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-                  dir.estActif 
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                    : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                }`}>
-                  {dir.estActif ? 'Actif' : 'Inactif'}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="relative">
-                  <button
-                    onClick={() => setShowActionMenu(showActionMenu === `dir-${dir.id}` ? null : `dir-${dir.id}`)}
-                    className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
-                  >
-                    <i className={`bi bi-three-dots-vertical ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}></i>
-                  </button>
-
-                  {showActionMenu === `dir-${dir.id}` && (
-                    <div className={`absolute right-0 mt-2 w-48 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-lg shadow-xl z-50`}>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(dir);
-                          setShowDetailsModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-eye-fill text-blue-500"></i>
-                        <span>Voir détails</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(dir);
-                          setFormData({
-                            code: dir.code,
-                            nom: dir.nom,
-                            description: dir.description,
-                            responsable: dir.responsable
-                          });
-                          setShowEditModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-pencil-fill text-yellow-500"></i>
-                        <span>Modifier</span>
-                      </button>
-                      <button
-                        onClick={() => handleToggleDirectionStatus(dir)}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className={`bi ${dir.estActif ? 'bi-toggle-on text-green-500' : 'bi-toggle-off text-gray-500'}`}></i>
-                        <span>{dir.estActif ? 'Désactiver' : 'Activer'}</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCurrentItem(dir);
-                          setShowDeleteModal(true);
-                          setShowActionMenu(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2 text-sm ${darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-gray-50'} transition-colors`}
-                      >
-                        <i className="bi bi-trash-fill"></i>
-                        <span>Supprimer</span>
-                      </button>
-                    </div>
-                  )}
+                <div className={`${card.iconBg} ${card.textColor} p-3 rounded-lg`}>
+                  <i className={`bi ${card.icon} text-xl`} />
                 </div>
-              </td>
-            </tr>
+              </div>
+            </div>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </div>
 
-    <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
-      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-        Affichage de {filteredDirections.length} directions
-      </p>
-    </div>
-  </div>
-)}
+        {/* ── TABLE UTILISATEURS ── */}
+        {activeTab === 'utilisateurs' && (
+          <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
+            <Toolbar count={usersData.length} countLabel="utilisateur" />
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead style={theadStyle}>
+                  <tr>
+                    <Th>Utilisateur</Th>
+                    <Th>Email</Th>
+                    <Th>Rôle</Th>
+                    <Th>Direction</Th>
+                    <Th>Référence</Th>
+                    <Th>Statut</Th>
+                    <Th>Actions</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? <LoadingState /> : usersData.length === 0 ? <EmptyState message="Aucun utilisateur trouvé." /> :
+                    usersData.map((user, i) => (
+                      <tr key={user.id} style={trStyle(i)}
+                        onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
+                        onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0" style={{ backgroundColor: user.couleur }}>
+                              {user.initiales}
+                            </div>
+                            <div>
+                              <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{user.nom}</p>
+                              <p className={`text-xs ${dm('text-gray-400', 'text-gray-500')}`}>{user.dernierConnexion}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className={`text-sm ${dm('text-gray-300', 'text-gray-700')}`}>{user.email}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
+                            user.roleName?.includes('Admin') ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
+                            user.roleName?.includes('Chef')  ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400' :
+                                                               'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                          }`}>{user.roleName}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className={`text-sm ${dm('text-gray-300', 'text-gray-700')}`}>{user.directionName}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          {user.directionCode && user.directionCode !== '—'
+                            ? <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{user.directionCode}</span>
+                            : <span className={`text-sm ${dm('text-gray-500', 'text-gray-400')}`}>—</span>
+                          }
+                        </td>
+                        <td className="px-6 py-4">
+                          <StatusBadge active={user.est_actif} labelTrue="Actif" labelFalse="Bloqué" />
+                        </td>
+                        <td className="px-6 py-4">
+                          <ActionMenuUtilisateur menuKey={`user-${user.id}`} item={user} />
+                        </td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+              <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{usersData.length} utilisateur{usersData.length > 1 ? 's' : ''}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── TABLE RÔLES ── */}
+        {activeTab === 'roles' && (
+          <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
+            <Toolbar count={rolesData.length} countLabel="rôle" />
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead style={theadStyle}>
+                  <tr>
+                    <Th>Rôle</Th>
+                    <Th>Description</Th>
+                    <Th>Référence</Th>
+                    <Th>Niveau d'accès</Th>
+                    <Th>Utilisateurs</Th>
+                    <Th>Statut</Th>
+                    <Th>Actions</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? <LoadingState /> : rolesData.length === 0 ? <EmptyState message="Aucun rôle trouvé." /> :
+                    rolesData.map((role, i) => (
+                      <tr key={role.id} style={trStyle(i)}
+                        onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
+                        onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
+                        <td className="px-6 py-4">
+                          <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{role.nom}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className={`text-sm ${dm('text-gray-300', 'text-gray-600')}`}>{role.description || '—'}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{role.code}</span>
+                        </td>
+                        <td className="px-6 py-4"><NiveauBadge niveau={role.niveauAcces} /></td>
+                        <td className="px-6 py-4">
+                          <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{role.nbUtilisateurs}</span>
+                        </td>
+                        <td className="px-6 py-4"><StatusBadge active={role.estActif} /></td>
+                        <td className="px-6 py-4">
+                          <ActionMenuSimple menuKey={`role-${role.id}`} item={role} />
+                        </td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+              <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{rolesData.length} rôle{rolesData.length > 1 ? 's' : ''}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── TABLE DIRECTIONS ── */}
+        {activeTab === 'directions' && (
+          <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
+            <Toolbar count={directionsData.length} countLabel="direction" />
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead style={theadStyle}>
+                  <tr>
+                    <Th>Direction</Th>
+                    <Th>Référence</Th>
+                    <Th>Véhicules</Th>
+                    <Th>Utilisateurs</Th>
+                    <Th>Statut</Th>
+                    <Th>Actions</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? <LoadingState /> : directionsData.length === 0 ? <EmptyState message="Aucune direction trouvée." /> :
+                    directionsData.map((dir, i) => (
+                      <tr key={dir.id} style={trStyle(i)}
+                        onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
+                        onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
+                        <td className="px-6 py-4">
+                          <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{dir.nom}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{dir.code || '—'}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{dir.nbVehicules}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{dir.nbUtilisateurs}</span>
+                        </td>
+                        <td className="px-6 py-4"><StatusBadge active={dir.estActif} /></td>
+                        <td className="px-6 py-4">
+                          <ActionMenuSimple menuKey={`dir-${dir.id}`} item={dir} />
+                        </td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+              <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{directionsData.length} direction{directionsData.length > 1 ? 's' : ''}</p>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
-        <div className={`mt-8 py-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
-          <div className="flex items-center justify-center">
-            <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-600'}`}>
-              © 2026 SGS Tous droits réservés - Version 1.0
-      
-            </p>
-          </div>
+        <div className={`mt-8 py-6 border-t ${dm('border-gray-800', 'border-gray-200')} text-center`}>
+          <p className={`text-sm ${dm('text-gray-500', 'text-gray-500')}`}>© 2026 SGS — Tous droits réservés · Version 1.0</p>
         </div>
       </main>
 
-      {/* MODALS */}
-      <FormModal
-        show={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        title={`Ajouter ${activeTab === 'utilisateurs' ? 'un utilisateur' : activeTab === 'roles' ? 'un rôle' : 'une direction'}`}
-        onSubmit={activeTab === 'utilisateurs' ? handleAddUser : activeTab === 'roles' ? handleAddRole : handleAddDirection}
-        type={activeTab === 'utilisateurs' ? 'utilisateur' : activeTab === 'roles' ? 'role' : 'direction'}
-      />
-
-      <FormModal
-        show={showEditModal}
-        onClose={() => {
-          setShowEditModal(false);
-          setCurrentItem(null);
-          setFormData({});
-        }}
-        title={`Modifier ${activeTab === 'utilisateurs' ? 'l\'utilisateur' : activeTab === 'roles' ? 'le rôle' : 'la direction'}`}
-        onSubmit={activeTab === 'utilisateurs' ? handleEditUser : activeTab === 'roles' ? handleEditRole : handleEditDirection}
-        type={activeTab === 'utilisateurs' ? 'utilisateur' : activeTab === 'roles' ? 'role' : 'direction'}
-      />
-
-      <DeleteModal
-        show={showDeleteModal}
-        onClose={() => {
-          setShowDeleteModal(false);
-          setCurrentItem(null);
-        }}
-        onConfirm={activeTab === 'utilisateurs' ? handleDeleteUser : activeTab === 'roles' ? handleDeleteRole : handleDeleteDirection}
-        itemName={currentItem ? (activeTab === 'utilisateurs' ? `${currentItem.prenom} ${currentItem.nom}` : currentItem.nom) : ''}
-      />
-
-      <DetailsModal
-        show={showDetailsModal}
-        onClose={() => {
-          setShowDetailsModal(false);
-          setCurrentItem(null);
-        }}
-        item={currentItem}
-        type={activeTab === 'utilisateurs' ? 'utilisateur' : activeTab === 'roles' ? 'role' : 'direction'}
-      />
+      {/* MODALES */}
+      {renderFormModal(showAddModal,  () => { setShowAddModal(false);  setErrors({}); }, false)}
+      {renderFormModal(showEditModal, () => { setShowEditModal(false); setErrors({}); }, true)}
+      <DeleteModal />
+      <DetailsModal />
     </div>
   );
 };

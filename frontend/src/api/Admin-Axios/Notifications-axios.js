@@ -42,61 +42,45 @@ notificationsApi.interceptors.response.use(
 
 /**
  * Récupérer la liste des notifications (paginated)
+ * Le backend retourne : { success, data: { notifications, unread_count, current_page, last_page, per_page, total } }
  * @param {number} page - Numéro de la page (défaut: 1)
  * @param {number} perPage - Nombre d'éléments par page (défaut: 10)
  * @returns {Promise}
  */
-export const getNotifications = (page = 1, perPage = 10) => 
+export const getNotifications = (page = 1, perPage = 10) =>
   notificationsApi.get(`/admin/notifications?page=${page}&per_page=${perPage}`);
 
 /**
  * Marquer une notification comme lue
+ * Le backend retourne : { success, message }
  * @param {number} id - ID de la notification
  * @returns {Promise}
  */
-export const readNotification = (id) => 
+export const readNotification = (id) =>
   notificationsApi.post(`/admin/notifications/${id}/read`);
 
 /**
  * Marquer toutes les notifications comme lues
+ * Le backend retourne : { success, message, updated_count, created_count }
  * @returns {Promise}
  */
-export const readAllNotifications = () => 
+export const readAllNotifications = () =>
   notificationsApi.post('/admin/notifications/read-all');
 
 /**
- * Supprimer une notification
- * @param {number} id - ID de la notification
- * @returns {Promise}
- */
-export const deleteNotification = (id) => 
-  notificationsApi.delete(`/admin/notifications/${id}`);
-
-/**
- * Supprimer toutes les notifications lues
- * @returns {Promise}
- */
-export const deleteAllReadNotifications = () => 
-  notificationsApi.delete('/admin/notifications/read/all');
-
-/**
  * Obtenir le nombre de notifications non lues
+ * Le backend retourne : { success, unread_count }
  * @returns {Promise}
  */
-export const getUnreadNotificationsCount = () => 
+export const getUnreadCount = () =>
   notificationsApi.get('/admin/notifications/unread/count');
 
 /**
- * Récupérer uniquement le compteur non lu (alias)
+ * Synchroniser les notifications (créer les entrées manquantes dans envois_notifications)
+ * Le backend retourne : { success, message, synced_count }
  * @returns {Promise}
  */
-export const getUnreadCount = () => getUnreadNotificationsCount();
-
-/**
- * Synchroniser les notifications (créer les entrées manquantes)
- * @returns {Promise}
- */
-export const syncNotifications = () => 
+export const syncNotifications = () =>
   notificationsApi.post('/admin/notifications/sync');
 
 // ──────────────────────────────────────────────────────────────────────
