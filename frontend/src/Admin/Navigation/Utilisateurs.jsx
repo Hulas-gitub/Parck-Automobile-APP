@@ -21,8 +21,8 @@ import {
   getDirections,
   createDirection,
   updateDirection,
-  deleteDirection,
   toggleStatutDirection,
+  deleteDirection,
 } from '../../api/Admin-Axios/Utilisateurs-axios';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +34,150 @@ const Spinner = ({ size = 'md' }) => {
     <div className={`${s} border-2 border-current border-t-transparent rounded-full animate-spin opacity-70`} />
   );
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SKELETON COMPONENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SkeletonPulse = ({ darkMode, className = '' }) => (
+  <div
+    className={`rounded animate-pulse ${className}`}
+    style={{ backgroundColor: darkMode ? '#1e293b' : '#e2e8f0' }}
+  />
+);
+
+// Skeleton pour les onglets
+const TabsSkeleton = ({ darkMode }) => (
+  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm mb-6 p-2`}>
+    <div className="flex gap-2">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="flex-1 px-6 py-3 rounded-lg">
+          <SkeletonPulse darkMode={darkMode} className="h-5 w-full" />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+// Skeleton pour les 4 stat cards
+const StatCardsSkeleton = ({ darkMode }) => (
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    {[...Array(4)].map((_, i) => (
+      <div
+        key={i}
+        className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl p-5 border shadow-sm`}
+      >
+        <div className="flex items-start justify-between">
+          <div className="space-y-2 flex-1">
+            <SkeletonPulse darkMode={darkMode} className="h-3 w-24" />
+            <SkeletonPulse darkMode={darkMode} className="h-8 w-14 mt-1" />
+            <SkeletonPulse darkMode={darkMode} className="h-2.5 w-20" />
+          </div>
+          <SkeletonPulse darkMode={darkMode} className="w-11 h-11 rounded-lg" />
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+// Skeleton pour la barre d'outils (au-dessus du tableau)
+const ToolbarSkeleton = ({ darkMode }) => (
+  <div className={`p-5 border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
+    <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="space-y-2">
+        <SkeletonPulse darkMode={darkMode} className="h-5 w-44" />
+        <SkeletonPulse darkMode={darkMode} className="h-3 w-28" />
+      </div>
+      <div className="flex items-center gap-2">
+        <SkeletonPulse darkMode={darkMode} className="h-9 w-56 rounded-lg" />
+        <SkeletonPulse darkMode={darkMode} className="h-9 w-24 rounded-lg" />
+        <SkeletonPulse darkMode={darkMode} className="h-9 w-44 rounded-lg" />
+      </div>
+    </div>
+  </div>
+);
+
+// Skeleton pour l'en-tête du tableau
+const TableHeadSkeleton = ({ darkMode, cols = 7 }) => (
+  <thead>
+    <tr className={darkMode ? 'bg-gray-800/60' : 'bg-gray-100'}>
+      {[...Array(cols)].map((_, i) => (
+        <th key={i} className="px-6 py-4">
+          <SkeletonPulse darkMode={darkMode} className="h-3 w-16" />
+        </th>
+      ))}
+    </tr>
+  </thead>
+);
+
+// Skeleton pour les lignes du tableau utilisateurs
+const TableRowsSkeleton = ({ darkMode, cols = 7, rows = 6 }) => (
+  <>
+    {[...Array(rows)].map((_, i) => (
+      <tr
+        key={i}
+        style={{
+          backgroundColor: i % 2 === 0
+            ? (darkMode ? '#1a2535' : '#eef2ff')
+            : (darkMode ? '#1c1f2b' : '#f3f4f6'),
+        }}
+      >
+        {/* Colonne avatar + nom */}
+        <td className="px-6 py-4">
+          <div className="flex items-center gap-3">
+            <SkeletonPulse darkMode={darkMode} className="w-10 h-10 rounded-full flex-shrink-0" />
+            <div className="space-y-1.5">
+              <SkeletonPulse darkMode={darkMode} className="h-3 w-28" />
+              <SkeletonPulse darkMode={darkMode} className="h-2.5 w-20" />
+            </div>
+          </div>
+        </td>
+        {/* Colonnes intermédiaires */}
+        {[...Array(cols - 2)].map((_, j) => (
+          <td key={j} className="px-6 py-4">
+            <SkeletonPulse darkMode={darkMode} className="h-3 w-20" />
+          </td>
+        ))}
+        {/* Colonne actions */}
+        <td className="px-6 py-4">
+          <SkeletonPulse darkMode={darkMode} className="w-8 h-8 rounded-lg" />
+        </td>
+      </tr>
+    ))}
+  </>
+);
+
+// Skeleton pour le pied de tableau
+const TableFooterSkeleton = ({ darkMode }) => (
+  <div className={`px-6 py-3 border-t ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
+    <SkeletonPulse darkMode={darkMode} className="h-3 w-24" />
+  </div>
+);
+
+// Skeleton complet pour le tableau (head + rows + footer), avec toolbar
+const TableBlockSkeleton = ({ darkMode, cols = 7, rows = 6 }) => (
+  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}>
+    <ToolbarSkeleton darkMode={darkMode} />
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <TableHeadSkeleton darkMode={darkMode} cols={cols} />
+        <tbody>
+          <TableRowsSkeleton darkMode={darkMode} cols={cols} rows={rows} />
+        </tbody>
+      </table>
+    </div>
+    <TableFooterSkeleton darkMode={darkMode} />
+  </div>
+);
+
+// Skeleton de page entière : onglets + stats + tableau
+const FullPageSkeleton = ({ darkMode }) => (
+  <>
+    <TabsSkeleton darkMode={darkMode} />
+    <StatCardsSkeleton darkMode={darkMode} />
+    <TableBlockSkeleton darkMode={darkMode} cols={7} rows={6} />
+  </>
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER : badge statut
@@ -100,7 +244,6 @@ const Utilisateurs = () => {
   // Modales
   const [showAddModal,     setShowAddModal]     = useState(false);
   const [showEditModal,    setShowEditModal]    = useState(false);
-  const [showDeleteModal,  setShowDeleteModal]  = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [currentItem,      setCurrentItem]      = useState(null);
   const [showActionMenu,   setShowActionMenu]   = useState(null);
@@ -111,9 +254,12 @@ const Utilisateurs = () => {
   const [showPassword,  setShowPassword]  = useState(false);
 
   // ─────────────────────────────────────────────────────────────────────────
+  // REF sur loadData pour éviter les closures obsolètes dans swalSuccess
+  // ─────────────────────────────────────────────────────────────────────────
+  const loadDataRef = useRef(null);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // SWEETALERT2 — helpers centralisés avec thème dynamique
-  // Adapte automatiquement le fond, le texte et les boutons au mode dark/light
-  // et aux couleurs du ThemeContext actif.
   // ─────────────────────────────────────────────────────────────────────────
 
   const swalBase = useCallback(() => ({
@@ -127,10 +273,6 @@ const Utilisateurs = () => {
     },
   }), [darkMode, theme.primary]);
 
-  /**
-   * Succès → fermeture automatique après 1,8 s puis rechargement des données.
-   * Pas de bouton affiché.
-   */
   const swalSuccess = useCallback((message) => {
     Swal.fire({
       ...swalBase(),
@@ -140,13 +282,11 @@ const Utilisateurs = () => {
       timer:             1800,
       timerProgressBar:  true,
       showConfirmButton: false,
-    }).then(() => loadData());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    }).then(() => {
+      if (loadDataRef.current) loadDataRef.current();
+    });
   }, [swalBase]);
 
-  /**
-   * Erreur → seul bouton "D'ACCORD", pas de fermeture automatique.
-   */
   const swalError = useCallback((message) => {
     Swal.fire({
       ...swalBase(),
@@ -158,10 +298,7 @@ const Utilisateurs = () => {
     });
   }, [swalBase]);
 
-  /**
-   * Confirmation → retourne true si l'utilisateur clique sur Confirmer.
-   */
-  const swalConfirm = useCallback(async ({ title, text, confirmText = 'Confirmer', icon = 'warning' }) => {
+  const swalConfirm = useCallback(async ({ title, text, confirmText = 'Confirmer', confirmColor = '#dc2626', icon = 'warning' }) => {
     const result = await Swal.fire({
       ...swalBase(),
       icon,
@@ -170,7 +307,7 @@ const Utilisateurs = () => {
       showCancelButton:   true,
       confirmButtonText:  confirmText,
       cancelButtonText:   'Annuler',
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: confirmColor,
       cancelButtonColor:  darkMode ? '#374151' : '#6b7280',
     });
     return result.isConfirmed;
@@ -221,7 +358,11 @@ const Utilisateurs = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, searchQuery, roleFilter, statusFilter]);
+  }, [activeTab, searchQuery, roleFilter, statusFilter, swalError]);
+
+  useEffect(() => {
+    loadDataRef.current = loadData;
+  }, [loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -241,7 +382,9 @@ const Utilisateurs = () => {
   const handleSearchChange = (val) => {
     setSearchQuery(val);
     clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(loadData, 300);
+    searchTimer.current = setTimeout(() => {
+      if (loadDataRef.current) loadDataRef.current();
+    }, 300);
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -273,17 +416,11 @@ const Utilisateurs = () => {
       });
     } else {
       setFormData({
-        nom:  item.nom,
-        code: item.code,
+        nom:       item.nom,
+        reference: item.reference ?? '',
       });
     }
     setShowEditModal(true);
-    setShowActionMenu(null);
-  };
-
-  const openDelete = (item) => {
-    setCurrentItem(item);
-    setShowDeleteModal(true);
     setShowActionMenu(null);
   };
 
@@ -361,28 +498,32 @@ const Utilisateurs = () => {
     finally { setSubmitting(false); }
   };
 
-  const handleDeleteUser = async () => {
-    setSubmitting(true);
+  const handleDeleteUser = async (item) => {
+    setShowActionMenu(null);
+    const confirmed = await swalConfirm({
+      title:        'Supprimer cet utilisateur ?',
+      text:         `Voulez-vous vraiment supprimer "${item.nom}" ? Cette action est irréversible.`,
+      confirmText:  'Supprimer',
+      confirmColor: '#dc2626',
+      icon:         'warning',
+    });
+    if (!confirmed) return;
     try {
-      const res = await deleteUtilisateur(currentItem.id);
-      if (res.data.success) {
-        setShowDeleteModal(false);
-        swalSuccess(res.data.message ?? 'Utilisateur supprimé.');
-      }
+      const res = await deleteUtilisateur(item.id);
+      if (res.data.success) swalSuccess(res.data.message ?? 'Utilisateur supprimé.');
     } catch (err) {
-      setShowDeleteModal(false);
       swalError(err.response?.data?.message ?? 'Erreur lors de la suppression.');
     }
-    finally { setSubmitting(false); }
   };
 
   const handleToggleUserStatus = async (user) => {
     setShowActionMenu(null);
     const confirmed = await swalConfirm({
-      title:       `${user.est_actif ? 'Bloquer' : 'Débloquer'} cet utilisateur ?`,
-      text:        `Voulez-vous vraiment ${user.est_actif ? 'bloquer' : 'débloquer'} ${user.nom} ?`,
-      confirmText: user.est_actif ? 'Bloquer' : 'Débloquer',
-      icon:        'question',
+      title:        `${user.est_actif ? 'Bloquer' : 'Débloquer'} cet utilisateur ?`,
+      text:         `Voulez-vous vraiment ${user.est_actif ? 'bloquer' : 'débloquer'} ${user.nom} ?`,
+      confirmText:  user.est_actif ? 'Bloquer' : 'Débloquer',
+      confirmColor: '#dc2626',
+      icon:         'question',
     });
     if (!confirmed) return;
     try {
@@ -393,10 +534,11 @@ const Utilisateurs = () => {
 
   const handleResetPassword = async (userId) => {
     const confirmed = await swalConfirm({
-      title:       'Réinitialiser le mot de passe ?',
-      text:        'Un nouveau mot de passe sera généré et envoyé par email. Les sessions actives seront fermées.',
-      confirmText: 'Réinitialiser',
-      icon:        'warning',
+      title:        'Réinitialiser le mot de passe ?',
+      text:         'Un nouveau mot de passe sera généré et envoyé par email. Les sessions actives seront fermées.',
+      confirmText:  'Réinitialiser',
+      confirmColor: '#d97706',
+      icon:         'warning',
     });
     if (!confirmed) return;
     try {
@@ -434,6 +576,7 @@ const Utilisateurs = () => {
     setErrors({});
     try {
       const res = await updateRole(currentItem.id, {
+        code:        formData.code,
         libelle:     formData.libelle,
         description: formData.description,
       });
@@ -445,19 +588,22 @@ const Utilisateurs = () => {
     finally { setSubmitting(false); }
   };
 
-  const handleDeleteRole = async () => {
-    setSubmitting(true);
+  const handleDeleteRole = async (item) => {
+    setShowActionMenu(null);
+    const confirmed = await swalConfirm({
+      title:        'Supprimer ce rôle ?',
+      text:         `Voulez-vous vraiment supprimer le rôle "${item.nom}" ? Cette action est irréversible.`,
+      confirmText:  'Supprimer',
+      confirmColor: '#dc2626',
+      icon:         'warning',
+    });
+    if (!confirmed) return;
     try {
-      const res = await deleteRole(currentItem.id);
-      if (res.data.success) {
-        setShowDeleteModal(false);
-        swalSuccess(res.data.message ?? 'Rôle supprimé.');
-      }
+      const res = await deleteRole(item.id);
+      if (res.data.success) swalSuccess(res.data.message ?? 'Rôle supprimé.');
     } catch (err) {
-      setShowDeleteModal(false);
       swalError(err.response?.data?.message ?? 'Erreur lors de la suppression.');
     }
-    finally { setSubmitting(false); }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -468,8 +614,8 @@ const Utilisateurs = () => {
     setErrors({});
     try {
       const res = await createDirection({
-        nom:  formData.nom,
-        code: formData.code,
+        nom:       formData.nom,
+        reference: formData.reference || null,
       });
       if (res.data.success) {
         setShowAddModal(false);
@@ -484,8 +630,8 @@ const Utilisateurs = () => {
     setErrors({});
     try {
       const res = await updateDirection(currentItem.id, {
-        nom:  formData.nom,
-        code: formData.code,
+        nom:       formData.nom,
+        reference: formData.reference || null,
       });
       if (res.data.success) {
         setShowEditModal(false);
@@ -495,25 +641,27 @@ const Utilisateurs = () => {
     finally { setSubmitting(false); }
   };
 
-  const handleDeleteDirection = async () => {
-    setSubmitting(true);
+  const handleDeleteDirection = async (item) => {
+    setShowActionMenu(null);
+    const confirmed = await swalConfirm({
+      title:        'Supprimer cette direction ?',
+      text:         `Voulez-vous vraiment supprimer la direction "${item.nom}" ? Cette action est irréversible.`,
+      confirmText:  'Supprimer',
+      confirmColor: '#dc2626',
+      icon:         'warning',
+    });
+    if (!confirmed) return;
     try {
-      const res = await deleteDirection(currentItem.id);
-      if (res.data.success) {
-        setShowDeleteModal(false);
-        swalSuccess(res.data.message ?? 'Direction supprimée.');
-      }
+      const res = await deleteDirection(item.id);
+      if (res.data.success) swalSuccess(res.data.message ?? 'Direction supprimée.');
     } catch (err) {
-      setShowDeleteModal(false);
       swalError(err.response?.data?.message ?? 'Erreur lors de la suppression.');
     }
-    finally { setSubmitting(false); }
   };
 
   // Dispatch submit
-  const handleSubmitAdd    = () => { if (activeTab === 'utilisateurs') handleAddUser();    else if (activeTab === 'roles') handleAddRole();    else handleAddDirection(); };
-  const handleSubmitEdit   = () => { if (activeTab === 'utilisateurs') handleEditUser();   else if (activeTab === 'roles') handleEditRole();   else handleEditDirection(); };
-  const handleSubmitDelete = () => { if (activeTab === 'utilisateurs') handleDeleteUser(); else if (activeTab === 'roles') handleDeleteRole(); else handleDeleteDirection(); };
+  const handleSubmitAdd  = () => { if (activeTab === 'utilisateurs') handleAddUser();  else if (activeTab === 'roles') handleAddRole();  else handleAddDirection(); };
+  const handleSubmitEdit = () => { if (activeTab === 'utilisateurs') handleEditUser(); else if (activeTab === 'roles') handleEditRole(); else handleEditDirection(); };
 
   // ─────────────────────────────────────────────────────────────────────────
   // STATS CARDS
@@ -555,7 +703,6 @@ const Utilisateurs = () => {
     : null;
 
   const uniqueRoleNames = ['Tous', ...new Set(usersData.map(u => u.roleName))];
-  const deleteName = currentItem?.nom ?? '';
 
   // Styles tableau
   const theadStyle = { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` };
@@ -571,7 +718,7 @@ const Utilisateurs = () => {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ÉTAT VIDE / CHARGEMENT
+  // ÉTAT VIDE
   // ─────────────────────────────────────────────────────────────────────────
   const EmptyState = ({ message }) => (
     <tr>
@@ -581,17 +728,6 @@ const Utilisateurs = () => {
             <i className={`bi bi-inbox text-2xl ${dm('text-gray-600', 'text-gray-400')}`} />
           </div>
           <p className={`text-sm ${dm('text-gray-400', 'text-gray-500')}`}>{message}</p>
-        </div>
-      </td>
-    </tr>
-  );
-
-  const LoadingState = () => (
-    <tr>
-      <td colSpan={10} className="px-6 py-16 text-center">
-        <div className="flex items-center justify-center gap-3">
-          <Spinner size="md" />
-          <span className={`text-sm ${dm('text-gray-400', 'text-gray-500')}`}>Chargement...</span>
         </div>
       </td>
     </tr>
@@ -690,7 +826,7 @@ const Utilisateurs = () => {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // MENU ACTION — UTILISATEURS (avec Bloquer/Débloquer)
+  // MENU ACTION — UTILISATEURS
   // ─────────────────────────────────────────────────────────────────────────
   const ActionMenuUtilisateur = ({ menuKey, item }) => (
     <div className="relative" onClick={e => e.stopPropagation()}>
@@ -709,11 +845,11 @@ const Utilisateurs = () => {
             <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
           </button>
           <button onClick={() => handleToggleUserStatus(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
-            <i className={`bi ${item.est_actif ? 'bi-lock-fill text-orange-500' : 'bi-unlock-fill text-green-500'}`} />
+            <i className={`bi ${item.est_actif ? 'bi-lock-fill text-red-500' : 'bi-unlock-fill text-green-500'}`} />
             <span>{item.est_actif ? 'Bloquer' : 'Débloquer'}</span>
           </button>
           <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
-          <button onClick={() => openDelete(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}>
+          <button onClick={() => handleDeleteUser(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}>
             <i className="bi bi-trash-fill" /><span>Supprimer</span>
           </button>
         </div>
@@ -722,7 +858,7 @@ const Utilisateurs = () => {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // MENU ACTION — RÔLES & DIRECTIONS (sans bouton toggle statut)
+  // MENU ACTION — RÔLES & DIRECTIONS
   // ─────────────────────────────────────────────────────────────────────────
   const ActionMenuSimple = ({ menuKey, item }) => (
     <div className="relative" onClick={e => e.stopPropagation()}>
@@ -741,48 +877,16 @@ const Utilisateurs = () => {
             <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
           </button>
           <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
-          <button onClick={() => openDelete(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}>
+          <button
+            onClick={() => activeTab === 'roles' ? handleDeleteRole(item) : handleDeleteDirection(item)}
+            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}
+          >
             <i className="bi bi-trash-fill" /><span>Supprimer</span>
           </button>
         </div>
       )}
     </div>
   );
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // MODALE SUPPRESSION
-  // ─────────────────────────────────────────────────────────────────────────
-  const DeleteModal = () => {
-    if (!showDeleteModal) return null;
-    return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-200')} border rounded-2xl shadow-2xl w-full max-w-md`}>
-          <div className="p-6">
-            <div className="flex gap-4 items-start mb-4">
-              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0">
-                <i className="bi bi-exclamation-triangle-fill text-2xl text-red-600" />
-              </div>
-              <div>
-                <h3 className={`text-lg font-bold ${dm('text-white', 'text-gray-900')}`}>Confirmer la suppression</h3>
-                <p className={`text-sm mt-1 ${dm('text-gray-400', 'text-gray-600')}`}>
-                  Supprimer <strong className={dm('text-white', 'text-gray-900')}>{deleteName}</strong> ? Cette action est irréversible.
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className={`flex justify-end gap-3 px-6 py-4 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
-            <button onClick={() => setShowDeleteModal(false)} className={`px-5 py-2.5 rounded-lg border text-sm font-medium transition-colors ${dm('border-gray-700 text-gray-300 hover:bg-gray-800', 'border-gray-300 text-gray-700 hover:bg-gray-50')}`}>
-              Annuler
-            </button>
-            <button onClick={handleSubmitDelete} disabled={submitting} className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors disabled:opacity-60">
-              {submitting && <Spinner size="sm" />}
-              Supprimer
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // MODALE DÉTAILS
@@ -876,7 +980,7 @@ const Utilisateurs = () => {
               <div className="space-y-5">
                 <div>
                   <h4 className={`text-xl font-bold ${dm('text-white', 'text-gray-900')}`}>{item.nom}</h4>
-                  <p className={`text-xs mt-1 ${dm('text-gray-400', 'text-gray-500')}`}>Référence : <span className="font-mono">{item.code}</span></p>
+                  <p className={`text-xs mt-1 ${dm('text-gray-400', 'text-gray-500')}`}>Référence : <span className="font-mono">{item.reference || '—'}</span></p>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   {[{ label: 'Véhicules', value: item.nbVehicules }, { label: 'Utilisateurs', value: item.nbUtilisateurs }].map(({ label, value }) => (
@@ -1056,10 +1160,11 @@ const Utilisateurs = () => {
                     onChange={e => setFormData(p => ({ ...p, code: e.target.value }))}
                     placeholder="chef_parc"
                     className={inputCls}
-                    disabled={isEdit}
                     autoComplete="off"
                   />
-                  {!isEdit && <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>Sera converti en minuscules avec underscores.</p>}
+                  <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>
+                    Sera converti en minuscules avec underscores (ex: chef_parc).
+                  </p>
                   <FieldError name="code" />
                 </div>
                 <div>
@@ -1107,14 +1212,17 @@ const Utilisateurs = () => {
                   <label className={labelCls}>Référence</label>
                   <input
                     type="text"
-                    value={formData.code ?? ''}
-                    onChange={e => setFormData(p => ({ ...p, code: e.target.value }))}
+                    value={formData.reference ?? ''}
+                    onChange={e => setFormData(p => ({ ...p, reference: e.target.value.toUpperCase() }))}
                     placeholder="DG"
                     className={inputCls}
-                    disabled={isEdit}
                     autoComplete="off"
                   />
-                  {!isEdit && <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>Sera converti en MAJUSCULES.</p>}
+                  <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>
+                    {isEdit
+                      ? 'Modifiez la référence si nécessaire (sera convertie en MAJUSCULES).'
+                      : 'Optionnel. Sera convertie en MAJUSCULES automatiquement.'}
+                  </p>
                   <FieldError name="reference" />
                 </div>
               </>
@@ -1153,16 +1261,11 @@ const Utilisateurs = () => {
     <div className={`${dm('bg-gray-950', 'bg-gray-50')} min-h-screen transition-colors duration-300`}>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
 
-      {/* ── Styles globaux + SweetAlert2 thème ── */}
       <style>{`
         @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
         .animate-fade-in { animation: fade-in 0.2s ease; }
-
-        /* SweetAlert2 — popup dark */
         .swal-dark-popup  { border: 1px solid #1e293b !important; border-radius: 16px !important; }
-        /* SweetAlert2 — popup light */
         .swal-light-popup { border: 1px solid #e5e7eb !important; border-radius: 16px !important; }
-        /* Boutons */
         .swal-confirm-btn { font-weight: 600 !important; border-radius: 8px !important; padding: 10px 24px !important; font-size: 14px !important; }
         .swal-cancel-btn  { font-weight: 500 !important; border-radius: 8px !important; padding: 10px 20px !important; font-size: 14px !important; }
       `}</style>
@@ -1174,221 +1277,231 @@ const Utilisateurs = () => {
 
       <main className="transition-all duration-300 pt-24 px-6 pb-8" style={{ marginLeft: sidebarCollapsed ? '5rem' : '18rem' }}>
 
-        {/* ONGLETS */}
-        <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm mb-6 p-2`}>
-          <div className="flex gap-2">
-            {[
-              { key: 'utilisateurs', icon: 'bi-people-fill', label: 'Utilisateurs', count: usersData.length },
-              { key: 'roles',        icon: 'bi-shield-fill',  label: 'Rôles',        count: rolesData.length },
-              { key: 'directions',   icon: 'bi-building',     label: 'Directions',   count: directionsData.length },
-            ].map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => { setActiveTab(tab.key); setSearchQuery(''); }}
-                className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all text-sm ${
-                  activeTab === tab.key ? 'text-white shadow-md' : dm('text-gray-400 hover:bg-gray-800', 'text-gray-600 hover:bg-gray-50')
-                }`}
-                style={activeTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}
-              >
-                <i className={`bi ${tab.icon} text-base`} />
-                <span>{tab.label}</span>
-                <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.key ? 'bg-white/20 text-white' : dm('bg-gray-800 text-gray-400', 'bg-gray-100 text-gray-600')}`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* STATS CARDS */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          {getStatsCards().map((card, i) => (
-            <div key={i} className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl p-5 border shadow-sm hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5`}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className={`text-xs font-medium mb-1 ${dm('text-gray-400', 'text-gray-600')}`}>{card.title}</p>
-                  <p className={`text-3xl font-bold ${dm('text-white', 'text-gray-900')}`}>{card.value ?? '—'}</p>
-                  <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>{card.subtitle}</p>
-                </div>
-                <div className={`${card.iconBg} ${card.textColor} p-3 rounded-lg`}>
-                  <i className={`bi ${card.icon} text-xl`} />
-                </div>
+        {/* ════════════════════════════════════════════════════════════════
+            SKELETON PLEINE PAGE pendant le chargement
+            (remplace onglets + stats + tableau, sans exception)
+        ════════════════════════════════════════════════════════════════ */}
+        {loading ? (
+          <FullPageSkeleton darkMode={darkMode} />
+        ) : (
+          <>
+            {/* ONGLETS */}
+            <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm mb-6 p-2`}>
+              <div className="flex gap-2">
+                {[
+                  { key: 'utilisateurs', icon: 'bi-people-fill', label: 'Utilisateurs', count: usersData.length },
+                  { key: 'roles',        icon: 'bi-shield-fill',  label: 'Rôles',        count: rolesData.length },
+                  { key: 'directions',   icon: 'bi-building',     label: 'Directions',   count: directionsData.length },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => { setActiveTab(tab.key); setSearchQuery(''); }}
+                    className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all text-sm ${
+                      activeTab === tab.key ? 'text-white shadow-md' : dm('text-gray-400 hover:bg-gray-800', 'text-gray-600 hover:bg-gray-50')
+                    }`}
+                    style={activeTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}
+                  >
+                    <i className={`bi ${tab.icon} text-base`} />
+                    <span>{tab.label}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.key ? 'bg-white/20 text-white' : dm('bg-gray-800 text-gray-400', 'bg-gray-100 text-gray-600')}`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
 
-        {/* ── TABLE UTILISATEURS ── */}
-        {activeTab === 'utilisateurs' && (
-          <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
-            <Toolbar count={usersData.length} countLabel="utilisateur" />
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead style={theadStyle}>
-                  <tr>
-                    <Th>Utilisateur</Th>
-                    <Th>Email</Th>
-                    <Th>Rôle</Th>
-                    <Th>Direction</Th>
-                    <Th>Référence</Th>
-                    <Th>Statut</Th>
-                    <Th>Actions</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? <LoadingState /> : usersData.length === 0 ? <EmptyState message="Aucun utilisateur trouvé." /> :
-                    usersData.map((user, i) => (
-                      <tr key={user.id} style={trStyle(i)}
-                        onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
-                        onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0" style={{ backgroundColor: user.couleur }}>
-                              {user.initiales}
+            {/* STATS CARDS */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              {getStatsCards().map((card, i) => (
+                <div key={i} className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl p-5 border shadow-sm hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5`}>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className={`text-xs font-medium mb-1 ${dm('text-gray-400', 'text-gray-600')}`}>{card.title}</p>
+                      <p className={`text-3xl font-bold ${dm('text-white', 'text-gray-900')}`}>{card.value ?? '—'}</p>
+                      <p className={`text-xs mt-1 ${dm('text-gray-500', 'text-gray-500')}`}>{card.subtitle}</p>
+                    </div>
+                    <div className={`${card.iconBg} ${card.textColor} p-3 rounded-lg`}>
+                      <i className={`bi ${card.icon} text-xl`} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── TABLE UTILISATEURS ── */}
+            {activeTab === 'utilisateurs' && (
+              <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
+                <Toolbar count={usersData.length} countLabel="utilisateur" />
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead style={theadStyle}>
+                      <tr>
+                        <Th>Utilisateur</Th>
+                        <Th>Email</Th>
+                        <Th>Rôle</Th>
+                        <Th>Direction</Th>
+                        <Th>Référence</Th>
+                        <Th>Statut</Th>
+                        <Th>Actions</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usersData.length === 0 ? (
+                        <EmptyState message="Aucun utilisateur trouvé." />
+                      ) : usersData.map((user, i) => (
+                        <tr key={user.id} style={trStyle(i)}
+                          onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
+                          onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0" style={{ backgroundColor: user.couleur }}>
+                                {user.initiales}
+                              </div>
+                              <div>
+                                <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{user.nom}</p>
+                                <p className={`text-xs ${dm('text-gray-400', 'text-gray-500')}`}>{user.dernierConnexion}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{user.nom}</p>
-                              <p className={`text-xs ${dm('text-gray-400', 'text-gray-500')}`}>{user.dernierConnexion}</p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className={`text-sm ${dm('text-gray-300', 'text-gray-700')}`}>{user.email}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
-                            user.roleName?.includes('Admin') ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                            user.roleName?.includes('Chef')  ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400' :
-                                                               'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                          }`}>{user.roleName}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className={`text-sm ${dm('text-gray-300', 'text-gray-700')}`}>{user.directionName}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          {user.directionCode && user.directionCode !== '—'
-                            ? <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{user.directionCode}</span>
-                            : <span className={`text-sm ${dm('text-gray-500', 'text-gray-400')}`}>—</span>
-                          }
-                        </td>
-                        <td className="px-6 py-4">
-                          <StatusBadge active={user.est_actif} labelTrue="Actif" labelFalse="Bloqué" />
-                        </td>
-                        <td className="px-6 py-4">
-                          <ActionMenuUtilisateur menuKey={`user-${user.id}`} item={user} />
-                        </td>
-                      </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            </div>
-            <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
-              <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{usersData.length} utilisateur{usersData.length > 1 ? 's' : ''}</p>
-            </div>
-          </div>
-        )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className={`text-sm ${dm('text-gray-300', 'text-gray-700')}`}>{user.email}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
+                              user.roleName?.includes('Admin') ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
+                              user.roleName?.includes('Chef')  ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400' :
+                                                                 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                            }`}>{user.roleName}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className={`text-sm ${dm('text-gray-300', 'text-gray-700')}`}>{user.directionName}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            {user.directionCode && user.directionCode !== '—'
+                              ? <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{user.directionCode}</span>
+                              : <span className={`text-sm ${dm('text-gray-500', 'text-gray-400')}`}>—</span>
+                            }
+                          </td>
+                          <td className="px-6 py-4">
+                            <StatusBadge active={user.est_actif} labelTrue="Actif" labelFalse="Bloqué" />
+                          </td>
+                          <td className="px-6 py-4">
+                            <ActionMenuUtilisateur menuKey={`user-${user.id}`} item={user} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+                  <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{usersData.length} utilisateur{usersData.length > 1 ? 's' : ''}</p>
+                </div>
+              </div>
+            )}
 
-        {/* ── TABLE RÔLES ── */}
-        {activeTab === 'roles' && (
-          <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
-            <Toolbar count={rolesData.length} countLabel="rôle" />
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead style={theadStyle}>
-                  <tr>
-                    <Th>Rôle</Th>
-                    <Th>Description</Th>
-                    <Th>Référence</Th>
-                    <Th>Niveau d'accès</Th>
-                    <Th>Utilisateurs</Th>
-                    <Th>Statut</Th>
-                    <Th>Actions</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? <LoadingState /> : rolesData.length === 0 ? <EmptyState message="Aucun rôle trouvé." /> :
-                    rolesData.map((role, i) => (
-                      <tr key={role.id} style={trStyle(i)}
-                        onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
-                        onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
-                        <td className="px-6 py-4">
-                          <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{role.nom}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className={`text-sm ${dm('text-gray-300', 'text-gray-600')}`}>{role.description || '—'}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{role.code}</span>
-                        </td>
-                        <td className="px-6 py-4"><NiveauBadge niveau={role.niveauAcces} /></td>
-                        <td className="px-6 py-4">
-                          <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{role.nbUtilisateurs}</span>
-                        </td>
-                        <td className="px-6 py-4"><StatusBadge active={role.estActif} /></td>
-                        <td className="px-6 py-4">
-                          <ActionMenuSimple menuKey={`role-${role.id}`} item={role} />
-                        </td>
+            {/* ── TABLE RÔLES ── */}
+            {activeTab === 'roles' && (
+              <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
+                <Toolbar count={rolesData.length} countLabel="rôle" />
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead style={theadStyle}>
+                      <tr>
+                        <Th>Rôle</Th>
+                        <Th>Description</Th>
+                        <Th>Référence</Th>
+                        <Th>Niveau d'accès</Th>
+                        <Th>Utilisateurs</Th>
+                        <Th>Statut</Th>
+                        <Th>Actions</Th>
                       </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            </div>
-            <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
-              <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{rolesData.length} rôle{rolesData.length > 1 ? 's' : ''}</p>
-            </div>
-          </div>
-        )}
+                    </thead>
+                    <tbody>
+                      {rolesData.length === 0 ? (
+                        <EmptyState message="Aucun rôle trouvé." />
+                      ) : rolesData.map((role, i) => (
+                        <tr key={role.id} style={trStyle(i)}
+                          onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
+                          onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
+                          <td className="px-6 py-4">
+                            <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{role.nom}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className={`text-sm ${dm('text-gray-300', 'text-gray-600')}`}>{role.description || '—'}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{role.code}</span>
+                          </td>
+                          <td className="px-6 py-4"><NiveauBadge niveau={role.niveauAcces} /></td>
+                          <td className="px-6 py-4">
+                            <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{role.nbUtilisateurs}</span>
+                          </td>
+                          <td className="px-6 py-4"><StatusBadge active={role.estActif} /></td>
+                          <td className="px-6 py-4">
+                            <ActionMenuSimple menuKey={`role-${role.id}`} item={role} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+                  <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{rolesData.length} rôle{rolesData.length > 1 ? 's' : ''}</p>
+                </div>
+              </div>
+            )}
 
-        {/* ── TABLE DIRECTIONS ── */}
-        {activeTab === 'directions' && (
-          <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
-            <Toolbar count={directionsData.length} countLabel="direction" />
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead style={theadStyle}>
-                  <tr>
-                    <Th>Direction</Th>
-                    <Th>Référence</Th>
-                    <Th>Véhicules</Th>
-                    <Th>Utilisateurs</Th>
-                    <Th>Statut</Th>
-                    <Th>Actions</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? <LoadingState /> : directionsData.length === 0 ? <EmptyState message="Aucune direction trouvée." /> :
-                    directionsData.map((dir, i) => (
-                      <tr key={dir.id} style={trStyle(i)}
-                        onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
-                        onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
-                        <td className="px-6 py-4">
-                          <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{dir.nom}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{dir.code || '—'}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{dir.nbVehicules}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{dir.nbUtilisateurs}</span>
-                        </td>
-                        <td className="px-6 py-4"><StatusBadge active={dir.estActif} /></td>
-                        <td className="px-6 py-4">
-                          <ActionMenuSimple menuKey={`dir-${dir.id}`} item={dir} />
-                        </td>
+            {/* ── TABLE DIRECTIONS ── */}
+            {activeTab === 'directions' && (
+              <div className={`${dm('bg-gray-900 border-gray-800', 'bg-white border-gray-100')} rounded-xl border shadow-sm overflow-hidden`}>
+                <Toolbar count={directionsData.length} countLabel="direction" />
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead style={theadStyle}>
+                      <tr>
+                        <Th>Direction</Th>
+                        <Th>Référence</Th>
+                        <Th>Véhicules</Th>
+                        <Th>Utilisateurs</Th>
+                        <Th>Statut</Th>
+                        <Th>Actions</Th>
                       </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            </div>
-            <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
-              <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{directionsData.length} direction{directionsData.length > 1 ? 's' : ''}</p>
-            </div>
-          </div>
+                    </thead>
+                    <tbody>
+                      {directionsData.length === 0 ? (
+                        <EmptyState message="Aucune direction trouvée." />
+                      ) : directionsData.map((dir, i) => (
+                        <tr key={dir.id} style={trStyle(i)}
+                          onMouseEnter={e => Object.assign(e.currentTarget.style, trHover)}
+                          onMouseLeave={e => Object.assign(e.currentTarget.style, trStyle(i))}>
+                          <td className="px-6 py-4">
+                            <p className={`font-semibold text-sm ${dm('text-white', 'text-gray-900')}`}>{dir.nom}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-sm font-mono ${dm('text-gray-300', 'text-gray-600')}`}>{dir.reference || '—'}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{dir.nbVehicules}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-sm font-bold ${dm('text-white', 'text-gray-900')}`}>{dir.nbUtilisateurs}</span>
+                          </td>
+                          <td className="px-6 py-4"><StatusBadge active={dir.estActif} /></td>
+                          <td className="px-6 py-4">
+                            <ActionMenuSimple menuKey={`dir-${dir.id}`} item={dir} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className={`px-6 py-3 border-t ${dm('border-gray-800', 'border-gray-100')}`}>
+                  <p className={`text-xs ${dm('text-gray-500', 'text-gray-500')}`}>{directionsData.length} direction{directionsData.length > 1 ? 's' : ''}</p>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Footer */}
@@ -1400,7 +1513,6 @@ const Utilisateurs = () => {
       {/* MODALES */}
       {renderFormModal(showAddModal,  () => { setShowAddModal(false);  setErrors({}); }, false)}
       {renderFormModal(showEditModal, () => { setShowEditModal(false); setErrors({}); }, true)}
-      <DeleteModal />
       <DetailsModal />
     </div>
   );

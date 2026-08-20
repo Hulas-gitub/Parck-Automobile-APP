@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\HasApiTokens;
 
-class Utilisateur extends Model
+class Utilisateur extends Authenticatable
 {
     use HasApiTokens;
 
@@ -62,13 +63,66 @@ class Utilisateur extends Model
      * The attributes that should be cast.
      */
     protected $casts = [
-        'est_actif' => 'boolean',
-        'est_supprime' => 'boolean',
+        'est_actif'          => 'boolean',
+        'est_supprime'       => 'boolean',
         'derniere_connexion' => 'datetime',
-        'date_creation' => 'datetime',
-        'date_modification' => 'datetime',
-        'date_suppression' => 'datetime',
+        'date_creation'      => 'datetime',
+        'date_modification'  => 'datetime',
+        'date_suppression'   => 'datetime',
+        'date_embauche'      => 'datetime',  // ajouté via migration
+        'categories_permis'  => 'string',    // ajouté via migration
     ];
+
+    // ══════════════════════════════════════════════════════════════════
+    // AUTHENTIFICATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Indique à Laravel quel champ contient le mot de passe.
+     * Sans cette méthode Laravel cherche "password" (qui n'existe pas).
+     */
+    public function getAuthPassword(): string
+    {
+        return $this->mot_de_passe;
+    }
+
+    /**
+     * Indique à Laravel quel champ utiliser comme identifiant de connexion.
+     */
+    public function getAuthIdentifierName(): string
+    {
+        return 'email';
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // MUTATEUR MOT DE PASSE
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Set the mot_de_passe attribute.
+     *
+     * IMPORTANT : on vérifie si la valeur est déjà un hash bcrypt avant
+     * de hasher à nouveau. Cela évite le double-hachage quand on assigne
+     * directement un Hash::make() depuis le controller.
+     *
+     * Règle : si la valeur commence par '$2y$' ou '$2a$' c'est déjà un
+     * hash bcrypt → on la stocke telle quelle.
+     * Sinon c'est un mot de passe en clair → on le hache.
+     */
+    public function setMotDePasseAttribute(string $value): void
+    {
+        if (str_starts_with($value, '$2y$') || str_starts_with($value, '$2a$')) {
+            // Valeur déjà hashée (vient d'un Hash::make() externe)
+            $this->attributes['mot_de_passe'] = $value;
+        } else {
+            // Mot de passe en clair → on hache
+            $this->attributes['mot_de_passe'] = Hash::make($value);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // RELATIONS
+    // ══════════════════════════════════════════════════════════════════
 
     /**
      * Get the role that owns the utilisateur.
@@ -86,6 +140,10 @@ class Utilisateur extends Model
         return $this->belongsTo(Direction::class, 'direction_id');
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // SCOPES
+    // ══════════════════════════════════════════════════════════════════
+
     /**
      * Scope a query to only include active utilisateurs.
      */
@@ -99,74 +157,30 @@ class Utilisateur extends Model
      */
     public function scopeParRole($query, string $codeRole)
     {
-        return $query->whereHas('role', function($q) use ($codeRole) {
+        return $query->whereHas('role', function ($q) use ($codeRole) {
             $q->where('code', $codeRole);
         });
     }
 
-    /**
-     * Set the mot_de_passe attribute (auto-hash).
-     */
-    public function setMotDePasseAttribute($value)
-    {
-        $this->attributes['mot_de_passe'] = Hash::make($value);
-    }
+    // ══════════════════════════════════════════════════════════════════
+    // HELPERS RÔLES
+    // ══════════════════════════════════════════════════════════════════
 
-    /**
-     * Check if utilisateur has a specific role.
-     */
     public function hasRole(string $roleCode): bool
     {
         return $this->role && $this->role->code === $roleCode;
     }
 
-    /**
-     * Check if utilisateur is admin.
-     */
-    public function isAdmin(): bool
-    {
-        return $this->hasRole('admin');
-    }
+    public function isAdmin(): bool        { return $this->hasRole('admin'); }
+    public function isChefParc(): bool     { return $this->hasRole('chef_parc'); }
+    public function isChefTF(): bool       { return $this->hasRole('chef_tf'); }
+    public function isChauffeur(): bool    { return $this->hasRole('chauffeur'); }
+    public function isMecanicien(): bool   { return $this->hasRole('mecanicien'); }
+    public function isAgentPcRadio(): bool { return $this->hasRole('agent_pc_radio'); }
 
-    /**
-     * Check if utilisateur is chef_parc.
-     */
-    public function isChefParc(): bool
-    {
-        return $this->hasRole('chef_parc');
-    }
-
-    /**
-     * Check if utilisateur is chef_tf.
-     */
-    public function isChefTF(): bool
-    {
-        return $this->hasRole('chef_tf');
-    }
-
-    /**
-     * Check if utilisateur is chauffeur.
-     */
-    public function isChauffeur(): bool
-    {
-        return $this->hasRole('chauffeur');
-    }
-
-    /**
-     * Check if utilisateur is mecanicien.
-     */
-    public function isMecanicien(): bool
-    {
-        return $this->hasRole('mecanicien');
-    }
-
-    /**
-     * Check if utilisateur is agent_pc_radio.
-     */
-    public function isAgentPcRadio(): bool
-    {
-        return $this->hasRole('agent_pc_radio');
-    }
+    // ══════════════════════════════════════════════════════════════════
+    // AUTRES HELPERS
+    // ══════════════════════════════════════════════════════════════════
 
     /**
      * Update derniere_connexion timestamp.

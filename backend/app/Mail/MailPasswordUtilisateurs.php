@@ -20,6 +20,11 @@ use Illuminate\Queue\SerializesModels;
  *   isReset = true  → Réinitialisation par un admin              → palette bleue
  *
  * IMPORTANT : ShouldQueue intentionnellement retiré → envoi synchrone immédiat.
+ *
+ * SÉCURITÉ : Le mot de passe temporaire est valable 24 heures.
+ *   Si l'utilisateur ne le change pas dans ce délai, son compte sera
+ *   automatiquement désactivé (est_actif = 0) et devra être réinitialisé
+ *   par un administrateur.
  */
 class MailPasswordUtilisateurs extends Mailable
 {
@@ -99,6 +104,9 @@ class MailPasswordUtilisateurs extends Mailable
         $annee     = date('Y');
         $dateHeure = now()->format('d/m/Y à H:i');
 
+        // ── Date/heure d'expiration — 24 h après l'envoi ─────────────────────
+        $expireAt  = now()->addHours(24)->format('d/m/Y à H:i');
+
         $destNom   = e($this->utilisateur->nom);
         $destEmail = e($this->utilisateur->email);
         $destRole  = e($this->utilisateur->role?->libelle ?? '—');
@@ -174,8 +182,20 @@ class MailPasswordUtilisateurs extends Mailable
       border: 2px dashed #cbd5e1;
       border-radius: 8px;
       padding: 20px 22px;
-      margin: 16px 0 22px;
+      margin: 16px 0 8px;
       text-align: center;
+    }
+
+    /* ── Bloc expiration ── */
+    .expire-block {
+      background: #fef3c7;
+      border: 1px solid #fbbf24;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 0 0 22px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
     }
 
     /* ── CTA ── */
@@ -239,7 +259,7 @@ class MailPasswordUtilisateurs extends Mailable
       {$heroTitle}
     </div>
     <p style="font-size:14px;color:#4b5563;line-height:1.75;">
-      Bonjour <strong style="color:#111;">{$destNom}</strong>,<br>
+      Bonjour Mr/Mme <strong style="color:#111;">{$destNom}</strong>,<br>
       {$heroMsg}
     </p>
   </div>
@@ -262,7 +282,7 @@ class MailPasswordUtilisateurs extends Mailable
 
     <!-- Mot de passe -->
     <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#9ca3af;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f0f0f0;">
-      Votre mot de passe
+      Votre mot de passe temporaire
     </div>
 
     <!--
@@ -282,6 +302,21 @@ class MailPasswordUtilisateurs extends Mailable
       </div>
     </div>
 
+    <!-- ✅ Bloc expiration 24 h — information critique de sécurité -->
+    <div class="expire-block">
+      <span style="font-size:20px;flex-shrink:0;line-height:1;">⏱️</span>
+      <div>
+        <p style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px;">
+          Mot de passe valable 24 heures seulement
+        </p>
+        <p style="font-size:12px;color:#78350f;line-height:1.7;margin:0;">
+          Ce mot de passe expire le <strong>{$expireAt}</strong>.<br>
+          Passé ce délai, si vous ne l'avez pas modifié, votre compte sera <strong>automatiquement désactivé</strong>
+          pour des raisons de sécurité. Vous devrez alors contacter un administrateur pour le réactiver.
+        </p>
+      </div>
+    </div>
+
     <!-- Note de sécurité -->
     <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:22px;display:flex;gap:10px;align-items:flex-start;">
       <span style="font-size:18px;flex-shrink:0;">⚠️</span>
@@ -292,7 +327,7 @@ class MailPasswordUtilisateurs extends Mailable
 
     <!-- CTA -->
     <div style="text-align:center;margin-bottom:20px;">
-      <a href="{$loginUrl}" class="cta" style="background:{$c['accent']};">Se connecter à Fleetify &rarr;</a>
+      <a href="{$loginUrl}" class="cta" style="background:{$c['accent']};">Se connecter et changer mon mot de passe &rarr;</a>
       <div style="margin-top:10px;">
         <span style="font-size:11px;color:#9ca3af;">ou copiez ce lien&nbsp;: </span>
         <a href="{$loginUrl}" style="font-size:11px;color:{$c['accent']};word-break:break-all;">{$loginUrl}</a>

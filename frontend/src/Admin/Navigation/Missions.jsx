@@ -873,7 +873,7 @@ const MissionFormModal = ({ mission, darkMode, theme, onClose, onSave, defaultTy
             </div>
             <div>
               <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                {isEdit ? 'Modifier la mission' : 'Créer une mission'}
+                {isEdit ? 'Modifier la mission' : 'Ajouter une mission'}
               </h2>
               {isEdit && <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{mission.reference_mission}</p>}
             </div>
@@ -1551,7 +1551,7 @@ const Missions = () => {
             className="px-5 py-2.5 rounded-xl text-white font-semibold text-sm flex items-center gap-2 shadow-lg hover:opacity-90 transition-all"
             style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
             <i className="bi bi-plus-circle-fill text-base"></i>
-            Créer une mission
+           Ajouter une mission
           </button>
         </div>
 

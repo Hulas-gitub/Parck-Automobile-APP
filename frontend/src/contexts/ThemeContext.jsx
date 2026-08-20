@@ -1,213 +1,203 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getTheme, createTheme, appliquerTheme, deleteTheme } from '../api/Admin-Axios/Theme-axios';
 
-// Définition des thèmes disponibles avec leurs couleurs
-export const availableThemes = {
-  orange: {
-    name: 'Orange Classique',
-    primary: '#ffc400',
-    primaryLight: '#ecb500',
-    primaryDark: '#ffc400',
-    gradient: 'from-yellow-400 to-orange-500',
-    bg: 'bg-orange-500',
-    bgLight: 'bg-orange-50',
-    bgDark: 'bg-orange-100',
-    text: 'text-orange-600',
-    hover: 'hover:bg-orange-600',
-    ring: 'ring-orange-400'
-  },
-  blue: {
-    name: 'Bleu Professionnel',
-    primary: '#3b82f6',
-    primaryLight: '#bfdbfe',
-    primaryDark: '#1d4ed8',
-    gradient: 'from-blue-400 to-blue-600',
-    bg: 'bg-blue-500',
-    bgLight: 'bg-blue-50',
-    bgDark: 'bg-blue-100',
-    text: 'text-blue-600',
-    hover: 'hover:bg-blue-600',
-    ring: 'ring-blue-400'
-  },
-  green: {
-    name: 'Vert Nature',
-    primary: '#10b981',
-    primaryLight: '#a7f3d0',
-    primaryDark: '#059669',
-    gradient: 'from-green-400 to-emerald-600',
-    bg: 'bg-green-500',
-    bgLight: 'bg-green-50',
-    bgDark: 'bg-green-100',
-    text: 'text-green-600',
-    hover: 'hover:bg-green-600',
-    ring: 'ring-green-400'
-  },
-  purple: {
-    name: 'Violet Moderne',
-    primary: '#8b5cf6',
-    primaryLight: '#ddd6fe',
-    primaryDark: '#6d28d9',
-    gradient: 'from-purple-400 to-purple-600',
-    bg: 'bg-purple-500',
-    bgLight: 'bg-purple-50',
-    bgDark: 'bg-purple-100',
-    text: 'text-purple-600',
-    hover: 'hover:bg-purple-600',
-    ring: 'ring-purple-400'
-  },
-  pink: {
-    name: 'Rose Élégant',
-    primary: '#ec4899',
-    primaryLight: '#fbcfe8',
-    primaryDark: '#be185d',
-    gradient: 'from-pink-400 to-pink-600',
-    bg: 'bg-pink-500',
-    bgLight: 'bg-pink-50',
-    bgDark: 'bg-pink-100',
-    text: 'text-pink-600',
-    hover: 'hover:bg-pink-600',
-    ring: 'ring-pink-400'
-  },
-  red: {
-    name: 'Rouge Dynamique',
-    primary: '#ef4444',
-    primaryLight: '#fecaca',
-    primaryDark: '#dc2626',
-    gradient: 'from-red-400 to-red-600',
-    bg: 'bg-red-500',
-    bgLight: 'bg-red-50',
-    bgDark: 'bg-red-100',
-    text: 'text-red-600',
-    hover: 'hover:bg-red-600',
-    ring: 'ring-red-400'
-  },
-  indigo: {
-    name: 'Indigo Créatif',
-    primary: '#6366f1',
-    primaryLight: '#c7d2fe',
-    primaryDark: '#4f46e5',
-    gradient: 'from-indigo-400 to-indigo-600',
-    bg: 'bg-indigo-500',
-    bgLight: 'bg-indigo-50',
-    bgDark: 'bg-indigo-100',
-    text: 'text-indigo-600',
-    hover: 'hover:bg-indigo-600',
-    ring: 'ring-indigo-400'
-  },
-  teal: {
-    name: 'Turquoise Frais',
-    primary: '#14b8a6',
-    primaryLight: '#99f6e4',
-    primaryDark: '#0d9488',
-    gradient: 'from-teal-400 to-teal-600',
-    bg: 'bg-teal-500',
-    bgLight: 'bg-teal-50',
-    bgDark: 'bg-teal-100',
-    text: 'text-teal-600',
-    hover: 'hover:bg-teal-600',
-    ring: 'ring-teal-400'
-  },
-  amber: {
-    name: 'Ambre Chaleureux',
-    primary: '#f59e0b',
-    primaryLight: '#fde68a',
-    primaryDark: '#d97706',
-    gradient: 'from-amber-400 to-amber-600',
-    bg: 'bg-amber-500',
-    bgLight: 'bg-amber-50',
-    bgDark: 'bg-amber-100',
-    text: 'text-amber-600',
-    hover: 'hover:bg-amber-600',
-    ring: 'ring-amber-400'
-  },
-  cyan: {
-    name: 'Cyan Technologique',
-    primary: '#06b6d4',
-    primaryLight: '#a5f3fc',
-    primaryDark: '#0891b2',
-    gradient: 'from-cyan-400 to-cyan-600',
-    bg: 'bg-cyan-500',
-    bgLight: 'bg-cyan-50',
-    bgDark: 'bg-cyan-100',
-    text: 'text-cyan-600',
-    hover: 'hover:bg-cyan-600',
-    ring: 'ring-cyan-400'
-  },
-  slate: {
-    name: 'Ardoise Sobre',
-    primary: '#64748b',
-    primaryLight: '#cbd5e1',
-    primaryDark: '#475569',
-    gradient: 'from-slate-400 to-slate-600',
-    bg: 'bg-slate-500',
-    bgLight: 'bg-slate-50',
-    bgDark: 'bg-slate-100',
-    text: 'text-slate-600',
-    hover: 'hover:bg-slate-600',
-    ring: 'ring-slate-400'
-  },
-  emerald: {
-    name: 'Émeraude Luxe',
-    primary: '#059669',
-    primaryLight: '#a7f3d0',
-    primaryDark: '#047857',
-    gradient: 'from-emerald-400 to-emerald-600',
-    bg: 'bg-emerald-500',
-    bgLight: 'bg-emerald-50',
-    bgDark: 'bg-emerald-100',
-    text: 'text-emerald-600',
-    hover: 'hover:bg-emerald-600',
-    ring: 'ring-emerald-400'
+// ============================================================================
+// THÈMES PRÉDÉFINIS STATIQUES
+// valeur = code hex principal | couleur = nom affiché
+// Ces thèmes sont toujours présents dans la liste.
+// Les thèmes custom créés par l'admin s'ajoutent depuis la BDD.
+// ============================================================================
+export const THEMES_PREDEFINIS = [
+  { valeur: '#ffc400', couleur: 'Orange Classique',   primaryLight: '#ffe066', primaryDark: '#e6a800', predefini: true },
+  { valeur: '#3b82f6', couleur: 'Bleu Professionnel', primaryLight: '#bfdbfe', primaryDark: '#1d4ed8', predefini: true },
+  { valeur: '#10b981', couleur: 'Vert Nature',         primaryLight: '#a7f3d0', primaryDark: '#059669', predefini: true },
+  { valeur: '#8b5cf6', couleur: 'Violet Moderne',      primaryLight: '#ddd6fe', primaryDark: '#6d28d9', predefini: true },
+  { valeur: '#ec4899', couleur: 'Rose Élégant',        primaryLight: '#fbcfe8', primaryDark: '#be185d', predefini: true },
+  { valeur: '#ef4444', couleur: 'Rouge Dynamique',     primaryLight: '#fecaca', primaryDark: '#dc2626', predefini: true },
+  { valeur: '#6366f1', couleur: 'Indigo Créatif',      primaryLight: '#c7d2fe', primaryDark: '#4f46e5', predefini: true },
+  { valeur: '#14b8a6', couleur: 'Turquoise Frais',     primaryLight: '#99f6e4', primaryDark: '#0d9488', predefini: true },
+  { valeur: '#f59e0b', couleur: 'Ambre Chaleureux',    primaryLight: '#fde68a', primaryDark: '#d97706', predefini: true },
+  { valeur: '#06b6d4', couleur: 'Cyan Technologique',  primaryLight: '#a5f3fc', primaryDark: '#0891b2', predefini: true },
+  { valeur: '#64748b', couleur: 'Ardoise Sobre',       primaryLight: '#cbd5e1', primaryDark: '#475569', predefini: true },
+  { valeur: '#059669', couleur: 'Émeraude Luxe',       primaryLight: '#a7f3d0', primaryDark: '#047857', predefini: true },
+];
+
+// Génère primaryLight et primaryDark depuis un hex principal
+export const generateShades = (hex) => {
+  try {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const lR = Math.min(255, r + 60); const lG = Math.min(255, g + 60); const lB = Math.min(255, b + 60);
+    const dR = Math.max(0,   r - 40); const dG = Math.max(0,   g - 40); const dB = Math.max(0,   b - 40);
+    return {
+      primaryLight: `#${lR.toString(16).padStart(2,'0')}${lG.toString(16).padStart(2,'0')}${lB.toString(16).padStart(2,'0')}`,
+      primaryDark:  `#${dR.toString(16).padStart(2,'0')}${dG.toString(16).padStart(2,'0')}${dB.toString(16).padStart(2,'0')}`,
+    };
+  } catch {
+    return { primaryLight: hex, primaryDark: hex };
   }
 };
 
-// Création du contexte
+// Construit un objet thème complet depuis une ligne BDD ou un prédéfini
+const buildTheme = (t) => {
+  const predefini = THEMES_PREDEFINIS.find(p => p.valeur === t.valeur);
+  const shades    = predefini ?? generateShades(t.valeur);
+  return {
+    id:           t.id   ?? null,
+    valeur:       t.valeur,                   // ex: '#ffc400'  — code hex
+    couleur:      t.couleur,                  // ex: 'Orange'   — nom
+    primary:      t.valeur,                   // alias pratique pour le CSS
+    primaryLight: t.primaryLight ?? shades.primaryLight,
+    primaryDark:  t.primaryDark  ?? shades.primaryDark,
+    name:         t.couleur,                  // alias pour l'affichage
+    predefini:    t.predefini ?? false,
+    est_applique: t.est_applique ?? false,
+  };
+};
+
+// ============================================================================
+// CONTEXT
+// ============================================================================
 const ThemeContext = createContext();
 
-// Hook personnalisé pour utiliser le contexte
 export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error('useTheme doit être utilisé dans un ThemeProvider');
-  }
-  return context;
+  const ctx = useContext(ThemeContext);
+  if (!ctx) throw new Error('useTheme doit être utilisé dans un ThemeProvider');
+  return ctx;
 };
 
-// Provider du contexte
+// ============================================================================
+// PROVIDER
+// ============================================================================
 export const ThemeProvider = ({ children }) => {
-  // Récupération du thème depuis le localStorage ou orange par défaut
-  const [currentTheme, setCurrentTheme] = useState(() => {
-    const savedTheme = localStorage.getItem('appTheme');
-    return savedTheme || 'orange';
-  });
+  // Liste complète : prédéfinis + custom BDD
+  const [themes, setThemes]           = useState(THEMES_PREDEFINIS.map(t => buildTheme({ ...t, id: null, est_applique: false })));
+  // Thème actif (objet complet)
+  const [themeActif, setThemeActif]   = useState(() => buildTheme(THEMES_PREDEFINIS[0]));
+  const [loadingTheme, setLoadingTheme] = useState(true);
 
-  // Mise à jour du thème
-  const changeTheme = (themeName) => {
-    setCurrentTheme(themeName);
-    localStorage.setItem('appTheme', themeName);
-    
-    // Dans un vrai projet, tu enverrais une requête API ici pour sauvegarder en BDD
-    // await api.updateSystemTheme(themeName);
+  // ── Charger depuis le backend au montage ─────────────────────────────────
+  useEffect(() => {
+    const fetchTheme = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) { setLoadingTheme(false); return; }
+
+      try {
+        const data = await getTheme();
+        // data.themes = toutes les lignes de parametres_systeme
+        // data.valeur / data.couleur = thème actif (est_applique=1)
+
+        if (Array.isArray(data.themes) && data.themes.length > 0) {
+          // Construire la liste complète :
+          // 1. Les prédéfinis (toujours présents, avec leur id BDD si ils existent)
+          // 2. Les custom (non-prédéfinis) ajoutés par l'admin
+          const predefinisValeurs = THEMES_PREDEFINIS.map(p => p.valeur);
+
+          const lignesBDD = data.themes.map(t => buildTheme(t));
+
+          const customsUniquement = lignesBDD.filter(t => !predefinisValeurs.includes(t.valeur));
+
+          // Enrichir les prédéfinis avec leur id BDD s'ils y sont
+          const predefinisEnrichis = THEMES_PREDEFINIS.map(p => {
+            const ligneBDD = data.themes.find(t => t.valeur === p.valeur);
+            return buildTheme({
+              ...p,
+              id:           ligneBDD?.id           ?? null,
+              est_applique: ligneBDD?.est_applique  ?? false,
+            });
+          });
+
+          setThemes([...predefinisEnrichis, ...customsUniquement]);
+        }
+
+        // Thème actif
+        if (data.valeur) {
+          const shades = THEMES_PREDEFINIS.find(p => p.valeur === data.valeur) ?? generateShades(data.valeur);
+          const actif  = buildTheme({
+            valeur:       data.valeur,
+            couleur:      data.couleur,
+            id:           data.id_actif,
+            est_applique: true,
+            primaryLight: shades.primaryLight,
+            primaryDark:  shades.primaryDark,
+          });
+          setThemeActif(actif);
+        }
+      } catch (err) {
+        console.warn('Fallback thème par défaut :', err.message);
+      } finally {
+        setLoadingTheme(false);
+      }
+    };
+
+    fetchTheme();
+  }, []);
+
+  // ── Appliquer les CSS variables dès que le thème actif change ────────────
+  useEffect(() => {
+    document.documentElement.style.setProperty('--primary-color', themeActif.primary);
+    document.documentElement.style.setProperty('--primary-light', themeActif.primaryLight);
+    document.documentElement.style.setProperty('--primary-dark',  themeActif.primaryDark);
+  }, [themeActif]);
+
+  // ── Appliquer un thème existant (il a déjà un id en BDD) ─────────────────
+  const appliquer = async (themeId) => {
+    await appliquerTheme(themeId); // PUT /admin/parametres/theme/{id}/appliquer
+
+    // Mettre à jour l'état local : est_applique=1 sur lui, 0 sur les autres
+    setThemes(prev => prev.map(t => ({ ...t, est_applique: t.id === themeId })));
+    const nouvelActif = themes.find(t => t.id === themeId);
+    if (nouvelActif) setThemeActif({ ...nouvelActif, est_applique: true });
   };
 
-  // Récupération de la configuration du thème actuel
-  const theme = availableThemes[currentTheme];
+  // ── Créer un thème custom + l'ajouter à la liste ─────────────────────────
+  const creerTheme = async (customColors) => {
+    // customColors = { valeur: '#a855f7', couleur: 'Violet Custom', primaryLight, primaryDark }
+    const data = await createTheme(
+      customColors.valeur,
+      customColors.couleur,
+      customColors.primaryLight,
+      customColors.primaryDark,
+    );
+    // data.id = nouvel id BDD
+    const nouveau = buildTheme({
+      id:           data.id,
+      valeur:       customColors.valeur,
+      couleur:      customColors.couleur,
+      primaryLight: customColors.primaryLight,
+      primaryDark:  customColors.primaryDark,
+      est_applique: false,
+    });
+    setThemes(prev => [...prev, nouveau]);
+    return data.id;
+  };
 
-  useEffect(() => {
-    // Appliquer les couleurs CSS custom properties pour utilisation dynamique
-    document.documentElement.style.setProperty('--primary-color', theme.primary);
-    document.documentElement.style.setProperty('--primary-light', theme.primaryLight);
-    document.documentElement.style.setProperty('--primary-dark', theme.primaryDark);
-  }, [currentTheme, theme]);
+  // ── Créer ET appliquer immédiatement ─────────────────────────────────────
+  const creerEtAppliquer = async (customColors) => {
+    const id = await creerTheme(customColors);
+    await appliquer(id);
+    return id;
+  };
 
-  const value = {
-    currentTheme,
-    theme,
-    changeTheme,
-    availableThemes
+  // ── Supprimer un thème custom ─────────────────────────────────────────────
+  const supprimerTheme = async (themeId) => {
+    await deleteTheme(themeId);
+    setThemes(prev => prev.filter(t => t.id !== themeId));
   };
 
   return (
-    <ThemeContext.Provider value={value}>
+    <ThemeContext.Provider value={{
+      // État
+      theme:        themeActif,       // objet thème actif (primary, primaryLight, primaryDark, name…)
+      themes,                         // liste complète pour la grille
+      loadingTheme,
+      // Actions
+      appliquer,           // appliquer un thème existant par son id
+      creerTheme,          // créer un thème sans l'appliquer
+      creerEtAppliquer,    // créer + appliquer en une fois
+      supprimerTheme,      // supprimer un thème custom
+    }}>
       {children}
     </ThemeContext.Provider>
   );

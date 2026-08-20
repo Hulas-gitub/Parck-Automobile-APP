@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 
-import Sidebar       from '../../components/Sidebar';
-import Header        from '../../components/Header';
+import Sidebar        from '../../components/Sidebar';
+import Header         from '../../components/Header';
 import DashboardChart from '../../components/Dashboard-chart';
 
 import { getDashboardData, getKpiVehicules, BADGE_COLORS } from '../../api/Admin-Axios/Dashboard-axios';
@@ -86,73 +86,177 @@ const exportExcel = async (rows, periode, suffix = '') => {
   XLSX.writeFile(wb, `kpi_vehicules_${periode}${suffix}_${new Date().toISOString().slice(0,10)}.xlsx`);
 };
 
-/** Export PDF via jsPDF + AutoTable — chargement séquentiel corrigé */
 const exportPdf = async (rows, periode, periodeLabel, suffix = '') => {
-  // 1. Charger jsPDF s'il n'est pas déjà disponible
-  if (!window.jspdf) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-      s.async = true;
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('Impossible de charger jsPDF'));
-      document.head.appendChild(s);
-    });
-  }
 
-  // 2. Charger AutoTable SEULEMENT après que jsPDF soit disponible
-  //    Le plugin se greffe lui-même sur window.jspdf.jsPDF.prototype au chargement
   await new Promise((resolve, reject) => {
-    // Vérifier si autoTable est déjà correctement attaché
-    if (window.jspdf?.jsPDF?.prototype?.autoTable) {
-      resolve();
-      return;
-    }
-    // Supprimer un éventuel script raté précédent pour forcer le rechargement
-    const existing = document.querySelector('script[src*="jspdf.plugin.autotable"]');
-    if (existing) existing.remove();
-
+    if (window.jspdf?.jsPDF) { resolve(); return; }
+    document.querySelectorAll('script[src*="jspdf"]').forEach(s => s.remove());
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
-    s.async = true;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('Impossible de charger AutoTable'));
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.async = false;
+    s.onload = () => window.jspdf?.jsPDF ? resolve() : reject(new Error('jsPDF non disponible'));
+    s.onerror = () => reject(new Error('Impossible de charger jsPDF'));
     document.head.appendChild(s);
   });
 
   const { jsPDF } = window.jspdf;
-
-  if (typeof jsPDF.prototype.autoTable !== 'function') {
-    throw new Error("jsPDF AutoTable ne s'est pas correctement attaché.");
-  }
-
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
-  doc.setFontSize(14);
-  doc.setTextColor(30, 30, 30);
+  const pageW  = doc.internal.pageSize.getWidth();
+  const pageH  = doc.internal.pageSize.getHeight();
+  const margin = 10;
+  const availW = pageW - margin * 2;
+
+  // ── En-tête du document ───────────────────────────────────
   const titre = suffix
     ? `KPI Véhicule — ${suffix} — ${periodeLabel}`
     : `KPI Véhicules — ${periodeLabel}`;
-  doc.text(titre, 14, 14);
+
+  doc.setFontSize(13);
+  doc.setTextColor(30, 30, 30);
+  doc.text(titre, margin, 14);
 
   doc.setFontSize(8);
-  doc.setTextColor(120);
+  doc.setTextColor(120, 120, 120);
   doc.text(
     `Exporté le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
-    14, 20
+    margin, 20
   );
 
-  doc.autoTable({
-    startY: 25,
-    head: [HEADERS_PDF],
-    body: rows.map(rowToPdf),
-    styles:             { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
-    headStyles:         { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles:       { 0: { fontStyle: 'bold' } },
-    margin:             { left: 8, right: 8 },
+  // ── Définition des colonnes ───────────────────────────────
+  const cols = [
+    { header: 'Immat.',     get: r => r.immatriculation,                                                                          w: 22 },
+    { header: 'Marque',     get: r => r.marque,                                                                                   w: 20 },
+    { header: 'Modèle',     get: r => r.modele,                                                                                   w: 20 },
+    { header: 'Direction',  get: r => r.direction ?? '—',                                                                         w: 24 },
+    { header: 'Statut',     get: r => r.statut,                                                                                   w: 22 },
+    { header: 'Dispo%',     get: r => `${r.taux_disponibilite}%`,                                                                 w: 14 },
+    { header: 'Missions',   get: r => String(r.total_missions),                                                                   w: 16 },
+    { header: 'Km',         get: r => Number(r.total_km).toLocaleString('fr-FR'),                                                 w: 20 },
+    { header: 'Interv.',    get: r => String(r.total_interventions),                                                              w: 14 },
+    { header: 'Durée (h)',  get: r => `${r.total_duree_interventions_h}h`,                                                        w: 16 },
+    { header: 'Coût total', get: r => `${Number(r.cout_total).toLocaleString('fr-FR')} F`,                                        w: 30 },
+    { header: 'CFA/km',     get: r => r.cout_par_km != null ? Number(r.cout_par_km).toLocaleString('fr-FR') : '—',               w: 18 },
+    { header: 'Anom.',      get: r => String(r.nb_anomalies),                                                                     w: 13 },
+    { header: 'Acc.',       get: r => String(r.nb_accidents),                                                                     w: 13 },
+  ];
+
+  // ── Ajustement proportionnel sans arrondi cumulatif ───────
+  const totalW = cols.reduce((s, c) => s + c.w, 0);
+  const scale  = availW / totalW;
+  let allocated = 0;
+  cols.forEach((col, i) => {
+    if (i < cols.length - 1) {
+      col.width  = scale * col.w;
+      allocated += col.width;
+    } else {
+      col.width = availW - allocated; // dernière colonne = reste exact
+    }
   });
 
+  // ── Constantes de mise en page ────────────────────────────
+  const rowH     = 7;
+  const headH    = 8;
+  const fontSize = 6.5;
+  const startX   = margin;
+  let   y        = 26;
+
+  const tableW = () => cols.reduce((s, c) => s + c.width, 0);
+
+  // ── Dessin de l'en-tête de tableau ────────────────────────
+  const drawHeader = () => {
+    doc.setFillColor(59, 130, 246);
+    doc.rect(startX, y, tableW(), headH, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', 'bold');
+
+    let x = startX;
+    cols.forEach(col => {
+      const maxChars = Math.floor(col.width / (fontSize * 0.33));
+      const label    = col.header.length > maxChars
+        ? col.header.slice(0, maxChars - 1) + '.'
+        : col.header;
+      doc.text(label, x + 1.5, y + headH - 2.5);
+      x += col.width;
+    });
+
+    y += headH;
+  };
+
+  // ── Dessin d'une ligne de données ─────────────────────────
+  const drawRow = (row, idx) => {
+    // Fond alterné
+    if (idx % 2 === 0) {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(startX, y, tableW(), rowH, 'F');
+    } else {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(startX, y, tableW(), rowH, 'F');
+    }
+
+    doc.setTextColor(40, 40, 40);
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', 'normal');
+
+    let x = startX;
+    cols.forEach(col => {
+      const raw      = col.get(row) ?? '';
+      const maxChars = Math.floor(col.width / (fontSize * 0.33));
+      const cell     = String(raw).length > maxChars
+        ? String(raw).slice(0, maxChars - 1) + '…'
+        : String(raw);
+      doc.text(cell, x + 1.5, y + rowH - 2);
+      x += col.width;
+    });
+
+    // Séparateur horizontal léger
+    doc.setDrawColor(220, 220, 220);
+    doc.setLineWidth(0.1);
+    doc.line(startX, y + rowH, startX + tableW(), y + rowH);
+
+    y += rowH;
+  };
+
+  // ── Vérification saut de page ─────────────────────────────
+  const checkNewPage = () => {
+    if (y + rowH > pageH - margin) {
+      doc.addPage();
+      y = margin + 4;
+      drawHeader();
+    }
+  };
+
+  // ── Rendu du tableau ──────────────────────────────────────
+  drawHeader();
+
+  rows.forEach((row, idx) => {
+    checkNewPage();
+    drawRow(row, idx);
+  });
+
+  // Bordure extérieure du tableau
+  doc.setDrawColor(59, 130, 246);
+  doc.setLineWidth(0.3);
+  doc.rect(startX, 26, tableW(), y - 26);
+
+  // ── Pied de page sur chaque page ──────────────────────────
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(160, 160, 160);
+    doc.text(
+      `Page ${i} / ${pageCount}`,
+      pageW - margin,
+      pageH - 4,
+      { align: 'right' }
+    );
+    doc.text('© 2026 SGS — Tous droits réservés', margin, pageH - 4);
+  }
+
+  // ── Sauvegarde ────────────────────────────────────────────
   doc.save(
     `kpi_vehicules_${periode}${suffix ? '_' + suffix : ''}_${new Date().toISOString().slice(0, 10)}.pdf`
   );
@@ -371,6 +475,38 @@ const Dashboard = () => {
         {label}
       </button>
     );
+  };
+
+  // ── Helper classes pour les alertes selon le type ─────────
+  const alertStyles = (type) => {
+    if (type === 'error') return {
+      border:    'border-red-500',
+      bg:        darkMode ? 'bg-red-950'    : 'bg-red-50',
+      iconColor: 'text-red-500',
+      badge:     darkMode ? 'bg-red-900 text-red-300'    : 'bg-red-100 text-red-700',
+      title:     darkMode ? 'text-red-100'  : 'text-red-800',
+      vehicle:   darkMode ? 'text-red-300'  : 'text-red-600',
+      date:      darkMode ? 'text-red-400'  : 'text-red-500',
+    };
+    if (type === 'warning') return {
+      border:    'border-yellow-500',
+      bg:        darkMode ? 'bg-yellow-950' : 'bg-yellow-50',
+      iconColor: 'text-yellow-500',
+      badge:     darkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-700',
+      title:     darkMode ? 'text-yellow-100' : 'text-yellow-800',
+      vehicle:   darkMode ? 'text-yellow-300'  : 'text-yellow-700',
+      date:      darkMode ? 'text-yellow-400'  : 'text-yellow-600',
+    };
+    // info
+    return {
+      border:    'border-blue-500',
+      bg:        darkMode ? 'bg-blue-950'   : 'bg-blue-50',
+      iconColor: 'text-blue-500',
+      badge:     darkMode ? 'bg-blue-900 text-blue-300'   : 'bg-blue-100 text-blue-700',
+      title:     darkMode ? 'text-blue-100' : 'text-blue-800',
+      vehicle:   darkMode ? 'text-blue-300' : 'text-blue-600',
+      date:      darkMode ? 'text-blue-400' : 'text-blue-500',
+    };
   };
 
   return (
@@ -609,52 +745,96 @@ const Dashboard = () => {
           {loading ? <><SkeletonChart /><SkeletonChart /><SkeletonChart /></> : (
             <>
               {/* Véhicules par Marque */}
-              <ChartCard>
-                <ChartTitle icon="bi-bookmark-star-fill">Véhicules par Marque</ChartTitle>
-                <div className="flex-1 flex flex-col justify-center">
-                  <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
-                    {[20,15,10,5,0].map((val,i)=>(<text key={`y-${i}`} x="22" y={16+i*28} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
-                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
-                    {(()=>{const cl=28,cw=168,sw=cw/vehiculesMarqueData.length,bY=128,cH=112,mV=20;
-                      return vehiculesMarqueData.map((d,idx)=>{const cx2=cl+sw*idx+sw/2,bw=14,x=cx2-bw/2,h=animateCharts?(d.count/mV)*cH:0;
-                        return(<g key={idx} onMouseEnter={()=>setHoveredMarqueBar(idx)} onMouseLeave={()=>setHoveredMarqueBar(null)} className="cursor-pointer">
-                          <rect x={x} y={bY-h} width={bw} height={h} fill={d.color} rx="3" style={{transition:`height 0.8s ease-out ${idx*0.1}s,y 0.8s ease-out ${idx*0.1}s`}}/>
-                          <text x={cx2} y="147" textAnchor="middle" fontSize="8" fill={darkMode?'#6b7280':'#9ca3af'}>{d.marque.length>6?d.marque.slice(0,5)+'.':d.marque}</text>
-                          {hoveredMarqueBar===idx&&(<g><rect x={cx2-30} y={bY-h-34} width="60" height="26" rx="5" fill="#1f2937"/>
-                            <text x={cx2} y={bY-h-20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.marque}</text>
-                            <text x={cx2} y={bY-h-9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} véhicules</text>
-                          </g>)}
-                        </g>);});})()}
-                  </svg>
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
-                  {vehiculesMarqueData.map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.marque}</span></div>))}
-                </div>
-              </ChartCard>
+<ChartCard>
+  <ChartTitle icon="bi-bookmark-star-fill">Véhicules par Marque</ChartTitle>
+  <div className="flex-1 flex flex-col justify-center">
+    <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
+      {(() => {
+        const maxData = Math.max(...vehiculesMarqueData.map(d => d.count), 1);
+        const mV = Math.ceil((maxData * 1.2) / 5) * 5 || 5; // marge 20%, arrondi au multiple de 5
+        const yTicks = [mV, mV * 0.75, mV * 0.5, mV * 0.25, 0];
+        const cl = 28, cw = 168, sw = cw / vehiculesMarqueData.length, bY = 128, cH = 112;
+
+        return (
+          <>
+            {yTicks.map((val, i) => (
+              <text key={`y-${i}`} x="22" y={16 + i * 28} textAnchor="end" fontSize="9" fill={darkMode ? '#6b7280' : '#9ca3af'}>
+                {Math.round(val)}
+              </text>
+            ))}
+            {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+            {vehiculesMarqueData.map((d, idx) => {
+              const cx2 = cl + sw * idx + sw / 2, bw = 14, x = cx2 - bw / 2;
+              const h = animateCharts ? (d.count / mV) * cH : 0;
+              return (
+                <g key={idx} onMouseEnter={() => setHoveredMarqueBar(idx)} onMouseLeave={() => setHoveredMarqueBar(null)} className="cursor-pointer">
+                  <rect x={x} y={bY - h} width={bw} height={h} fill={d.color} rx="3" style={{ transition: `height 0.8s ease-out ${idx * 0.1}s,y 0.8s ease-out ${idx * 0.1}s` }} />
+                  <text x={cx2} y="147" textAnchor="middle" fontSize="8" fill={darkMode ? '#6b7280' : '#9ca3af'}>{d.marque.length > 6 ? d.marque.slice(0,5) + '.' : d.marque}</text>
+                  {hoveredMarqueBar === idx && (
+                    <g>
+                      <rect x={cx2 - 30} y={bY - h - 34} width="60" height="26" rx="5" fill="#1f2937" />
+                      <text x={cx2} y={bY - h - 20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.marque}</text>
+                      <text x={cx2} y={bY - h - 9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} véhicules</text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
+          </>
+        );
+      })()}
+    </svg>
+  </div>
+  <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
+    {vehiculesMarqueData.map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.marque}</span></div>))}
+  </div>
+</ChartCard>
 
               {/* Véhicules par Catégorie */}
-              <ChartCard>
-                <ChartTitle icon="bi-grid-3x3-gap-fill">Véhicules par Catégorie</ChartTitle>
-                <div className="flex-1 flex flex-col justify-center">
-                  <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
-                    {[20,15,10,5,0].map((val,i)=>(<text key={`y-${i}`} x="22" y={16+i*28} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
-                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
-                    {(()=>{const cl=28,cw=168,sw=cw/vehiculesCategorieData.length,bY=128,cH=112,mV=22;
-                      return vehiculesCategorieData.map((d,idx)=>{const cx2=cl+sw*idx+sw/2,bw=14,x=cx2-bw/2,h=animateCharts?(d.count/mV)*cH:0;
-                        return(<g key={idx} onMouseEnter={()=>setHoveredCategorieBar(idx)} onMouseLeave={()=>setHoveredCategorieBar(null)} className="cursor-pointer">
-                          <rect x={x} y={bY-h} width={bw} height={h} fill={d.color} rx="3" style={{transition:`height 0.8s ease-out ${idx*0.1}s,y 0.8s ease-out ${idx*0.1}s`}}/>
-                          <text x={cx2} y="147" textAnchor="middle" fontSize="8" fill={darkMode?'#6b7280':'#9ca3af'}>{d.categorie.length>7?d.categorie.slice(0,6)+'.':d.categorie}</text>
-                          {hoveredCategorieBar===idx&&(<g><rect x={cx2-32} y={bY-h-34} width="64" height="26" rx="5" fill="#1f2937"/>
-                            <text x={cx2} y={bY-h-20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.categorie}</text>
-                            <text x={cx2} y={bY-h-9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} véhicules</text>
-                          </g>)}
-                        </g>);});})()}
-                  </svg>
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
-                  {vehiculesCategorieData.map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.categorie}</span></div>))}
-                </div>
-              </ChartCard>
+           <ChartCard>
+  <ChartTitle icon="bi-grid-3x3-gap-fill">Véhicules par Catégorie</ChartTitle>
+  <div className="flex-1 flex flex-col justify-center">
+    <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
+      {(() => {
+        const maxData = Math.max(...vehiculesCategorieData.map(d => d.count), 1);
+        const mV = Math.ceil((maxData * 1.2) / 5) * 5 || 5;
+        const yTicks = [mV, mV * 0.75, mV * 0.5, mV * 0.25, 0];
+        const cl = 28, cw = 168, sw = cw / vehiculesCategorieData.length, bY = 128, cH = 112;
+
+        return (
+          <>
+            {yTicks.map((val, i) => (
+              <text key={`y-${i}`} x="22" y={16 + i * 28} textAnchor="end" fontSize="9" fill={darkMode ? '#6b7280' : '#9ca3af'}>
+                {Math.round(val)}
+              </text>
+            ))}
+            {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+            {vehiculesCategorieData.map((d, idx) => {
+              const cx2 = cl + sw * idx + sw / 2, bw = 14, x = cx2 - bw / 2;
+              const h = animateCharts ? (d.count / mV) * cH : 0;
+              return (
+                <g key={idx} onMouseEnter={() => setHoveredCategorieBar(idx)} onMouseLeave={() => setHoveredCategorieBar(null)} className="cursor-pointer">
+                  <rect x={x} y={bY - h} width={bw} height={h} fill={d.color} rx="3" style={{ transition: `height 0.8s ease-out ${idx * 0.1}s,y 0.8s ease-out ${idx * 0.1}s` }} />
+                  <text x={cx2} y="147" textAnchor="middle" fontSize="8" fill={darkMode ? '#6b7280' : '#9ca3af'}>{d.categorie.length > 7 ? d.categorie.slice(0,6) + '.' : d.categorie}</text>
+                  {hoveredCategorieBar === idx && (
+                    <g>
+                      <rect x={cx2 - 32} y={bY - h - 34} width="64" height="26" rx="5" fill="#1f2937" />
+                      <text x={cx2} y={bY - h - 20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.categorie}</text>
+                      <text x={cx2} y={bY - h - 9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} véhicules</text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
+          </>
+        );
+      })()}
+    </svg>
+  </div>
+  <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
+    {vehiculesCategorieData.map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.categorie}</span></div>))}
+  </div>
+</ChartCard>
 
               {/* Documents Véhicules */}
               <ChartCard>
@@ -772,21 +952,32 @@ const Dashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {loading ? <><SkeletonChart className="lg:col-span-2"/><SkeletonChart/></> : (
             <>
+              {/* ── Missions du Jour ── */}
               <div className={`lg:col-span-2 ${darkMode?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} rounded-xl p-6 border shadow-sm`}>
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className={`text-lg font-bold ${darkMode?'text-white':'text-gray-900'} flex items-center gap-2`}><i className="bi bi-pin-map-fill text-blue-500"></i>Missions du Jour</h3>
+                  <h3 className={`text-lg font-bold ${darkMode?'text-white':'text-gray-900'} flex items-center gap-2`}>
+                    <i className="bi bi-pin-map-fill text-blue-500"></i>Missions du Jour
+                  </h3>
                   <span className={`text-sm px-3 py-1 rounded-full ${darkMode?'bg-gray-800 text-gray-400':'bg-gray-100 text-gray-600'}`}>{missions.length} missions</span>
                 </div>
                 <div className="space-y-3">
-                  {missions.length===0?(<p className={`text-sm text-center py-8 ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucune mission planifiée aujourd'hui</p>):(
+                  {missions.length===0 ? (
+                    <p className={`text-sm text-center py-8 ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucune mission planifiée aujourd'hui</p>
+                  ) : (
                     missions.map((mission,idx)=>(
                       <div key={idx} className={`flex items-center justify-between p-4 rounded-lg ${darkMode?'bg-gray-800':'bg-gray-50'} transition-all cursor-pointer`}>
                         <div className="flex items-center gap-4">
                           <div className={`text-3xl ${darkMode?'text-gray-300':'text-gray-700'}`}><i className={mission.icon} style={{fontSize:'2rem'}}></i></div>
-                          <div><p className={`font-semibold ${darkMode?'text-white':'text-gray-900'}`}>{mission.id}</p><p className={`text-sm ${darkMode?'text-gray-400':'text-gray-600'}`}>{mission.route}</p></div>
+                          <div>
+                            <p className={`font-semibold ${darkMode?'text-white':'text-gray-900'}`}>{mission.id}</p>
+                            <p className={`text-sm ${darkMode?'text-gray-400':'text-gray-600'}`}>{mission.route}</p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-4">
-                          <div className="flex items-center gap-2"><i className={`bi bi-clock ${darkMode?'text-gray-500':'text-gray-400'}`}></i><span className={`text-sm ${darkMode?'text-gray-400':'text-gray-600'}`}>{mission.time}</span></div>
+                          <div className="flex items-center gap-2">
+                            <i className={`bi bi-clock ${darkMode?'text-gray-500':'text-gray-400'}`}></i>
+                            <span className={`text-sm ${darkMode?'text-gray-400':'text-gray-600'}`}>{mission.time}</span>
+                          </div>
                           <span className={`px-3 py-1 rounded-full text-xs font-medium ${mission.status==='En cours'?'bg-yellow-100 text-yellow-700':'bg-gray-200 text-gray-700'}`}>{mission.status}</span>
                         </div>
                       </div>
@@ -795,32 +986,70 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              <div className={`${darkMode?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} rounded-xl p-6 border shadow-sm`}>
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className={`text-lg font-bold ${darkMode?'text-white':'text-gray-900'} flex items-center gap-2`}><i className="bi bi-exclamation-triangle-fill text-red-500"></i>Alertes</h3>
-                  <span className="w-6 h-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{alerts.length}</span>
+              {/* ── Alertes — mode clair/sombre corrigé ── */}
+              <div className={`${darkMode?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} rounded-xl p-6 border shadow-sm flex flex-col`}>
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className={`text-lg font-bold flex items-center gap-2 ${darkMode?'text-white':'text-gray-900'}`}>
+                    <i className="bi bi-exclamation-triangle-fill text-red-500"></i>Alertes
+                  </h3>
+                  <span className="w-6 h-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                    {alerts.length}
+                  </span>
                 </div>
-                <div className="space-y-3">
-                  {alerts.length===0?(<p className={`text-sm text-center py-8 ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucune alerte active</p>):(
-                    alerts.map((alert,idx)=>(
-                      <div key={idx} className={`p-4 rounded-lg border-l-4 ${alert.type==='error'?'border-red-500 bg-red-50':alert.type==='warning'?'border-yellow-500 bg-yellow-50':'border-blue-500 bg-blue-50'} cursor-pointer`}>
-                        <div className="flex items-start gap-3">
-                          <i className={`${alert.icon} ${alert.type==='error'?'text-red-500':alert.type==='warning'?'text-yellow-500':'text-blue-500'}`} style={{fontSize:'1.5rem'}}></i>
-                          <div className="flex-1">
-                            <p className={`font-semibold text-sm mb-1 ${darkMode?'text-white':'text-gray-900'}`}>{alert.title}</p>
-                            <p className={`text-xs mb-2 ${darkMode?'text-gray-400':'text-gray-600'}`}>{alert.vehicle}</p>
-                            <div className="flex items-center gap-2">
-                              <span className={`text-xs px-2 py-1 rounded ${alert.type==='error'?'bg-red-100 text-red-700':alert.type==='warning'?'bg-yellow-100 text-yellow-700':'bg-blue-100 text-blue-700'}`}>{alert.days} {alert.status}</span>
-                              <span className={`text-xs ${darkMode?'text-gray-500':'text-gray-500'}`}>{alert.date}</span>
+
+                <div className="flex-1 space-y-3 overflow-y-auto" style={{maxHeight:'360px'}}>
+                  {alerts.length === 0 ? (
+                    <p className={`text-sm text-center py-8 ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucune alerte active</p>
+                  ) : (
+                    alerts.map((alert, idx) => {
+                      const st = alertStyles(alert.type);
+                      return (
+                        <div key={idx} className={`p-3 rounded-xl border-l-4 ${st.border} ${st.bg} cursor-pointer transition-all hover:opacity-90`}>
+                          <div className="flex items-start gap-3">
+                            {/* Icône */}
+                            <div className="flex-shrink-0 mt-0.5">
+                              <i className={`${alert.icon} ${st.iconColor}`} style={{fontSize:'1.25rem'}}></i>
+                            </div>
+
+                            {/* Contenu */}
+                            <div className="flex-1 min-w-0">
+                              {/* Titre */}
+                              <p className={`font-semibold text-sm leading-snug mb-0.5 ${st.title}`}>
+                                {alert.title}
+                              </p>
+                              {/* Véhicule / Chauffeur */}
+                              <p className={`text-xs font-medium truncate mb-1.5 ${st.vehicle}`}>
+                                {alert.vehicle}
+                              </p>
+                              {/* Badge + date */}
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${st.badge}`}>
+                                  {alert.days} {alert.status}
+                                </span>
+                                <span className={`text-xs ${st.date}`}>
+                                  {alert.date}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
-                <button className={`w-full mt-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 ${darkMode?'bg-gray-800 text-gray-300 hover:bg-gray-700':'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors`}>
-                  Voir toutes les alertes<i className="bi bi-chevron-right"></i>
+
+                {/* ── Bouton → page Notifications ── */}
+                <button
+                  onClick={() => navigate('/Admin/Configuration/Notifications')}
+                  className={`mt-4 w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all hover:opacity-80 active:scale-95 ${
+                    darkMode
+                      ? 'bg-gray-800 text-gray-200 hover:bg-gray-700 border border-gray-700'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
+                  }`}
+                >
+                  <i className="bi bi-bell-fill text-xs"></i>
+                  Voir toutes les alertes
+                  <i className="bi bi-chevron-right text-xs"></i>
                 </button>
               </div>
             </>
@@ -1066,4 +1295,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default Dashboard; 

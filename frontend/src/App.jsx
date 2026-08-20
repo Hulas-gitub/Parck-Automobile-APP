@@ -18,6 +18,7 @@ import DemandesInterventions from './Admin/Navigation/DemandesInterventions';
 import InterventionsVehicules from './Admin/Navigation/InterventionsVehicules';
 import CarnetCarburant from './Admin/Navigation/CarnetCarburant';
 import DashboardChefParc from './Chef-parc-auto/Navigation/Dashboard';
+import HistoriqueVehicule from './Admin/Navigation/HistoriqueVehicule';
 // Composant pour protéger les routes
 const ProtectedRoute = ({ children }) => {
   const token = localStorage.getItem('token');
@@ -167,6 +168,14 @@ function App() {
             } 
           />
 
+           <Route 
+  path="/Admin/Navigation/HistoriqueVehicule"
+  element={
+    <ProtectedRoute>
+      <HistoriqueVehicule />
+    </ProtectedRoute>
+  } 
+/> 
   {/* Route protégée - Gestion des Fournisseurs-Outils */}
           <Route 
             path="/Admin/Navigation/Chauffeurs"
@@ -194,8 +203,7 @@ function App() {
       <DashboardChefParc />
     </ProtectedRoute>
   } 
-/>
-         
+/> 
           {/* Route 404 */}
           <Route 
             path="*" 

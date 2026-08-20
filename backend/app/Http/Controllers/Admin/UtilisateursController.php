@@ -9,44 +9,17 @@ use App\Models\Role;
 use App\Models\Utilisateur;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
-/**
- * UtilisateursController
- *
- * CORRECTIONS APPLIQUÉES :
- *
- *  [1] store() / resetPassword() — PAS de Hash::make() dans le contrôleur.
- *      Le model Utilisateur possède un mutateur setMotDePasseAttribute() qui
- *      appelle Hash::make() automatiquement. Double-hasher ici rendrait la
- *      connexion impossible (hash d'un hash ne matche jamais le plaintext).
- *
- *  [2] resetPassword() — utilise $utilisateur->update() (instance Eloquent)
- *      et non Utilisateur::where()->update() (QueryBuilder).
- *      Le QueryBuilder bypass les mutateurs → le mot de passe ne serait pas hashé.
- *
- *  [3] resetPassword() — tokens Sanctum révoqués via $utilisateur->tokens()->delete()
- *      → l'utilisateur est déconnecté automatiquement s'il était connecté.
- *
- *  [4] MailPasswordUtilisateurs — le 500/CORS venait du conflit envelope()+build().
- *      Corrigé dans le Mailable (build() seul, sujet via ->subject()).
- *
- *  [5] Gestion mail robuste — try/catch dans store() et resetPassword() :
- *      une exception mail ne remonte plus jamais en 500 (ce qui bloquait CORS).
- *
- *  [6] Direction : champ BDD = 'reference' (pas 'code') — corrigé partout.
- *  [7] formatUtilisateur() sans telephone (champ absent de la table BDD).
- *
- *  [8] destroyDirection() — bloque aussi si des véhicules sont rattachés à la direction.
- *  [9] toggleRoleStatut() — bloque la désactivation si des utilisateurs sont assignés au rôle.
- * [10] toggleDirectionStatut() — bloque la désactivation si des utilisateurs ou véhicules
- *      sont rattachés à la direction.
- */
 class UtilisateursController extends Controller
 {
+    /** Domaine email autorisé */
+    private const DOMAINE_EMAIL = 'sgs-gabon.com';
+
     // =========================================================================
     // UTILISATEURS
     // =========================================================================
@@ -84,7 +57,15 @@ class UtilisateursController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'nom'          => 'required|string|max:100',
-            'email'        => 'required|email|max:100|unique:utilisateurs,email',
+            'email'        => [
+                'required',
+                'email',
+                'max:100',
+                'unique:utilisateurs,email',
+                function ($attribute, $value, $fail) {
+                    $this->validateDomainEmail($value, $fail);
+                },
+            ],
             'role_id'      => 'required|exists:roles,id',
             'direction_id' => 'nullable|exists:directions,id',
             'mot_de_passe' => [
@@ -104,29 +85,34 @@ class UtilisateursController extends Controller
             ], 422);
         }
 
+        // ✅ Conserver le mot de passe en CLAIR pour l'email
+        //    AVANT tout contact avec Eloquent (qui hashera via le mutateur)
         $plainPassword = $request->input('mot_de_passe');
 
-        // ✅ [1] On passe le mot de passe en clair — le mutateur setMotDePasseAttribute()
-        //        du model se charge du Hash::make(). Ne jamais appeler Hash::make() ici.
-        $utilisateur = Utilisateur::create([
-            'nom'          => trim($request->nom),
-            'email'        => strtolower(trim($request->email)),
-            'mot_de_passe' => $plainPassword,
-            'role_id'      => $request->role_id,
-            'direction_id' => $request->direction_id,
-            'est_actif'    => 1,
-            'est_supprime' => 0,
+        // ✅ Insertion via DB::table pour bypasser le mutateur setMotDePasseAttribute
+        //    On hashe MANUELLEMENT ici → $plainPassword reste intact pour le mail
+        $id = DB::table('utilisateurs')->insertGetId([
+            'nom'                    => trim($request->nom),
+            'email'                  => strtolower(trim($request->email)),
+            'mot_de_passe'           => Hash::make($plainPassword),
+            'role_id'                => $request->role_id,
+            'direction_id'           => $request->direction_id ?? null,
+            'est_actif'              => 1,
+            'est_supprime'           => 0,
+            'mot_de_passe_expire_le' => now()->addHours(24)->toDateString(),
+            'date_creation'          => now(),
+            'date_modification'      => now(),
         ]);
 
-        $utilisateur->load(['role', 'direction']);
+        // Charger le modèle complet avec les relations pour le mail et la réponse
+        $utilisateur = $this->findOrFail($id);
 
-        // ✅ [5] Envoi mail protégé — jamais de 500 qui casse les headers CORS
         $mailEnvoye = true;
         try {
             Mail::to($utilisateur->email)
                 ->send(new MailPasswordUtilisateurs(
                     utilisateur:   $utilisateur,
-                    plainPassword: $plainPassword,
+                    plainPassword: $plainPassword,  // ← mot de passe en clair ✅
                     isReset:       false,
                 ));
         } catch (\Throwable $e) {
@@ -162,7 +148,16 @@ class UtilisateursController extends Controller
 
         $validator = Validator::make($request->all(), [
             'nom'          => 'sometimes|required|string|max:100',
-            'email'        => "sometimes|required|email|max:100|unique:utilisateurs,email,{$id}",
+            'email'        => [
+                'sometimes',
+                'required',
+                'email',
+                'max:100',
+                "unique:utilisateurs,email,{$id}",
+                function ($attribute, $value, $fail) {
+                    $this->validateDomainEmail($value, $fail);
+                },
+            ],
             'role_id'      => 'sometimes|required|exists:roles,id',
             'direction_id' => 'nullable|exists:directions,id',
         ], $this->messages());
@@ -180,7 +175,13 @@ class UtilisateursController extends Controller
         if ($request->has('role_id'))      $data['role_id']      = $request->role_id;
         if ($request->has('direction_id')) $data['direction_id'] = $request->direction_id;
 
-        Utilisateur::where('id', $id)->update($data);
+        // ✅ Pas de mot_de_passe ici → le mutateur n'est pas déclenché
+        if (!empty($data)) {
+            DB::table('utilisateurs')
+                ->where('id', $id)
+                ->update(array_merge($data, ['date_modification' => now()]));
+        }
+
         $utilisateur->refresh()->load(['role', 'direction']);
 
         return response()->json([
@@ -194,9 +195,10 @@ class UtilisateursController extends Controller
     {
         $this->findOrFail($id);
 
-        Utilisateur::where('id', $id)->update([
+        DB::table('utilisateurs')->where('id', $id)->update([
             'est_supprime'     => 1,
             'date_suppression' => now(),
+            'date_modification' => now(),
         ]);
 
         return response()->json([
@@ -210,11 +212,16 @@ class UtilisateursController extends Controller
         $utilisateur = $this->findOrFail($id);
 
         $newStatut = $utilisateur->est_actif ? 0 : 1;
-        Utilisateur::where('id', $id)->update(['est_actif' => $newStatut]);
 
-        // Si l'utilisateur est bloqué, on révoque ses tokens → déconnexion immédiate
+        DB::table('utilisateurs')->where('id', $id)->update([
+            'est_actif'         => $newStatut,
+            'date_modification' => now(),
+        ]);
+
         if (!$newStatut) {
-            $utilisateur->tokens()->delete();
+            try {
+                $utilisateur->tokens()->delete();
+            } catch (\Throwable) {}
         }
 
         $label = $newStatut ? 'débloqué' : 'bloqué';
@@ -230,29 +237,38 @@ class UtilisateursController extends Controller
     {
         $utilisateur = $this->findOrFail($id);
 
+        // ✅ ÉTAPE 1 — Générer le mot de passe en CLAIR
+        //    Cette variable ne sera JAMAIS passée à Eloquent
         $plainPassword = self::generateSecurePassword($utilisateur->nom);
 
-        // ✅ [1][2] On utilise $utilisateur->update() (instance Eloquent, pas le QueryBuilder)
-        //           pour que le mutateur setMotDePasseAttribute() soit déclenché.
-        //           On passe le mot de passe en clair — le mutateur hash automatiquement.
-        $utilisateur->update([
-            'mot_de_passe' => $plainPassword,
+        // ✅ ÉTAPE 2 — Sauvegarder via DB::table (bypass mutateur Eloquent)
+        //    Hash::make() ici manuellement → $plainPassword reste intact
+        DB::table('utilisateurs')->where('id', $id)->update([
+            'mot_de_passe'           => Hash::make($plainPassword),
+            'est_actif'              => 1,
+            'mot_de_passe_expire_le' => now()->addHours(24)->toDateString(),
+            'date_modification'      => now(),
         ]);
 
-        // ✅ [3] Invalider tous les tokens Sanctum → déconnexion automatique
+        // ✅ ÉTAPE 3 — Révoquer les tokens (déconnexion forcée)
         try {
             $utilisateur->tokens()->delete();
         } catch (\Throwable $e) {
-            \Log::warning("Impossible de révoquer les tokens de l'utilisateur #{$id} : " . $e->getMessage());
+            \Log::warning("Impossible de révoquer les tokens #{$id} : " . $e->getMessage());
         }
 
-        // ✅ [5] Envoi mail protégé — jamais de 500 qui casse les headers CORS
+        // ✅ ÉTAPE 4 — Recharger le modèle avec les relations (role, direction)
+        //    pour que le mail affiche correctement le rôle et la direction
+        $utilisateur->refresh()->load(['role', 'direction']);
+
+        // ✅ ÉTAPE 5 — Envoyer le mail avec le mot de passe EN CLAIR
+        //    (jamais le hash — $plainPassword n'a pas été touché par Eloquent)
         $mailEnvoye = true;
         try {
             Mail::to($utilisateur->email)
                 ->send(new MailPasswordUtilisateurs(
                     utilisateur:   $utilisateur,
-                    plainPassword: $plainPassword,
+                    plainPassword: $plainPassword,  // ← toujours en clair ✅
                     isReset:       true,
                 ));
         } catch (\Throwable $e) {
@@ -282,6 +298,30 @@ class UtilisateursController extends Controller
             'success'  => true,
             'password' => $password,
         ]);
+    }
+
+    public function expirePasswordsExpires(): void
+    {
+        $expires = Utilisateur::where('est_supprime', 0)
+            ->where('est_actif', 1)
+            ->whereNotNull('mot_de_passe_expire_le')
+            ->where('mot_de_passe_expire_le', '<=', now()->toDateString())
+            ->get();
+
+        foreach ($expires as $u) {
+            // ✅ DB::table ici aussi pour ne pas déclencher le mutateur avec ''
+            DB::table('utilisateurs')->where('id', $u->id)->update([
+                'est_actif'         => 0,
+                'mot_de_passe'      => '',
+                'date_modification' => now(),
+            ]);
+
+            try {
+                $u->tokens()->delete();
+            } catch (\Throwable) {}
+
+            \Log::info("Compte #{$u->id} ({$u->email}) désactivé : mot de passe temporaire expiré après 24 h.");
+        }
     }
 
     // =========================================================================
@@ -339,6 +379,7 @@ class UtilisateursController extends Controller
         $role = Role::where('est_supprime', 0)->findOrFail($id);
 
         $validator = Validator::make($request->all(), [
+            'code'        => "sometimes|required|string|max:50|unique:roles,code,{$id}",
             'libelle'     => 'sometimes|required|string|max:100',
             'description' => 'nullable|string',
         ], $this->messages());
@@ -348,6 +389,9 @@ class UtilisateursController extends Controller
         }
 
         $data = [];
+        if ($request->has('code') && $request->code !== null) {
+            $data['code'] = Str::slug($request->code, '_');
+        }
         if ($request->has('libelle'))     $data['libelle']     = $request->libelle;
         if ($request->has('description')) $data['description'] = $request->description;
 
@@ -382,14 +426,10 @@ class UtilisateursController extends Controller
         return response()->json(['success' => true, 'message' => 'Rôle supprimé avec succès.']);
     }
 
-    /**
-     * ✅ [9] Bloque la désactivation d'un rôle si des utilisateurs y sont assignés.
-     */
     public function toggleRoleStatut(int $id): JsonResponse
     {
         $role = Role::findOrFail($id);
 
-        // On ne peut désactiver un rôle que s'il n'a plus d'utilisateurs actifs
         if ($role->est_supprime === 0) {
             $nbUsers = Utilisateur::where('role_id', $id)->where('est_supprime', 0)->count();
             if ($nbUsers > 0) {
@@ -474,8 +514,14 @@ class UtilisateursController extends Controller
         }
 
         $data = [];
-        if ($request->has('nom'))       $data['nom']       = trim($request->nom);
-        if ($request->has('reference')) $data['reference'] = $request->reference ? strtoupper(trim($request->reference)) : null;
+        if ($request->has('nom')) {
+            $data['nom'] = trim($request->nom);
+        }
+        if ($request->has('reference')) {
+            $data['reference'] = $request->reference
+                ? strtoupper(trim($request->reference))
+                : null;
+        }
 
         if (!empty($data)) {
             Direction::where('id', $id)->update($data);
@@ -488,9 +534,6 @@ class UtilisateursController extends Controller
         ]);
     }
 
-    /**
-     * ✅ [8] Bloque la suppression si des utilisateurs OU des véhicules sont rattachés.
-     */
     public function destroyDirection(int $id): JsonResponse
     {
         Direction::where('est_supprime', 0)->findOrFail($id);
@@ -503,7 +546,7 @@ class UtilisateursController extends Controller
             ], 409);
         }
 
-        $nbVehicules = \DB::table('vehicules')
+        $nbVehicules = DB::table('vehicules')
             ->where('direction_id', $id)
             ->where('est_supprime', 0)
             ->count();
@@ -522,14 +565,10 @@ class UtilisateursController extends Controller
         return response()->json(['success' => true, 'message' => 'Direction supprimée avec succès.']);
     }
 
-    /**
-     * ✅ [10] Bloque la désactivation d'une direction si des utilisateurs ou véhicules y sont rattachés.
-     */
     public function toggleDirectionStatut(int $id): JsonResponse
     {
         $direction = Direction::findOrFail($id);
 
-        // On ne peut désactiver une direction que si elle est vide
         if ($direction->est_supprime === 0) {
             $nbUsers = Utilisateur::where('direction_id', $id)->where('est_supprime', 0)->count();
             if ($nbUsers > 0) {
@@ -539,7 +578,7 @@ class UtilisateursController extends Controller
                 ], 409);
             }
 
-            $nbVehicules = \DB::table('vehicules')
+            $nbVehicules = DB::table('vehicules')
                 ->where('direction_id', $id)
                 ->where('est_supprime', 0)
                 ->count();
@@ -579,16 +618,22 @@ class UtilisateursController extends Controller
         $couleur = $colors[$u->id % count($colors)];
 
         if ($u->derniere_connexion) {
-            $diff = now()->diffInMinutes($u->derniere_connexion);
-            if ($diff < 60) {
-                $derniereConnexion = "Il y a {$diff} min";
-            } elseif ($diff < 1440) {
-                $derniereConnexion = "Aujourd'hui, " . \Carbon\Carbon::parse($u->derniere_connexion)->format('H:i');
-            } elseif ($diff < 2880) {
-                $derniereConnexion = 'Hier, ' . \Carbon\Carbon::parse($u->derniere_connexion)->format('H:i');
+            $connexion = \Carbon\Carbon::parse($u->derniere_connexion);
+            $abs       = abs((int) now()->diffInSeconds($connexion, false));
+
+            if ($abs < 60) {
+                $derniereConnexion = $abs <= 1 ? "Il y a 1 seconde" : "Il y a {$abs} secondes";
+            } elseif ($abs < 3600) {
+                $minutes           = (int) floor($abs / 60);
+                $derniereConnexion = $minutes === 1 ? "Il y a 1 minute" : "Il y a {$minutes} minutes";
+            } elseif ($abs < 86400) {
+                $heures            = (int) floor($abs / 3600);
+                $derniereConnexion = $heures === 1 ? "Il y a 1 heure" : "Il y a {$heures} heures";
+            } elseif ($abs < 172800) {
+                $derniereConnexion = "Hier à " . $connexion->format('H:i');
             } else {
-                $jours = now()->diffInDays($u->derniere_connexion);
-                $derniereConnexion = "Il y a {$jours} jours";
+                $jours             = (int) floor($abs / 86400);
+                $derniereConnexion = $jours === 1 ? "Il y a 1 jour" : "Il y a {$jours} jours";
             }
         } else {
             $derniereConnexion = 'Jamais';
@@ -648,14 +693,14 @@ class UtilisateursController extends Controller
             ->where('est_supprime', 0)
             ->count();
 
-        $nbVehicules = \DB::table('vehicules')
+        $nbVehicules = DB::table('vehicules')
             ->where('direction_id', $d->id)
             ->where('est_supprime', 0)
             ->count();
 
         return [
             'id'             => $d->id,
-            'code'           => $d->reference ?? '',
+            'reference'      => $d->reference ?? '',
             'nom'            => $d->nom,
             'description'    => '',
             'responsable'    => '',
@@ -756,6 +801,16 @@ class UtilisateursController extends Controller
         }
     }
 
+    private function validateDomainEmail(string $email, callable $fail): void
+    {
+        $domaine = self::DOMAINE_EMAIL;
+
+        $parts = explode('@', $email);
+        if (count($parts) !== 2 || strtolower(trim($parts[1])) !== $domaine) {
+            $fail("L'adresse email doit être du domaine @{$domaine} (ex : prenom.nom@{$domaine}).");
+        }
+    }
+
     // =========================================================================
     // HELPERS
     // =========================================================================
@@ -771,7 +826,7 @@ class UtilisateursController extends Controller
     {
         return [
             'required' => 'Le champ :attribute est obligatoire.',
-            'email'    => "L'adresse email n'est pas valide.",
+            'email'    => "L'adresse email n'est pas valide. Veuillez saisir une adresse du type exemple@sgs-gabon.com.",
             'unique'   => 'Cette valeur est déjà utilisée.',
             'exists'   => 'La valeur sélectionnée est invalide.',
             'min'      => 'Le champ :attribute doit contenir au moins :min caractères.',

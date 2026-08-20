@@ -17,7 +17,7 @@ class Direction extends Model
 
     protected $fillable = [
         'nom',
-        'code',
+        'reference',
         'est_supprime',
         'date_suppression',
     ];

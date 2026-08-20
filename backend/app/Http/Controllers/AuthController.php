@@ -13,8 +13,8 @@ class AuthController extends Controller
     /**
      * Durée de session fixe : 2 heures
      */
-    private const SESSION_DURATION_HOURS = 2;
-    private const SESSION_DURATION_SECONDS = 2 * 60 * 60; // 7200 secondes
+    private const SESSION_DURATION_HOURS = 4;
+    private const SESSION_DURATION_SECONDS = 4 * 60 * 60; // 14400 secondes
 
     /**
      * Connexion utilisateur avec vérification complète

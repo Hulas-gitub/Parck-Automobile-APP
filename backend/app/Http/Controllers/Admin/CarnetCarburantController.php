@@ -19,6 +19,14 @@ use Barryvdh\DomPDF\Facade\Pdf;
  *
  * CRUD du carnet de carburant.
  *
+ * LOGIQUE DE SYNCHRONISATION MISSION :
+ *   Chaque fois qu'un plein est ajouté, modifié ou supprimé pour une mission,
+ *   on recalcule et on met à jour dans la table missions :
+ *     - carburant_consomme = SUM(litres)  de tous les carnets de cette mission
+ *     - cout_carburant     = SUM(litres * prix_unitaire) de ces mêmes carnets
+ *
+ *   Exemple : mission avec 2 pleins (20 L + 15 L) → carburant_consomme = 35 L
+ *
  * DEUX MODES D'ACCÈS :
  *
  * MODE GLOBAL (page CarnetCarburant standalone) :
@@ -44,9 +52,6 @@ class CarnetCarburantController extends Controller
 
     /**
      * Vérifie que le véhicule existe et n'est pas supprimé.
-     * La table vehicules a bien la colonne est_supprime.
-     * IMPORTANT : on ne filtre PAS sur est_actif car certains véhicules
-     * immobilisés peuvent quand même avoir des pleins à saisir.
      */
     private function assertVehiculeExists(string $immatriculation): void
     {
@@ -218,19 +223,41 @@ class CarnetCarburantController extends Controller
     }
 
     /**
-     * Resynchronise carburant_consomme et cout_carburant sur la mission.
+     * =========================================================================
+     * SYNCHRONISATION MISSION ← carnets_carburant
+     * =========================================================================
+     *
+     * Met à jour les agrégats carburant de la mission après chaque
+     * ajout / modification / suppression d'un plein dans carnets_carburant.
+     *
+     *   carburant_consomme = SUM(litres)                  — total des litres de tous les pleins
+     *   cout_carburant     = SUM(litres * prix_unitaire)  — coût total carburant de la mission
+     *
+     * Exemple :
+     *   Plein 1 : 20 L  → carburant_consomme = 20 L
+     *   Plein 2 : 15 L  → carburant_consomme = 35 L  (somme des deux pleins)
+     *
+     * NB : on ne touche PAS à ces champs si la mission n'existe plus.
      */
     private function syncMissionAggregats(int $missionId): void
     {
+        // Vérifie que la mission existe et n'est pas supprimée
+        if (!DB::table('missions')->where('id', $missionId)->where('est_supprime', 0)->exists()) {
+            return;
+        }
+
+        // Calcule la somme des litres et du coût sur TOUS les carnets
+        // non supprimés rattachés à cette mission
         $agg = DB::table('carnets_carburant')
             ->where('mission_id', $missionId)
             ->where('est_supprime', 0)
             ->selectRaw('
-                COALESCE(SUM(litres), 0)                 AS total_litres,
-                COALESCE(SUM(litres * prix_unitaire), 0) AS total_cout
+                COALESCE(SUM(litres), 0)                          AS total_litres,
+                COALESCE(SUM(litres * prix_unitaire), 0)          AS total_cout
             ')
             ->first();
 
+        // Met à jour la mission avec les nouvelles valeurs agrégées
         DB::table('missions')->where('id', $missionId)->update([
             'carburant_consomme' => round((float) $agg->total_litres, 2),
             'cout_carburant'     => round((float) $agg->total_cout,   2),
@@ -241,13 +268,6 @@ class CarnetCarburantController extends Controller
     // =========================================================================
     // MODE GLOBAL — LISTE DES VÉHICULES AVEC STATS CARBURANT
     // GET /admin/carburant/vehicules
-    //
-    // Retourne tous les véhicules non supprimés avec :
-    //  - leurs infos (marque, modèle, catégorie, statut, km)
-    //  - leurs stats carburant agrégées (nb pleins, litres, coût)
-    //  - le dernier plein
-    // Permet à la page CarnetCarburant.jsx de choisir un véhicule
-    // sans avoir besoin de l'immatriculation dans l'URL.
     // =========================================================================
     public function listeVehicules(Request $request): JsonResponse
     {
@@ -255,7 +275,6 @@ class CarnetCarburantController extends Controller
             ->leftJoin('marques as ma',              'ma.id', '=', 'v.marque_id')
             ->leftJoin('modeles as mo',              'mo.id', '=', 'v.modele_id')
             ->leftJoin('categories_vehicules as ca', 'ca.id', '=', 'v.categorie_id')
-            // Sous-requête : stats carburant agrégées par véhicule
             ->leftJoinSub(
                 DB::table('carnets_carburant')
                     ->where('est_supprime', 0)
@@ -272,7 +291,6 @@ class CarnetCarburantController extends Controller
                 '=',
                 'v.immatriculation'
             )
-            // Sous-requête : dernier plein (station + litres)
             ->leftJoinSub(
                 DB::table('carnets_carburant as cc_last')
                     ->where('cc_last.est_supprime', 0)
@@ -305,12 +323,10 @@ class CarnetCarburantController extends Controller
                 'ma.nom as marque',
                 'mo.nom as modele',
                 'ca.nom as categorie',
-                // Stats carburant
                 DB::raw('COALESCE(stats.nb_pleins, 0)       as nb_pleins'),
                 DB::raw('COALESCE(stats.total_litres, 0)    as total_litres'),
                 DB::raw('COALESCE(stats.total_cout, 0)      as total_cout'),
                 'stats.dernier_plein_date',
-                // Dernier plein
                 'dernier.dernier_litres',
                 'dernier.dernier_station',
                 'dernier.dernier_prix_unitaire'
@@ -328,7 +344,6 @@ class CarnetCarburantController extends Controller
                 'modele'                => $v->modele,
                 'categorie'             => $v->categorie,
                 'label'                 => trim(($v->marque ?? '') . ' ' . ($v->modele ?? '') . ' — ' . $v->immatriculation),
-                // Stats carburant
                 'nb_pleins'             => (int) $v->nb_pleins,
                 'total_litres'          => round((float) $v->total_litres, 2),
                 'total_cout'            => round((float) $v->total_cout, 2),
@@ -342,7 +357,7 @@ class CarnetCarburantController extends Controller
     }
 
     // =========================================================================
-    // MODE GLOBAL — DÉTAIL D'UN VÉHICULE (pour le sélecteur)
+    // MODE GLOBAL — DÉTAIL D'UN VÉHICULE
     // GET /admin/carburant/vehicules/{immatriculation}
     // =========================================================================
     public function vehiculeDetail(string $immatriculation): JsonResponse
@@ -503,8 +518,14 @@ class CarnetCarburantController extends Controller
     }
 
     // =========================================================================
-    // 5. CRÉER
+    // 5. CRÉER UN PLEIN
     // POST /admin/vehicules/{immatriculation}/carburant
+    //
+    // SYNC MISSION :
+    //   Si un mission_id est fourni, on appelle syncMissionAggregats()
+    //   APRÈS l'insertion du carnet pour recalculer :
+    //     - missions.carburant_consomme = SUM(litres) de tous les pleins de la mission
+    //     - missions.cout_carburant     = SUM(litres * prix_unitaire) idem
     // =========================================================================
     public function store(Request $request, string $immatriculation): JsonResponse
     {
@@ -524,6 +545,7 @@ class CarnetCarburantController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
+        // ── Vérification mission ──────────────────────────────────────────────
         $mission = null;
         if ($request->filled('mission_id')) {
             $mission = DB::table('missions')
@@ -539,7 +561,7 @@ class CarnetCarburantController extends Controller
             }
         }
 
-        // Kilométrage : saisie > km_depart mission > km actuel véhicule
+        // ── Kilométrage ───────────────────────────────────────────────────────
         if ($request->filled('kilometrage')) {
             $km = (int) $request->kilometrage;
         } elseif ($mission && $mission->km_depart) {
@@ -550,7 +572,7 @@ class CarnetCarburantController extends Controller
                 ->value('kilometrage');
         }
 
-        // km_depuis_dernier_plein
+        // ── km_depuis_dernier_plein ───────────────────────────────────────────
         $dernier = DB::table('carnets_carburant')
             ->where('vehicule_immatriculation', $immatriculation)
             ->where('est_supprime', 0)
@@ -563,12 +585,13 @@ class CarnetCarburantController extends Controller
             $kmDepuis = $km - (int) $dernier->kilometrage;
         }
 
-        // consommation_calculee : uniquement CAS 2 (sans mission)
+        // ── consommation_calculee : uniquement CAS 2 (sans mission) ──────────
         $consommation = null;
         if (!$mission && $request->filled('prix_unitaire')) {
             $consommation = round((float) $request->litres * (float) $request->prix_unitaire, 2);
         }
 
+        // ── Insertion du carnet ───────────────────────────────────────────────
         $insertId = DB::table('carnets_carburant')->insertGetId([
             'vehicule_immatriculation' => $immatriculation,
             'mission_id'               => $mission ? $mission->id : null,
@@ -584,7 +607,7 @@ class CarnetCarburantController extends Controller
             'date_creation'            => now(),
         ]);
 
-        // MAJ kilométrage véhicule si km saisi > km actuel
+        // ── MAJ kilométrage véhicule ──────────────────────────────────────────
         $kmActuel = (int) DB::table('vehicules')
             ->where('immatriculation', $immatriculation)
             ->value('kilometrage');
@@ -597,6 +620,11 @@ class CarnetCarburantController extends Controller
             ]);
         }
 
+        // ── SYNC MISSION ──────────────────────────────────────────────────────
+        // Recalcule carburant_consomme et cout_carburant sur la mission
+        // après l'insertion du nouveau plein.
+        // Résultat : missions.carburant_consomme = SUM de tous les litres
+        //            de cette mission (pleins déjà existants + ce nouveau plein)
         if ($mission) {
             $this->syncMissionAggregats($mission->id);
         }
@@ -607,8 +635,14 @@ class CarnetCarburantController extends Controller
     }
 
     // =========================================================================
-    // 6. MODIFIER
+    // 6. MODIFIER UN PLEIN
     // PUT /admin/vehicules/{immatriculation}/carburant/{id}
+    //
+    // SYNC MISSION :
+    //   - Si la mission a changé (ou a été retirée), on resynchronise
+    //     l'ANCIENNE mission pour recalculer sans ce plein.
+    //   - On synchronise ensuite la NOUVELLE mission (ou la même si inchangée)
+    //     pour inclure les valeurs modifiées.
     // =========================================================================
     public function update(Request $request, string $immatriculation, int $id): JsonResponse
     {
@@ -638,7 +672,8 @@ class CarnetCarburantController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $missionId = $record->mission_id;
+        // ── Résolution du nouveau mission_id ──────────────────────────────────
+        $missionId = $record->mission_id; // valeur actuelle par défaut
         if ($request->has('mission_id')) {
             if ($request->filled('mission_id')) {
                 $ok = DB::table('missions')
@@ -658,6 +693,7 @@ class CarnetCarburantController extends Controller
             }
         }
 
+        // ── Construction du payload de mise à jour ────────────────────────────
         $data = [];
         if ($request->has('mission_id'))    $data['mission_id']    = $missionId;
         if ($request->has('date_plein'))    $data['date_plein']    = $request->date_plein;
@@ -683,6 +719,7 @@ class CarnetCarburantController extends Controller
                 ? $newKm - (int) $kmPrec : null;
         }
 
+        // ── consommation_calculee (CAS 2 uniquement) ──────────────────────────
         $newLitres    = isset($data['litres'])        ? $data['litres']        : (float) $record->litres;
         $newPrix      = isset($data['prix_unitaire']) ? $data['prix_unitaire'] : ($record->prix_unitaire ? (float) $record->prix_unitaire : null);
         $newMissionId = array_key_exists('mission_id', $data) ? $data['mission_id'] : $record->mission_id;
@@ -690,15 +727,22 @@ class CarnetCarburantController extends Controller
         if (is_null($newMissionId) && $newPrix !== null) {
             $data['consommation_calculee'] = round($newLitres * $newPrix, 2);
         } elseif (!is_null($newMissionId)) {
+            // Avec mission, pas de consommation_calculee sur le carnet
             $data['consommation_calculee'] = null;
         }
 
+        // ── Mise à jour du carnet ─────────────────────────────────────────────
         DB::table('carnets_carburant')->where('id', $id)->update($data);
 
+        // ── SYNC MISSION ──────────────────────────────────────────────────────
+        // 1) Si la mission a changé, resynchroniser l'ANCIENNE mission
+        //    (ce plein n'en fait plus partie → on recalcule sans lui)
         $ancienMissionId = $record->mission_id;
         if ($ancienMissionId && $ancienMissionId !== $newMissionId) {
             $this->syncMissionAggregats((int) $ancienMissionId);
         }
+        // 2) Synchroniser la NOUVELLE mission (ou la même si inchangée)
+        //    pour intégrer les nouvelles valeurs de litres/prix_unitaire
         if ($newMissionId) {
             $this->syncMissionAggregats((int) $newMissionId);
         }
@@ -709,8 +753,12 @@ class CarnetCarburantController extends Controller
     }
 
     // =========================================================================
-    // 7. SUPPRIMER
+    // 7. SUPPRIMER UN PLEIN
     // DELETE /admin/vehicules/{immatriculation}/carburant/{id}
+    //
+    // SYNC MISSION :
+    //   Après la suppression logique du plein, on resynchronise la mission
+    //   pour recalculer carburant_consomme sans ce plein supprimé.
     // =========================================================================
     public function destroy(string $immatriculation, int $id): JsonResponse
     {
@@ -726,11 +774,15 @@ class CarnetCarburantController extends Controller
             return response()->json(['message' => 'Enregistrement introuvable.'], 404);
         }
 
+        // ── Suppression logique ───────────────────────────────────────────────
         DB::table('carnets_carburant')->where('id', $id)->update([
             'est_supprime'     => 1,
             'date_suppression' => now(),
         ]);
 
+        // ── SYNC MISSION ──────────────────────────────────────────────────────
+        // Recalcule la mission sans ce plein supprimé.
+        // Si c'était le seul plein, carburant_consomme → 0 et cout_carburant → 0.
         if ($record->mission_id) {
             $this->syncMissionAggregats((int) $record->mission_id);
         }

@@ -15,17 +15,16 @@ use Illuminate\Support\Str;
  * VehiculesController
  *
  * Gère tout le CRUD du module Véhicules côté admin.
- * Le carnet carburant est géré dans CarnetCarburantController.
  *
- *  - Liste paginée + filtres
- *  - Détail complet avec toutes les jointures
- *  - Création / Modification / Suppression (soft delete)
- *  - Changement de statut
- *  - Documents (upload, liste, modification, suppression)
- *  - Maintenances (interventions)
- *  - Missions
- *  - Statistiques
- *  - Données de référence CRUD (catégories, marques, modèles, directions, années, chauffeurs)
+ * Nouveauté v2 : `affectation` est maintenant une FK vers la table `affectations`.
+ *   - vehicules.affectation_id  → clé étrangère
+ *   - vehicules.affectation     → cache dénormalisé (mis à jour automatiquement)
+ *
+ * Routes référentiel affectations :
+ *   GET    /admin/vehicules/references/affectations          → indexAffectations
+ *   POST   /admin/vehicules/references/affectations          → storeAffectation
+ *   PUT    /admin/vehicules/references/affectations/{id}     → updateAffectation
+ *   DELETE /admin/vehicules/references/affectations/{id}     → destroyAffectation
  */
 class VehiculesController extends Controller
 {
@@ -39,17 +38,20 @@ class VehiculesController extends Controller
     private const DOC_DISK_PATH       = 'upload/admin/document/vehicules';
 
     private const STATUTS_MAP = [
-        'Disponible'     => 'disponible',
-        'En Mission'     => 'en_mission',
-        'Maintenance'    => 'en_maintenance',
-        'Immobilisé'     => 'immobilise',
-        'disponible'     => 'disponible',
-        'en_mission'     => 'en_mission',
-        'en_maintenance' => 'en_maintenance',
-        'immobilise'     => 'immobilise',
-        'Vendu'          => 'vendu',
-        'Retiré'         => 'retire',
-        'Hors Service'   => 'hors_service',
+        'Disponible'            => 'disponible',
+        'En Mission'            => 'en_mission',
+        'Maintenance'           => 'en_maintenance',
+        'Immobilisé'            => 'immobilise',
+        'Immobilisation courte' => 'immobilisation courte',
+        'Immobilisation longue' => 'immobilisation longue',
+        'Vendu'                 => 'vendu',
+        'Retiré'                => 'retire',
+        'Hors Service'          => 'hors_service',
+        // variantes snake_case déjà présentes en base
+        'disponible'            => 'disponible',
+        'en_mission'            => 'en_mission',
+        'en_maintenance'        => 'en_maintenance',
+        'immobilise'            => 'immobilise',
     ];
 
     // =========================================================================
@@ -66,13 +68,18 @@ class VehiculesController extends Controller
         return null;
     }
 
+    /**
+     * Formate un enregistrement brut en tableau API.
+     * Inclut désormais affectation_id + affectation (libellé).
+     */
     private function formatVehicule(object $v): array
     {
         $statutLabel = [
-            'disponible'     => 'Disponible',
-            'en_mission'     => 'En Mission',
-            'en_maintenance' => 'Maintenance',
-            'immobilise'     => 'Immobilisé',
+            'disponible'            => 'Disponible',
+            'en_mission'            => 'En Mission',
+            'en_maintenance'        => 'Maintenance',
+            'immobilisation courte' => 'Immobilisation courte',
+            'immobilisation longue' => 'Immobilisation longue',
         ][$v->statut] ?? ucfirst($v->statut);
 
         return [
@@ -88,6 +95,13 @@ class VehiculesController extends Controller
             'annee_id'                => $v->annee_id                 ?? null,
             'direction'               => $v->direction_nom            ?? null,
             'direction_id'            => $v->direction_id             ?? null,
+            'ville'                   => $v->ville                    ?? null,
+            // ── Affectation (FK) ─────────────────────────────────────────────
+            'affectation'             => $v->affectation_nom          ?? $v->affectation ?? null,
+            'affectation_id'          => $v->affectation_id           ?? null,
+            'affectation_code'        => $v->affectation_code         ?? null,
+            // ─────────────────────────────────────────────────────────────────
+            'responsable_du_vehicule' => $v->responsable_du_vehicule  ?? null,
             'chauffeur'               => $v->chauffeur_nom            ?? null,
             'nb_places'               => (int)($v->nb_places          ?? 5),
             'couleur'                 => $v->couleur                  ?? null,
@@ -115,6 +129,9 @@ class VehiculesController extends Controller
         ];
     }
 
+    /**
+     * Requête de base avec toutes les jointures, y compris affectations.
+     */
     private function baseQuery()
     {
         return DB::table('vehicules as v')
@@ -123,6 +140,9 @@ class VehiculesController extends Controller
             ->leftJoin('categories_vehicules as ca','ca.id', '=', 'v.categorie_id')
             ->leftJoin('annees as an',              'an.id', '=', 'v.annee_id')
             ->leftJoin('directions as di',          'di.id', '=', 'v.direction_id')
+            // ── Jointure affectations ─────────────────────────────────────────
+            ->leftJoin('affectations as af',        'af.id', '=', 'v.affectation_id')
+            // ─────────────────────────────────────────────────────────────────
             ->leftJoin(DB::raw('(
                 SELECT m.vehicule_immatriculation, u.nom AS chauffeur_nom
                 FROM missions m
@@ -139,6 +159,14 @@ class VehiculesController extends Controller
                 'v.categorie_id',
                 'v.annee_id',
                 'v.direction_id',
+                'v.ville',
+                // ── Affectation ───────────────────────────────────────────────
+                'v.affectation_id',
+                'v.affectation',                 // cache varchar (fallback)
+                'af.nom  as affectation_nom',    // libellé depuis la table
+                'af.code as affectation_code',   // code court
+                // ─────────────────────────────────────────────────────────────
+                'v.responsable_du_vehicule',
                 'v.nb_places',
                 'v.kilometrage',
                 'v.date_maj_km',
@@ -178,21 +206,44 @@ class VehiculesController extends Controller
 
         if ($search = $request->get('search')) {
             $query->where(function ($q) use ($search) {
-                $q->where('v.immatriculation', 'LIKE', "%{$search}%")
-                  ->orWhere('ma.nom', 'LIKE', "%{$search}%")
-                  ->orWhere('mo.nom', 'LIKE', "%{$search}%")
-                  ->orWhere('di.nom', 'LIKE', "%{$search}%");
+                $q->where('v.immatriculation',  'LIKE', "%{$search}%")
+                  ->orWhere('ma.nom',            'LIKE', "%{$search}%")
+                  ->orWhere('mo.nom',            'LIKE', "%{$search}%")
+                  ->orWhere('di.nom',            'LIKE', "%{$search}%")
+                  ->orWhere('v.ville',           'LIKE', "%{$search}%")
+                  ->orWhere('af.nom',            'LIKE', "%{$search}%");  // ← nouveau
             });
         }
-        if ($cat = $request->get('categorie')) $query->where('ca.nom', $cat);
-        if ($mrq = $request->get('marque'))    $query->where('ma.nom', $mrq);
-        if ($mod = $request->get('modele'))    $query->where('mo.nom', $mod);
+
+        if ($cat  = $request->get('categorie'))    $query->where('ca.nom',    $cat);
+        if ($mrq  = $request->get('marque'))       $query->where('ma.nom',    $mrq);
+        if ($mod  = $request->get('modele'))       $query->where('mo.nom',    $mod);
+        if ($vil  = $request->get('ville'))        $query->where('v.ville',   $vil);
+        if ($dir  = $request->get('direction'))    $query->where('di.nom',    $dir);
+
+        // ── Filtre affectation ────────────────────────────────────────────────
+        if ($affId = $request->get('affectation_id')) {
+            $query->where('v.affectation_id', (int)$affId);
+        } elseif ($affNom = $request->get('affectation')) {
+            // Compatibilité : le front peut envoyer le libellé ou l'id
+            $query->where('af.nom', $affNom);
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         if ($sta = $request->get('statut')) {
             $query->where('v.statut', self::STATUTS_MAP[$sta] ?? strtolower($sta));
         }
 
         $total    = $query->count();
-        $vehicles = $query->orderBy('v.date_modification', 'desc')->paginate($perPage);
+
+        // ── TRI ALPHABÉTIQUE (A→Z) appliqué AVANT pagination ──────────────────
+        // Marque puis Modèle puis Immatriculation, pour un ordre cohérent sur
+        // TOUTES les pages (le tri est fait par MySQL, pas juste sur la page en cours).
+        $vehicles = $query
+    ->orderBy('v.immatriculation')
+    ->paginate($perPage);
+        // ─────────────────────────────────────────────────────────────────────
+
         $data     = collect($vehicles->items())->map(fn($v) => $this->formatVehicule($v))->values();
 
         return response()->json([
@@ -222,26 +273,31 @@ class VehiculesController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'immatriculation'       => 'required|string|max:30|unique:vehicules,immatriculation',
-            'marque'                => 'required|string|max:100',
-            'modele'                => 'required|string|max:100',
-            'categorie'             => 'required|string|max:100',
-            'direction'             => 'required|string|max:150',
-            'annee'                 => 'nullable|integer|min:1900|max:2100',
-            'numero_chassis'        => 'nullable|string|max:100|unique:vehicules,numero_chassis',
-            'kilometrage'           => 'nullable|integer|min:0',
-            'nb_places'             => 'nullable|integer|min:1|max:100',
-            'statut'                => 'nullable|string',
-            'couleur'               => 'nullable|string|max:100',
-            'dateAchat'             => 'nullable|date',
-            'cout_acquisition'      => 'nullable|numeric|min:0',
-            'valeur_residuelle'     => 'nullable|numeric|min:0',
-            'consommation_moyenne'  => 'nullable|numeric|min:0',
-            'km_prochaine_vidange'  => 'nullable|integer|min:0',
-            'km_prochaine_revision' => 'nullable|integer|min:0',
-            'assuranceExpire'       => 'nullable|date',
-            'visiteExpire'          => 'nullable|date',
-            'image'                 => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
+            'immatriculation'         => 'required|string|max:30|unique:vehicules,immatriculation',
+            'marque'                  => 'required|string|max:100',
+            'modele'                  => 'required|string|max:100',
+            'categorie'               => 'required|string|max:100',
+            'direction'               => 'required|string|max:150',
+            'annee'                   => 'nullable|integer|min:1900|max:2100',
+            'numero_chassis'          => 'nullable|string|max:100|unique:vehicules,numero_chassis',
+            'kilometrage'             => 'nullable|integer|min:0',
+            'nb_places'               => 'nullable|integer|min:1|max:100',
+            'statut'                  => 'nullable|string',
+            'couleur'                 => 'nullable|string|max:100',
+            'ville'                   => 'nullable|string|max:100',
+            // ── Affectation ───────────────────────────────────────────────────
+            'affectation_id'          => 'nullable|integer|exists:affectations,id',
+            // ─────────────────────────────────────────────────────────────────
+            'responsable_du_vehicule' => 'nullable|string|max:200',
+            'dateAchat'               => 'nullable|date',
+            'cout_acquisition'        => 'nullable|numeric|min:0',
+            'valeur_residuelle'       => 'nullable|numeric|min:0',
+            'consommation_moyenne'    => 'nullable|numeric|min:0',
+            'km_prochaine_vidange'    => 'nullable|integer|min:0',
+            'km_prochaine_revision'   => 'nullable|integer|min:0',
+            'assuranceExpire'         => 'nullable|date',
+            'visiteExpire'            => 'nullable|date',
+            'image'                   => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
         ]);
         if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
@@ -251,6 +307,13 @@ class VehiculesController extends Controller
         $directionId = $this->resolveDirectionId($request->direction);
         $anneeId     = $this->resolveAnneeId($request->annee);
         $statutDB    = self::STATUTS_MAP[$request->get('statut', 'Disponible')] ?? 'disponible';
+
+        // ── Résolution affectation ────────────────────────────────────────────
+        $affectationId  = $request->filled('affectation_id') ? (int)$request->affectation_id : null;
+        $affectationNom = $affectationId
+            ? DB::table('affectations')->where('id', $affectationId)->value('nom')
+            : null;
+        // ─────────────────────────────────────────────────────────────────────
 
         $photoPath = null;
         if ($request->hasFile('image')) $photoPath = $this->uploadImage($request->file('image'));
@@ -262,6 +325,12 @@ class VehiculesController extends Controller
             'modele_id'                        => $modeleId,
             'categorie_id'                     => $categorieId,
             'direction_id'                     => $directionId,
+            'ville'                            => $request->ville ?: null,
+            // ── Affectation ───────────────────────────────────────────────────
+            'affectation_id'                   => $affectationId,
+            'affectation'                      => $affectationNom,   // cache dénormalisé
+            // ─────────────────────────────────────────────────────────────────
+            'responsable_du_vehicule'          => $request->responsable_du_vehicule ?: null,
             'annee_id'                         => $anneeId,
             'nb_places'                        => (int)($request->nb_places ?? 5),
             'kilometrage'                      => (int)($request->kilometrage ?? 0),
@@ -274,7 +343,7 @@ class VehiculesController extends Controller
             'date_acquisition'                 => $request->dateAchat       ?: null,
             'date_expiration_assurance'        => $request->assuranceExpire ?: null,
             'date_expiration_visite_technique' => $request->visiteExpire    ?: null,
-            'Couleur'                          => $request->couleur         ?: null,
+            'couleur'                          => $request->couleur         ?: null,
             'photo'                            => $photoPath,
             'est_actif'                        => 1,
             'est_supprime'                     => 0,
@@ -300,25 +369,30 @@ class VehiculesController extends Controller
         if (!$exists) return response()->json(['message' => 'Véhicule introuvable.'], 404);
 
         $validator = Validator::make($request->all(), [
-            'marque'                => 'nullable|string|max:100',
-            'modele'                => 'nullable|string|max:100',
-            'categorie'             => 'nullable|string|max:100',
-            'direction'             => 'nullable|string|max:150',
-            'annee'                 => 'nullable|integer|min:1900|max:2100',
-            'numero_chassis'        => 'nullable|string|max:100|unique:vehicules,numero_chassis,' . $immatriculation . ',immatriculation',
-            'kilometrage'           => 'nullable|integer|min:0',
-            'nb_places'             => 'nullable|integer|min:1|max:100',
-            'statut'                => 'nullable|string',
-            'couleur'               => 'nullable|string|max:100',
-            'dateAchat'             => 'nullable|date',
-            'cout_acquisition'      => 'nullable|numeric|min:0',
-            'valeur_residuelle'     => 'nullable|numeric|min:0',
-            'consommation_moyenne'  => 'nullable|numeric|min:0',
-            'km_prochaine_vidange'  => 'nullable|integer|min:0',
-            'km_prochaine_revision' => 'nullable|integer|min:0',
-            'assuranceExpire'       => 'nullable|date',
-            'visiteExpire'          => 'nullable|date',
-            'image'                 => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
+            'marque'                  => 'nullable|string|max:100',
+            'modele'                  => 'nullable|string|max:100',
+            'categorie'               => 'nullable|string|max:100',
+            'direction'               => 'nullable|string|max:150',
+            'annee'                   => 'nullable|integer|min:1900|max:2100',
+            'numero_chassis'          => 'nullable|string|max:100|unique:vehicules,numero_chassis,' . $immatriculation . ',immatriculation',
+            'kilometrage'             => 'nullable|integer|min:0',
+            'nb_places'               => 'nullable|integer|min:1|max:100',
+            'statut'                  => 'nullable|string',
+            'couleur'                 => 'nullable|string|max:100',
+            'ville'                   => 'nullable|string|max:100',
+            // ── Affectation ───────────────────────────────────────────────────
+            'affectation_id'          => 'nullable|integer|exists:affectations,id',
+            // ─────────────────────────────────────────────────────────────────
+            'responsable_du_vehicule' => 'nullable|string|max:200',
+            'dateAchat'               => 'nullable|date',
+            'cout_acquisition'        => 'nullable|numeric|min:0',
+            'valeur_residuelle'       => 'nullable|numeric|min:0',
+            'consommation_moyenne'    => 'nullable|numeric|min:0',
+            'km_prochaine_vidange'    => 'nullable|integer|min:0',
+            'km_prochaine_revision'   => 'nullable|integer|min:0',
+            'assuranceExpire'         => 'nullable|date',
+            'visiteExpire'            => 'nullable|date',
+            'image'                   => 'nullable|file|mimes:' . self::ALLOWED_IMAGE_MIMES . '|max:' . self::MAX_FILE_SIZE,
         ]);
         if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
@@ -331,26 +405,40 @@ class VehiculesController extends Controller
                 $updateData['modele_id'] = $this->resolveModeleId($request->modele, $marqueId);
             }
         }
-        if ($request->filled('categorie'))      $updateData['categorie_id']  = $this->resolveCategorieId($request->categorie);
-        if ($request->filled('direction'))      $updateData['direction_id']  = $this->resolveDirectionId($request->direction);
-        if ($request->filled('annee'))          $updateData['annee_id']      = $this->resolveAnneeId($request->annee);
-        if ($request->has('numero_chassis'))    $updateData['numero_chassis'] = $request->numero_chassis ?: null;
-        if ($request->has('nb_places'))         $updateData['nb_places']      = (int)($request->nb_places ?? 5);
+        if ($request->filled('categorie'))   $updateData['categorie_id']  = $this->resolveCategorieId($request->categorie);
+        if ($request->filled('direction'))   $updateData['direction_id']  = $this->resolveDirectionId($request->direction);
+        if ($request->filled('annee'))       $updateData['annee_id']      = $this->resolveAnneeId($request->annee);
+        if ($request->has('numero_chassis')) $updateData['numero_chassis'] = $request->numero_chassis ?: null;
+        if ($request->has('nb_places'))      $updateData['nb_places']      = (int)($request->nb_places ?? 5);
+        if ($request->has('ville'))          $updateData['ville']          = $request->ville ?: null;
+
+        // ── Affectation ───────────────────────────────────────────────────────
+        if ($request->has('affectation_id')) {
+            $affectationId = $request->filled('affectation_id') ? (int)$request->affectation_id : null;
+            $affectationNom = $affectationId
+                ? DB::table('affectations')->where('id', $affectationId)->value('nom')
+                : null;
+            $updateData['affectation_id'] = $affectationId;
+            $updateData['affectation']    = $affectationNom;  // mise à jour du cache
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        if ($request->has('responsable_du_vehicule')) $updateData['responsable_du_vehicule'] = $request->responsable_du_vehicule ?: null;
 
         if ($request->has('kilometrage')) {
             $updateData['kilometrage'] = (int)$request->kilometrage;
             $updateData['date_maj_km'] = now()->toDateString();
         }
-        if ($request->filled('statut'))                $updateData['statut']                             = self::STATUTS_MAP[$request->statut] ?? 'disponible';
-        if ($request->has('couleur'))                  $updateData['Couleur']                            = $request->couleur ?: null;
-        if ($request->has('dateAchat'))                $updateData['date_acquisition']                   = $request->dateAchat ?: null;
-        if ($request->has('cout_acquisition'))         $updateData['cout_acquisition']                   = (float)$request->cout_acquisition;
-        if ($request->has('valeur_residuelle'))        $updateData['valeur_residuelle']                  = $request->filled('valeur_residuelle') ? (float)$request->valeur_residuelle : null;
-        if ($request->has('consommation_moyenne'))     $updateData['consommation_moyenne']               = $request->filled('consommation_moyenne') ? (float)$request->consommation_moyenne : null;
-        if ($request->has('km_prochaine_vidange'))     $updateData['km_prochaine_vidange']               = $request->filled('km_prochaine_vidange') ? (int)$request->km_prochaine_vidange : null;
-        if ($request->has('km_prochaine_revision'))    $updateData['km_prochaine_revision']              = $request->filled('km_prochaine_revision') ? (int)$request->km_prochaine_revision : null;
-        if ($request->has('assuranceExpire'))          $updateData['date_expiration_assurance']          = $request->assuranceExpire ?: null;
-        if ($request->has('visiteExpire'))             $updateData['date_expiration_visite_technique']   = $request->visiteExpire ?: null;
+        if ($request->filled('statut'))             $updateData['statut']                             = self::STATUTS_MAP[$request->statut] ?? 'disponible';
+        if ($request->has('couleur'))               $updateData['couleur']                            = $request->couleur ?: null;
+        if ($request->has('dateAchat'))             $updateData['date_acquisition']                   = $request->dateAchat ?: null;
+        if ($request->has('cout_acquisition'))      $updateData['cout_acquisition']                   = (float)$request->cout_acquisition;
+        if ($request->has('valeur_residuelle'))     $updateData['valeur_residuelle']                  = $request->filled('valeur_residuelle') ? (float)$request->valeur_residuelle : null;
+        if ($request->has('consommation_moyenne'))  $updateData['consommation_moyenne']               = $request->filled('consommation_moyenne') ? (float)$request->consommation_moyenne : null;
+        if ($request->has('km_prochaine_vidange'))  $updateData['km_prochaine_vidange']               = $request->filled('km_prochaine_vidange') ? (int)$request->km_prochaine_vidange : null;
+        if ($request->has('km_prochaine_revision')) $updateData['km_prochaine_revision']              = $request->filled('km_prochaine_revision') ? (int)$request->km_prochaine_revision : null;
+        if ($request->has('assuranceExpire'))       $updateData['date_expiration_assurance']          = $request->assuranceExpire ?: null;
+        if ($request->has('visiteExpire'))          $updateData['date_expiration_visite_technique']   = $request->visiteExpire ?: null;
 
         if ($request->hasFile('image')) {
             $old = DB::table('vehicules')->where('immatriculation', $immatriculation)->value('photo');
@@ -483,14 +571,6 @@ class VehiculesController extends Controller
             'date_modification'        => now(),
         ]);
 
-        if ($request->filled('date_expiration')) {
-            try {
-                (new DocumentExpirationController())->notifierDocument($id);
-            } catch (\Throwable $e) {
-                Log::error("[storeDocument] Notification doc#{$id} | {$e->getMessage()}");
-            }
-        }
-
         $doc = DB::table('documents_vehicules')->find($id);
         return response()->json([
             'id'              => $doc->id,
@@ -550,14 +630,6 @@ class VehiculesController extends Controller
         }
 
         DB::table('documents_vehicules')->where('id', $documentId)->update($updateData);
-
-        if ($request->has('date_expiration') && $request->filled('date_expiration')) {
-            try {
-                (new DocumentExpirationController())->notifierDocument($documentId);
-            } catch (\Throwable $e) {
-                Log::error("[updateDocument] Notification doc#{$documentId} | {$e->getMessage()}");
-            }
-        }
 
         $updated = DB::table('documents_vehicules')->find($documentId);
         $statut  = 'valide';
@@ -741,7 +813,7 @@ class VehiculesController extends Controller
     }
 
     // =========================================================================
-    // 11. DONNÉES DE RÉFÉRENCE — CRUD COMPLET
+    // 11. DONNÉES DE RÉFÉRENCE — y compris CRUD affectations
     // =========================================================================
 
     public function references(): JsonResponse
@@ -775,6 +847,15 @@ class VehiculesController extends Controller
             ->where('est_actif', 1)->orderBy('annee', 'desc')
             ->select('id', 'annee')->get();
 
+        // ── Affectations ──────────────────────────────────────────────────────
+        $affectations = DB::table('affectations')
+            ->where('est_actif', 1)
+            ->whereNull('deleted_at')
+            ->orderBy('nom')
+            ->select('id', 'nom', 'code', 'description')
+            ->get();
+        // ─────────────────────────────────────────────────────────────────────
+
         $chauffeurs = DB::table('utilisateurs as u')
             ->join('roles as r', 'r.id', '=', 'u.role_id')
             ->where('r.code', 'chauffeur')
@@ -786,16 +867,108 @@ class VehiculesController extends Controller
             ->get();
 
         return response()->json([
-            'categories' => $categories,
-            'marques'    => $marques,
-            'modeles'    => $modeles,
-            'directions' => $directions,
-            'annees'     => $annees,
-            'chauffeurs' => $chauffeurs,
+            'categories'   => $categories,
+            'marques'      => $marques,
+            'modeles'      => $modeles,
+            'directions'   => $directions,
+            'annees'       => $annees,
+            'affectations' => $affectations,  // ← nouveau
+            'chauffeurs'   => $chauffeurs,
         ]);
     }
 
-    // ── CRUD Catégories ──────────────────────────────────────────────────────
+    // =========================================================================
+    // 12. CRUD AFFECTATIONS (référentiel)
+    // =========================================================================
+
+    /** GET  /admin/vehicules/references/affectations */
+    public function indexAffectations(): JsonResponse
+    {
+        $items = DB::table('affectations')
+            ->whereNull('deleted_at')
+            ->orderBy('nom')
+            ->select('id', 'nom', 'code', 'description', 'est_actif', 'created_at', 'updated_at')
+            ->get();
+
+        return response()->json($items);
+    }
+
+    /** POST /admin/vehicules/references/affectations */
+    public function storeAffectation(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'nom'         => 'required|string|max:150|unique:affectations,nom',
+            'code'        => 'nullable|string|max:30|unique:affectations,code',
+            'description' => 'nullable|string|max:500',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $id = DB::table('affectations')->insertGetId([
+            'nom'         => trim($request->nom),
+            'code'        => $request->filled('code') ? strtoupper(trim($request->code)) : null,
+            'description' => $request->description ?: null,
+            'est_actif'   => 1,
+            'created_at'  => now(),
+            'updated_at'  => now(),
+        ]);
+
+        return response()->json(DB::table('affectations')->find($id), 201);
+    }
+
+    /** PUT /admin/vehicules/references/affectations/{id} */
+    public function updateAffectation(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'nom'         => 'required|string|max:150|unique:affectations,nom,' . $id,
+            'code'        => 'nullable|string|max:30|unique:affectations,code,' . $id,
+            'description' => 'nullable|string|max:500',
+            'est_actif'   => 'nullable|boolean',
+        ]);
+        if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
+
+        $rows = DB::table('affectations')
+            ->where('id', $id)->whereNull('deleted_at')
+            ->update([
+                'nom'         => trim($request->nom),
+                'code'        => $request->filled('code') ? strtoupper(trim($request->code)) : null,
+                'description' => $request->description ?: null,
+                'est_actif'   => $request->has('est_actif') ? (int)(bool)$request->est_actif : 1,
+                'updated_at'  => now(),
+            ]);
+
+        if (!$rows) return response()->json(['message' => 'Affectation introuvable.'], 404);
+
+        // ── Mettre à jour le cache vehicules.affectation pour cette affectation ──
+        $updatedNom = trim($request->nom);
+        DB::table('vehicules')
+            ->where('affectation_id', $id)
+            ->where('est_supprime', 0)
+            ->update(['affectation' => $updatedNom, 'date_modification' => now()]);
+
+        return response()->json(DB::table('affectations')->find($id));
+    }
+
+    /** DELETE /admin/vehicules/references/affectations/{id} */
+    public function destroyAffectation(int $id): JsonResponse
+    {
+        $rows = DB::table('affectations')
+            ->where('id', $id)->whereNull('deleted_at')
+            ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
+
+        if (!$rows) return response()->json(['message' => 'Affectation introuvable.'], 404);
+
+        // Détacher tous les véhicules liés
+        DB::table('vehicules')
+            ->where('affectation_id', $id)
+            ->where('est_supprime', 0)
+            ->update(['affectation_id' => null, 'affectation' => null, 'date_modification' => now()]);
+
+        return response()->json(['message' => 'Affectation supprimée et véhicules détachés.']);
+    }
+
+    // =========================================================================
+    // 13. CRUD AUTRES RÉFÉRENCES (inchangé)
+    // =========================================================================
 
     public function storeCategorie(Request $request): JsonResponse
     {
@@ -840,8 +1013,6 @@ class VehiculesController extends Controller
         return response()->json(['message' => 'Catégorie supprimée.']);
     }
 
-    // ── CRUD Marques ─────────────────────────────────────────────────────────
-
     public function storeMarque(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -884,8 +1055,6 @@ class VehiculesController extends Controller
         if (!$rows) return response()->json(['message' => 'Marque introuvable.'], 404);
         return response()->json(['message' => 'Marque supprimée.']);
     }
-
-    // ── CRUD Modèles ─────────────────────────────────────────────────────────
 
     public function storeModele(Request $request): JsonResponse
     {
@@ -963,8 +1132,6 @@ class VehiculesController extends Controller
         return response()->json(['message' => 'Modèle supprimé.']);
     }
 
-    // ── CRUD Années ──────────────────────────────────────────────────────────
-
     public function storeAnnee(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -1014,8 +1181,9 @@ class VehiculesController extends Controller
 
     private function buildFileUrl(string $chemin): string
     {
+        if (!$chemin) return '';
         if (filter_var($chemin, FILTER_VALIDATE_URL)) return $chemin;
-        return Storage::url($chemin);
+        return config('app.url') . '/storage/' . ltrim($chemin, '/');
     }
 
     private function resolveMarqueId(?string $nom): ?int

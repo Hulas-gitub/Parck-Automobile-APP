@@ -1,1984 +1,1252 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import ReactDOM from 'react-dom';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
-import Sidebar from '../../components/Sidebar';
-import Header from '../../components/Header';
 
-// ============================================================================
-// HOOK — COMPTEUR ANIMÉ
-// ============================================================================
-const useCountUp = (target, duration = 1200, decimals = 0) => {
-  const [value, setValue] = useState(0);
-  const rafRef = useRef(null);
-  const startRef = useRef(null);
+import Sidebar        from '../../components/Sidebar';
+import Header         from '../../components/Header';
+import DashboardChart from '../../components/Dashboard-chart';
 
-  useEffect(() => {
-    if (target === 0) { setValue(0); return; }
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    startRef.current = null;
+import { getDashboardData, getKpiVehicules, BADGE_COLORS } from '../../api/Admin-Axios/Dashboard-axios';
 
-    const step = (ts) => {
-      if (!startRef.current) startRef.current = ts;
-      const progress = Math.min((ts - startRef.current) / duration, 1);
-      // easeOutExpo
-      const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      setValue(parseFloat((ease * target).toFixed(decimals)));
-      if (progress < 1) rafRef.current = requestAnimationFrame(step);
-    };
-    rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [target, duration, decimals]);
+// ─────────────────────────────────────────────────────────────
+// Helpers export
+// ─────────────────────────────────────────────────────────────
 
-  return value;
+/** Charge un script CDN une seule fois et résout quand il est prêt */
+const loadScript = (src, globalKey) =>
+  new Promise((resolve, reject) => {
+    if (window[globalKey]) { resolve(window[globalKey]); return; }
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) { existing.addEventListener('load', () => resolve(window[globalKey])); return; }
+    const s = document.createElement('script');
+    s.src = src; s.async = true;
+    s.onload  = () => resolve(window[globalKey]);
+    s.onerror = () => reject(new Error(`Impossible de charger ${src}`));
+    document.head.appendChild(s);
+  });
+
+/** Récupère toutes les lignes KPI (per_page=999) avec authentification */
+const fetchAllKpiRows = async (periode, search, immatriculation = '') => {
+  const params = new URLSearchParams({ periode, search, page: 1, per_page: 999 });
+  if (immatriculation) params.set('immatriculation', immatriculation);
+  const token = localStorage.getItem('token');
+  const base  = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+  const res   = await fetch(`${base}/admin/dashboard/kpi-vehicules?${params}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return json.data ?? [];
 };
 
-// ============================================================================
-// COMPOSANT TOOLTIP
-// ============================================================================
-const Tooltip = ({ children, label, darkMode }) => {
-  const [visible, setVisible] = useState(false);
-  const [pos, setPos] = useState({ x: 0, y: 0 });
-  const ref = useRef(null);
+/** En-têtes colonnes communes */
+const HEADERS_EXCEL = [
+  'Immatriculation','Marque','Modèle','Direction','Statut',
+  'Dispo %','Missions','Km','Interventions','Durée interv (h)',
+  'Coût missions','Coût interventions','Coût pièces','Coût total',
+  'CFA/km','Anomalies','Accidents',
+];
+const HEADERS_PDF = [
+  'Immat.','Marque / Modèle','Direction','Statut',
+  'Dispo%','Missions','Km','Interv.','Coût total','CFA/km','Anom.','Acc.',
+];
 
-  const handleMove = useCallback((e) => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect) return;
-    setPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-  }, []);
+const rowToExcel = r => [
+  r.immatriculation, r.marque, r.modele, r.direction, r.statut,
+  r.taux_disponibilite, r.total_missions, r.total_km, r.total_interventions,
+  r.total_duree_interventions_h, r.cout_missions, r.cout_interventions,
+  r.cout_pieces, r.cout_total, r.cout_par_km ?? '', r.nb_anomalies, r.nb_accidents,
+];
 
-  return (
-    <div ref={ref} className="relative"
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
-      onMouseMove={handleMove}>
-      {children}
-      {visible && label && (
-        <div className={`pointer-events-none absolute z-50 px-2.5 py-1.5 rounded-lg text-xs font-semibold shadow-xl whitespace-nowrap
-          ${darkMode ? 'bg-gray-700 text-white border border-gray-600' : 'bg-gray-900 text-white'}`}
-          style={{ left: pos.x + 12, top: pos.y - 32, transform: 'translateY(-50%)' }}>
-          {label}
-          <div className={`absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-2 rotate-45
-            ${darkMode ? 'bg-gray-700' : 'bg-gray-900'}`} />
-        </div>
-      )}
-    </div>
+const rowToPdf = r => [
+  r.immatriculation,
+  `${r.marque} ${r.modele}`,
+  r.direction,
+  r.statut,
+  `${r.taux_disponibilite}%`,
+  r.total_missions,
+  Number(r.total_km).toLocaleString('fr-FR'),
+  r.total_interventions,
+  `${Number(r.cout_total).toLocaleString('fr-FR')} CFA`,
+  r.cout_par_km != null ? Number(r.cout_par_km).toLocaleString('fr-FR') : '—',
+  r.nb_anomalies,
+  r.nb_accidents,
+];
+
+/** Export Excel via SheetJS CDN */
+const exportExcel = async (rows, periode, suffix = '') => {
+  const XLSX = await loadScript(
+    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+    'XLSX',
   );
+  const wsData = [HEADERS_EXCEL, ...rows.map(rowToExcel)];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'KPI Véhicules');
+  XLSX.writeFile(wb, `kpi_vehicules_${periode}${suffix}_${new Date().toISOString().slice(0,10)}.xlsx`);
 };
 
-// ============================================================================
-// DONNÉES DE RÉFÉRENCE
-// ============================================================================
-const NIVEAUX_DEGATS = [
-  { code: 'leger',    libelle: 'Léger',    color: '#10b981', bg: 'bg-green-100 text-green-700',   icon: 'bi-shield-check' },
-  { code: 'modere',   libelle: 'Modéré',   color: '#f59e0b', bg: 'bg-yellow-100 text-yellow-700', icon: 'bi-shield-exclamation' },
-  { code: 'grave',    libelle: 'Grave',    color: '#f97316', bg: 'bg-orange-100 text-orange-700',  icon: 'bi-shield-fill-exclamation' },
-  { code: 'critique', libelle: 'Critique', color: '#ef4444', bg: 'bg-red-100 text-red-700',        icon: 'bi-shield-fill-x' },
-];
+const exportPdf = async (rows, periode, periodeLabel, suffix = '') => {
 
-const TYPES_RESPONSABILITE = [
-  { code: 'responsable',         libelle: 'Responsable',           color: '#ef4444', bg: 'bg-red-100 text-red-700' },
-  { code: 'tiers_responsable',   libelle: 'Tiers Responsable',     color: '#6366f1', bg: 'bg-indigo-100 text-indigo-700' },
-  { code: 'responsabilite_partagee', libelle: 'Responsabilité Partagée', color: '#f59e0b', bg: 'bg-yellow-100 text-yellow-700' },
-  { code: 'indetermine',         libelle: 'Indéterminé',           color: '#94a3b8', bg: 'bg-gray-100 text-gray-600' },
-  { code: 'force_majeure',       libelle: 'Force Majeure',         color: '#8b5cf6', bg: 'bg-purple-100 text-purple-700' },
-];
+  await new Promise((resolve, reject) => {
+    if (window.jspdf?.jsPDF) { resolve(); return; }
+    document.querySelectorAll('script[src*="jspdf"]').forEach(s => s.remove());
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.async = false;
+    s.onload = () => window.jspdf?.jsPDF ? resolve() : reject(new Error('jsPDF non disponible'));
+    s.onerror = () => reject(new Error('Impossible de charger jsPDF'));
+    document.head.appendChild(s);
+  });
 
-const STATUTS = [
-  { code: 'declare',      libelle: 'Déclaré',          color: '#6366f1', bg: 'bg-indigo-100 text-indigo-700', icon: 'bi-flag-fill' },
-  { code: 'en_cours',     libelle: 'En cours',         color: '#f59e0b', bg: 'bg-yellow-100 text-yellow-700', icon: 'bi-clock-fill' },
-  { code: 'en_reparation',libelle: 'En réparation',    color: '#06b6d4', bg: 'bg-cyan-100 text-cyan-700',     icon: 'bi-tools' },
-  { code: 'assurance',    libelle: 'Dossier assurance',color: '#8b5cf6', bg: 'bg-purple-100 text-purple-700', icon: 'bi-file-earmark-medical-fill' },
-  { code: 'cloture',      libelle: 'Clôturé',          color: '#10b981', bg: 'bg-green-100 text-green-700',   icon: 'bi-check-circle-fill' },
-  { code: 'litige',       libelle: 'Litige',           color: '#ef4444', bg: 'bg-red-100 text-red-700',       icon: 'bi-exclamation-octagon-fill' },
-];
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
-const PERIODES = [
-  { code: '7j',   libelle: '7 jours',     jours: 7 },
-  { code: '30j',  libelle: 'Mensuel',     jours: 30 },
-  { code: '90j',  libelle: 'Trimestriel', jours: 90 },
-  { code: '180j', libelle: 'Semestriel',  jours: 180 },
-  { code: '365j', libelle: 'Annuel',      jours: 365 },
-];
+  const pageW  = doc.internal.pageSize.getWidth();
+  const pageH  = doc.internal.pageSize.getHeight();
+  const margin = 10;
+  const availW = pageW - margin * 2;
 
-// ============================================================================
-// DONNÉES DE DÉMONSTRATION
-// ============================================================================
-const CHAUFFEURS = [
-  { id: 1, nom: 'Pierre Nzong',     matricule: 'DRV-001', direction: 'Direction Technique',  avatar_color: '#8b5cf6', nb_accidents_total: 3 },
-  { id: 2, nom: 'Luc Mba',          matricule: 'DRV-002', direction: 'Direction Technique',  avatar_color: '#06b6d4', nb_accidents_total: 1 },
-  { id: 3, nom: 'Marc Essono',      matricule: 'DRV-003', direction: 'Direction Logistique', avatar_color: '#6366f1', nb_accidents_total: 5 },
-  { id: 4, nom: 'Alain Nguema',     matricule: 'DRV-004', direction: 'Direction Logistique', avatar_color: '#10b981', nb_accidents_total: 2 },
-  { id: 5, nom: 'Claire Bouanga',   matricule: 'DRV-005', direction: 'Transport de Fonds',   avatar_color: '#f59e0b', nb_accidents_total: 0 },
-  { id: 6, nom: 'François Obame',   matricule: 'DRV-006', direction: 'Direction Technique',  avatar_color: '#ef4444', nb_accidents_total: 4 },
-  { id: 7, nom: 'Sophie Ondo',      matricule: 'DRV-007', direction: 'Direction Générale',   avatar_color: '#f97316', nb_accidents_total: 2 },
-  { id: 8, nom: 'Hulas Djyembi',    matricule: 'DRV-008', direction: 'Direction Générale',   avatar_color: '#ec4899', nb_accidents_total: 1 },
-];
+  // ── En-tête du document ───────────────────────────────────
+  const titre = suffix
+    ? `KPI Véhicule — ${suffix} — ${periodeLabel}`
+    : `KPI Véhicules — ${periodeLabel}`;
 
-const VEHICULES = [
-  { immat: 'GA-1234-AB', marque: 'Toyota', modele: 'Land Cruiser', type: 'SUV' },
-  { immat: 'GA-5678-CD', marque: 'Ford',   modele: 'Ranger',       type: 'Pick-up' },
-  { immat: 'GA-9012-EF', marque: 'Nissan', modele: 'Patrol',       type: 'SUV' },
-  { immat: 'GA-3456-GH', marque: 'Toyota', modele: 'Hilux',        type: 'Pick-up' },
-  { immat: 'GA-7890-IJ', marque: 'Mitsubishi', modele: 'L200',     type: 'Pick-up' },
-  { immat: 'GA-2345-KL', marque: 'Mercedes', modele: 'Sprinter',   type: 'Fourgon' },
-  { immat: 'GA-6789-MN', marque: 'Hyundai', modele: 'H350',        type: 'Fourgon' },
-];
+  doc.setFontSize(13);
+  doc.setTextColor(30, 30, 30);
+  doc.text(titre, margin, 14);
 
-const LIEUX = [
-  'Carrefour Mont-Bouët, Libreville', 'Avenue Omar Bongo, Libreville',
-  'Boulevard Triomphal, Libreville', 'Route de Kango, PK12',
-  'Carrefour IAI, Libreville', 'Route nationale 1, PK45',
-  'Port d\'Owendo, Libreville', 'Quartier Akanda, Libreville',
-  'Route Ntoum, PK25', 'Avenue Léon MBA, Libreville',
-];
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text(
+    `Exporté le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+    margin, 20
+  );
 
-const genAccidents = () => {
-  const accidents = [];
-  let id = 1;
-  const now = new Date();
+  // ── Définition des colonnes ───────────────────────────────
+  const cols = [
+    { header: 'Immat.',     get: r => r.immatriculation,                                                                          w: 22 },
+    { header: 'Marque',     get: r => r.marque,                                                                                   w: 20 },
+    { header: 'Modèle',     get: r => r.modele,                                                                                   w: 20 },
+    { header: 'Direction',  get: r => r.direction ?? '—',                                                                         w: 24 },
+    { header: 'Statut',     get: r => r.statut,                                                                                   w: 22 },
+    { header: 'Dispo%',     get: r => `${r.taux_disponibilite}%`,                                                                 w: 14 },
+    { header: 'Missions',   get: r => String(r.total_missions),                                                                   w: 16 },
+    { header: 'Km',         get: r => Number(r.total_km).toLocaleString('fr-FR'),                                                 w: 20 },
+    { header: 'Interv.',    get: r => String(r.total_interventions),                                                              w: 14 },
+    { header: 'Durée (h)',  get: r => `${r.total_duree_interventions_h}h`,                                                        w: 16 },
+    { header: 'Coût total', get: r => `${Number(r.cout_total).toLocaleString('fr-FR')} F`,                                        w: 30 },
+    { header: 'CFA/km',     get: r => r.cout_par_km != null ? Number(r.cout_par_km).toLocaleString('fr-FR') : '—',               w: 18 },
+    { header: 'Anom.',      get: r => String(r.nb_anomalies),                                                                     w: 13 },
+    { header: 'Acc.',       get: r => String(r.nb_accidents),                                                                     w: 13 },
+  ];
 
-  CHAUFFEURS.forEach(ch => {
-    const nb = ch.nb_accidents_total;
-    for (let a = 0; a < nb; a++) {
-      const daysAgo = Math.floor(Math.random() * 365);
-      const date = new Date(now);
-      date.setDate(date.getDate() - daysAgo);
-
-      const niveau = NIVEAUX_DEGATS[Math.floor(Math.random() * NIVEAUX_DEGATS.length)];
-      const statut = STATUTS[Math.floor(Math.random() * STATUTS.length)];
-      const responsabilite = TYPES_RESPONSABILITE[Math.floor(Math.random() * TYPES_RESPONSABILITE.length)];
-      const vehicule = VEHICULES[Math.floor(Math.random() * VEHICULES.length)];
-      const lieu = LIEUX[Math.floor(Math.random() * LIEUX.length)];
-
-      const coutEstime = Math.floor(Math.random() * 5000000) + 50000;
-      const coutFinal = statut.code === 'cloture' ? Math.floor(coutEstime * (0.8 + Math.random() * 0.4)) : null;
-      const montantAssurance = (Math.random() > 0.4 && coutFinal) ? Math.floor(coutFinal * 0.7) : null;
-      const immobilise = niveau.code === 'grave' || niveau.code === 'critique' || Math.random() > 0.6;
-      const joursImmob = immobilise ? Math.floor(Math.random() * 30) + 1 : null;
-
-      accidents.push({
-        id: id++,
-        ref: `ACC-${String(id).padStart(5, '0')}`,
-        vehicule_immatriculation: vehicule.immat,
-        vehicule_marque: vehicule.marque,
-        vehicule_modele: vehicule.modele,
-        chauffeur_id: ch.id,
-        chauffeur_nom: ch.nom,
-        chauffeur_matricule: ch.matricule,
-        chauffeur_direction: ch.direction,
-        avatar_color: ch.avatar_color,
-        mission_id: Math.random() > 0.3 ? `MIS-${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}` : null,
-        date_accident: date.toISOString(),
-        lieu,
-        position_gps: `${(0.39 + (Math.random() - 0.5) * 0.3).toFixed(6)}, ${(9.45 + (Math.random() - 0.5) * 0.3).toFixed(6)}`,
-        description: [
-          'Collision frontale avec un autre véhicule sur l\'intersection.',
-          'Accrochage lors d\'une manœuvre de stationnement.',
-          'Sortie de route en raison des conditions météo défavorables.',
-          'Collision par l\'arrière lors d\'un arrêt au feu rouge.',
-          'Renversement d\'un piéton lors d\'un demi-tour.',
-          'Choc latéral avec une moto deux-roues.',
-          'Glissade sur route mouillée, heurte le terre-plein central.',
-        ][Math.floor(Math.random() * 7)],
-        type_responsabilite: responsabilite.code,
-        niveau_degats: niveau.code,
-        vehicule_immobilise: immobilise,
-        jours_immobilisation: joursImmob,
-        km_au_moment_accident: Math.floor(Math.random() * 200000) + 10000,
-        assure: Math.random() > 0.1,
-        cout_estime: coutEstime,
-        cout_reparation_final: coutFinal,
-        montant_reclame_assurance: montantAssurance,
-        montant_verse_assurance: (montantAssurance && statut.code === 'cloture') ? Math.floor(montantAssurance * 0.9) : null,
-        statut: statut.code,
-        notes: Math.random() > 0.6 ? 'Rapport de police en cours de traitement.' : null,
-        rapport_police: Math.random() > 0.5,
-        photos_count: Math.floor(Math.random() * 6),
-        blessures: Math.random() > 0.7,
-        nb_blesses: Math.random() > 0.7 ? Math.floor(Math.random() * 3) + 1 : 0,
-        date_creation: date.toISOString(),
-      });
+  // ── Ajustement proportionnel sans arrondi cumulatif ───────
+  const totalW = cols.reduce((s, c) => s + c.w, 0);
+  const scale  = availW / totalW;
+  let allocated = 0;
+  cols.forEach((col, i) => {
+    if (i < cols.length - 1) {
+      col.width  = scale * col.w;
+      allocated += col.width;
+    } else {
+      col.width = availW - allocated; // dernière colonne = reste exact
     }
   });
 
-  return accidents.sort((a, b) => new Date(b.date_accident) - new Date(a.date_accident));
-};
+  // ── Constantes de mise en page ────────────────────────────
+  const rowH     = 7;
+  const headH    = 8;
+  const fontSize = 6.5;
+  const startX   = margin;
+  let   y        = 26;
 
-const ALL_ACCIDENTS = genAccidents();
+  const tableW = () => cols.reduce((s, c) => s + c.width, 0);
 
-// ============================================================================
-// UTILITAIRES
-// ============================================================================
-const getNiveauInfo = (code) => NIVEAUX_DEGATS.find(n => n.code === code) || { libelle: code, color: '#94a3b8', bg: 'bg-gray-100 text-gray-600' };
-const getStatutInfo = (code) => STATUTS.find(s => s.code === code) || { libelle: code, color: '#94a3b8', bg: 'bg-gray-100 text-gray-600', icon: 'bi-circle' };
-const getResponsabiliteInfo = (code) => TYPES_RESPONSABILITE.find(r => r.code === code) || { libelle: code, bg: 'bg-gray-100 text-gray-600' };
+  // ── Dessin de l'en-tête de tableau ────────────────────────
+  const drawHeader = () => {
+    doc.setFillColor(59, 130, 246);
+    doc.rect(startX, y, tableW(), headH, 'F');
 
-const formatCFA = (val) => {
-  if (!val && val !== 0) return '—';
-  return new Intl.NumberFormat('fr-FR').format(val) + ' FCFA';
-};
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', 'bold');
 
-const formatRelative = (isoDate) => {
-  const diff = (new Date() - new Date(isoDate)) / 1000;
-  if (diff < 3600) return `Il y a ${Math.floor(diff / 60)} min`;
-  if (diff < 86400) return `Il y a ${Math.floor(diff / 3600)}h`;
-  if (diff < 604800) return `Il y a ${Math.floor(diff / 86400)} j`;
-  return new Date(isoDate).toLocaleDateString('fr-FR');
-};
-
-const exportToExcel = (data, filename, headers) => {
-  let csv = '\uFEFF' + headers.join(';') + '\n';
-  data.forEach(r => { csv += r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';') + '\n'; });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-  link.download = `${filename}.csv`;
-  link.click();
-  URL.revokeObjectURL(link.href);
-};
-
-const exportToPDF = (title, headers, rows) => {
-  const win = window.open('', '_blank');
-  if (!win) return;
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-  <style>@page{size:landscape;margin:15mm}body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;padding:20px}
-  h1{font-size:20px;border-bottom:3px solid #1e3a5f;padding-bottom:8px;margin-bottom:12px}
-  .meta{color:#64748b;font-size:11px;margin-bottom:14px}
-  table{width:100%;border-collapse:collapse;font-size:10px}
-  th{background:#1e3a5f;color:#fff;padding:8px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.5px}
-  td{padding:7px 10px;border-bottom:1px solid #e2e8f0}
-  tr:nth-child(odd) td{background:#fff5f5}tr:nth-child(even) td{background:#f8fafc}
-  .footer{margin-top:20px;text-align:center;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;padding-top:8px}
-  </style></head><body>
-  <h1>🚨 ${title}</h1><div class="meta">Export le ${new Date().toLocaleDateString('fr-FR')} — ${rows.length} accident(s)</div>
-  <table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-  <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c ?? '—'}</td>`).join('')}</tr>`).join('')}</tbody></table>
-  <div class="footer">SGS Fleetify — Registre des Accidents — ${new Date().getFullYear()}</div>
-  <script>window.onload=()=>window.print()</script></body></html>`);
-  win.document.close();
-};
-
-// ============================================================================
-// TOAST — couleur dépend du thème actif
-// ============================================================================
-const Toast = ({ message, type, onClose, theme }) => {
-  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
-  const icon = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', warning: 'bi-exclamation-triangle-fill', info: 'bi-info-circle-fill' }[type];
-  // success & info → couleur du thème | error → rouge | warning → orange
-  const bg = type === 'error' ? '#ef4444' : type === 'warning' ? '#f97316' : theme?.primary || '#3b82f6';
-  const bgDark = type === 'error' ? '#dc2626' : type === 'warning' ? '#ea580c' : theme?.primaryDark || '#2563eb';
-  return (
-    <div className="fixed top-4 right-4 z-[9999] text-white px-5 py-3.5 rounded-xl shadow-2xl flex items-center gap-3 min-w-[280px]"
-      style={{ background: `linear-gradient(135deg, ${bg}, ${bgDark})`, animation: 'fadeInDown .3s ease-out' }}>
-      <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
-        <i className={`bi ${icon} text-base`}></i>
-      </div>
-      <span className="font-semibold text-sm flex-1">{message}</span>
-      <button onClick={onClose} className="ml-2 hover:opacity-70 transition-opacity">
-        <i className="bi bi-x-lg text-sm"></i>
-      </button>
-    </div>
-  );
-};
-
-// ============================================================================
-// MINI DONUT CHART SVG — avec tooltip au survol des segments
-// ============================================================================
-const DonutChart = ({ data, size = 120, strokeWidth = 14, darkMode }) => {
-  const [tooltip, setTooltip] = useState(null); // { label, pct, x, y }
-  const svgRef = useRef(null);
-  const r = (size - strokeWidth) / 2;
-  const circ = 2 * Math.PI * r;
-  const total = data.reduce((s, d) => s + d.value, 0) || 1;
-  let offset = 0;
-
-  const segments = data.map((d, i) => {
-    const pct = d.value / total;
-    const len = pct * circ;
-    const seg = { ...d, i, pct, len, offset };
-    offset += len;
-    return seg;
-  });
-
-  const handleSegmentHover = (e, seg) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setTooltip({
-      label: seg.label,
-      value: seg.value,
-      pct: (seg.pct * 100).toFixed(1),
-      color: seg.color,
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+    let x = startX;
+    cols.forEach(col => {
+      const maxChars = Math.floor(col.width / (fontSize * 0.33));
+      const label    = col.header.length > maxChars
+        ? col.header.slice(0, maxChars - 1) + '.'
+        : col.header;
+      doc.text(label, x + 1.5, y + headH - 2.5);
+      x += col.width;
     });
+
+    y += headH;
   };
 
-  return (
-    <div className="relative inline-block" ref={svgRef}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)', display: 'block' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none"
-          stroke={darkMode ? '#1f2937' : '#f1f5f9'} strokeWidth={strokeWidth} />
-        {segments.map((seg) => (
-          <circle key={seg.i} cx={size / 2} cy={size / 2} r={r} fill="none"
-            stroke={seg.color}
-            strokeWidth={tooltip?.label === seg.label ? strokeWidth + 3 : strokeWidth}
-            strokeDasharray={`${seg.len} ${circ - seg.len}`}
-            strokeDashoffset={-seg.offset}
-            strokeLinecap="round"
-            style={{ transition: 'stroke-width 0.15s ease, stroke-dasharray 0.8s ease', cursor: 'pointer' }}
-            onMouseMove={(e) => handleSegmentHover(e, seg)}
-            onMouseLeave={() => setTooltip(null)} />
-        ))}
-      </svg>
-      {tooltip && (
-        <div className={`pointer-events-none absolute z-50 px-2.5 py-2 rounded-lg text-xs font-semibold shadow-xl whitespace-nowrap
-          ${darkMode ? 'bg-gray-700 text-white border border-gray-600' : 'bg-gray-900 text-white'}`}
-          style={{ left: tooltip.x + 10, top: tooltip.y - 38 }}>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: tooltip.color }}></span>
-            <span>{tooltip.label}</span>
-          </div>
-          <div className="mt-0.5 text-[11px] opacity-80">{tooltip.value} accident{tooltip.value > 1 ? 's' : ''} · {tooltip.pct}%</div>
-        </div>
-      )}
-    </div>
-  );
-};
+  // ── Dessin d'une ligne de données ─────────────────────────
+  const drawRow = (row, idx) => {
+    // Fond alterné
+    if (idx % 2 === 0) {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(startX, y, tableW(), rowH, 'F');
+    } else {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(startX, y, tableW(), rowH, 'F');
+    }
 
-// ============================================================================
-// LIGHTBOX — visionneuse plein écran
-// ============================================================================
-const Lightbox = ({ photos, startIndex, onClose }) => {
-  const [idx, setIdx] = useState(startIndex);
+    doc.setTextColor(40, 40, 40);
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', 'normal');
 
-  useEffect(() => {
-    const h = (e) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowRight') setIdx(i => (i + 1) % photos.length);
-      if (e.key === 'ArrowLeft')  setIdx(i => (i - 1 + photos.length) % photos.length);
-    };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, [photos.length, onClose]);
+    let x = startX;
+    cols.forEach(col => {
+      const raw      = col.get(row) ?? '';
+      const maxChars = Math.floor(col.width / (fontSize * 0.33));
+      const cell     = String(raw).length > maxChars
+        ? String(raw).slice(0, maxChars - 1) + '…'
+        : String(raw);
+      doc.text(cell, x + 1.5, y + rowH - 2);
+      x += col.width;
+    });
 
-  const photo = photos[idx];
+    // Séparateur horizontal léger
+    doc.setDrawColor(220, 220, 220);
+    doc.setLineWidth(0.1);
+    doc.line(startX, y + rowH, startX + tableW(), y + rowH);
 
-  return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[10000] bg-black/95 flex flex-col"
-      onClick={onClose}>
+    y += rowH;
+  };
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 shrink-0" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-            <i className="bi bi-camera-fill text-white text-sm"></i>
-          </div>
-          <div>
-            <p className="text-white font-semibold text-sm">{photo.name}</p>
-            <p className="text-gray-400 text-xs">{idx + 1} / {photos.length}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <a href={photo.url} download={photo.name}
-            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            onClick={e => e.stopPropagation()}>
-            <i className="bi bi-download"></i> Télécharger
-          </a>
-          <button onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors">
-            <i className="bi bi-x-lg text-sm"></i>
-          </button>
-        </div>
-      </div>
+  // ── Vérification saut de page ─────────────────────────────
+  const checkNewPage = () => {
+    if (y + rowH > pageH - margin) {
+      doc.addPage();
+      y = margin + 4;
+      drawHeader();
+    }
+  };
 
-      {/* Image principale */}
-      <div className="flex-1 flex items-center justify-center px-16 min-h-0" onClick={e => e.stopPropagation()}>
-        {/* Flèche gauche */}
-        {photos.length > 1 && (
-          <button onClick={() => setIdx(i => (i - 1 + photos.length) % photos.length)}
-            className="absolute left-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all hover:scale-110">
-            <i className="bi bi-chevron-left text-lg"></i>
-          </button>
-        )}
+  // ── Rendu du tableau ──────────────────────────────────────
+  drawHeader();
 
-        <img src={photo.url} alt={photo.name}
-          className="max-h-full max-w-full object-contain rounded-lg shadow-2xl select-none"
-          style={{ animation: 'fadeInUp .2s ease-out' }} />
-
-        {/* Flèche droite */}
-        {photos.length > 1 && (
-          <button onClick={() => setIdx(i => (i + 1) % photos.length)}
-            className="absolute right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all hover:scale-110">
-            <i className="bi bi-chevron-right text-lg"></i>
-          </button>
-        )}
-      </div>
-
-      {/* Thumbnails */}
-      {photos.length > 1 && (
-        <div className="flex items-center justify-center gap-2 px-6 py-4 shrink-0" onClick={e => e.stopPropagation()}>
-          {photos.map((p, i) => (
-            <button key={p.id} onClick={() => setIdx(i)}
-              className={`w-14 h-14 rounded-lg overflow-hidden transition-all border-2 ${
-                i === idx ? 'border-white scale-110' : 'border-transparent opacity-50 hover:opacity-80'
-              }`}>
-              <img src={p.url} alt={p.name} className="w-full h-full object-cover" />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>,
-    document.body
-  );
-};
-
-// ============================================================================
-// MODAL DÉTAIL ACCIDENT
-// ============================================================================
-const AccidentModal = ({ accident: a, darkMode, theme, onClose, onEdit, onDelete, onChangeStatut }) => {
-  const niveau = getNiveauInfo(a.niveau_degats);
-  const statut = getStatutInfo(a.statut);
-  const resp = getResponsabiliteInfo(a.type_responsabilite);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [lightbox, setLightbox] = useState(null); // index de la photo ouverte
-
-  const photos = a.photos || [];
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-2xl w-[96vw] h-[96vh] overflow-hidden flex flex-col shadow-2xl`}>
-
-        {/* Header */}
-        <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-between`}
-          style={{ background: `linear-gradient(135deg, ${theme.primary}18, transparent)` }}>
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white text-xl shadow-lg"
-              style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
-              <i className="bi bi-car-front-fill text-white text-xl"></i>
-            </div>
-            <div>
-              <div className="flex items-center gap-3">
-                <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{a.ref}</h2>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${niveau.bg}`}>
-                  <i className={`${niveau.icon} mr-1`}></i>{niveau.libelle}
-                </span>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statut.bg}`}>
-                  <i className={`${statut.icon} mr-1`}></i>{statut.libelle}
-                </span>
-              </div>
-              <p className={`text-sm mt-0.5 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                {new Date(a.date_accident).toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                {' '}à{' '}
-                {new Date(a.date_accident).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-              </p>
-            </div>
-          </div>
-          <button onClick={onClose}
-            className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'} transition-colors`}>
-            <i className="bi bi-x-lg text-lg"></i>
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-
-          {/* Alerte blessures */}
-          {a.blessures && (
-            <div className={`rounded-xl p-4 border border-red-300 mb-5 ${darkMode ? 'bg-red-900/20' : 'bg-red-50'} flex items-center gap-3`}>
-              <i className="bi bi-person-fill-x text-red-500 text-2xl"></i>
-              <div>
-                <p className={`text-sm font-bold ${darkMode ? 'text-red-400' : 'text-red-700'}`}>
-                  Accident avec blessures — {a.nb_blesses} blessé(s) signalé(s)
-                </p>
-                <p className={`text-xs ${darkMode ? 'text-red-500' : 'text-red-400'}`}>Dossier médical et rapport d'incident requis</p>
-              </div>
-            </div>
-          )}
-
-          {/* Layout 3 colonnes */}
-          <div className="grid grid-cols-3 gap-5">
-
-            {/* ── COLONNE 1 ── Chauffeur & Détails */}
-            <div className="space-y-4">
-
-              {/* Chauffeur & Véhicule */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-blue-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-person-fill mr-1.5"></i>Chauffeur & Véhicule
-                </p>
-                <div className="flex items-center gap-3 mb-4 pb-4" style={{ borderBottom: `1px solid ${darkMode ? '#374151' : '#dbeafe'}` }}>
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0"
-                    style={{ background: a.avatar_color }}>{a.chauffeur_nom.charAt(0)}</div>
-                  <div>
-                    <p className={`font-bold text-base ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{a.chauffeur_nom}</p>
-                    <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.chauffeur_matricule}</p>
-                    <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.chauffeur_direction}</p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {[
-                    ['Véhicule',       `${a.vehicule_marque} ${a.vehicule_modele}`, 'bi-car-front-fill'],
-                    ['Immatriculation', a.vehicule_immatriculation,                  'bi-card-text'],
-                    ['Kilométrage',    a.km_au_moment_accident ? `${a.km_au_moment_accident.toLocaleString('fr-FR')} km` : '—', 'bi-speedometer2'],
-                    ['Mission liée',   a.mission_id || 'Aucune',                    'bi-geo-fill'],
-                  ].map(([l, v, ic], i) => (
-                    <div key={i} className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <i className={`bi ${ic} text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                        <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{l}</span>
-                      </div>
-                      <span className={`text-xs font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>{v}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Détails accident */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-orange-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-geo-alt-fill mr-1.5"></i>Détails de l'accident
-                </p>
-                <div className="space-y-3">
-                  {[
-                    ['Lieu',              a.lieu || '—',      'bi-pin-map-fill'],
-                    ['Position GPS',      a.position_gps || '—', 'bi-crosshair'],
-                    ['Rapport police',    a.rapport_police ? 'Disponible ✓' : 'Non disponible', 'bi-file-earmark-text-fill'],
-                  ].map(([l, v, ic], i) => (
-                    <div key={i} className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2 shrink-0">
-                        <i className={`bi ${ic} text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                        <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{l}</span>
-                      </div>
-                      <span className={`text-xs font-semibold text-right ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>{v}</span>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <i className="bi bi-person-badge-fill text-xs" style={{ color: darkMode ? '#6b7280' : '#9ca3af' }}></i>
-                      <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Responsabilité</span>
-                    </div>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${resp.bg}`}>{getResponsabiliteInfo(a.type_responsabilite).libelle}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <i className="bi bi-slash-circle-fill text-xs" style={{ color: darkMode ? '#6b7280' : '#9ca3af' }}></i>
-                      <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Véhicule immobilisé</span>
-                    </div>
-                    {a.vehicule_immobilise
-                      ? <span className="text-red-500 font-semibold text-xs"><i className="bi bi-x-circle-fill mr-1"></i>Oui · {a.jours_immobilisation} j</span>
-                      : <span className="text-green-500 font-semibold text-xs"><i className="bi bi-check-circle-fill mr-1"></i>Non</span>}
-                  </div>
-                </div>
-              </div>
-
-              {/* Description */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-chat-left-text-fill mr-1.5"></i>Description
-                </p>
-                <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'} leading-relaxed`}>{a.description || '—'}</p>
-                {a.notes && (
-                  <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                    <p className={`text-xs italic ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                      <i className="bi bi-sticky-fill mr-1.5"></i>{a.notes}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ── COLONNE 2 ── Coûts & Photos */}
-            <div className="space-y-4">
-
-              {/* Coûts & Assurance */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-green-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-cash-stack mr-1.5"></i>Coûts & Assurance
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { label: 'Coût estimé',          val: formatCFA(a.cout_estime),               icon: 'bi-calculator-fill',           color: '#f59e0b' },
-                    { label: 'Coût final réparation', val: formatCFA(a.cout_reparation_final),     icon: 'bi-tools',                     color: '#06b6d4' },
-                    { label: 'Réclamé assurance',     val: formatCFA(a.montant_reclame_assurance), icon: 'bi-file-earmark-medical-fill',  color: '#8b5cf6' },
-                    { label: 'Versé assurance',       val: formatCFA(a.montant_verse_assurance),   icon: 'bi-check2-circle',             color: '#10b981' },
-                  ].map((k, i) => (
-                    <div key={i} className={`${darkMode ? 'bg-gray-700/60' : 'bg-white'} rounded-xl p-4 shadow-sm`}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${k.color}22` }}>
-                          <i className={`${k.icon} text-sm`} style={{ color: k.color }}></i>
-                        </div>
-                        <span className={`text-[10px] font-semibold ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{k.label}</span>
-                      </div>
-                      <p className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'} break-words`}>{k.val}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-
-            {/* ── COLONNE 3 ── Photos & Statut */}
-            <div className="space-y-4">
-
-              {/* Photos */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-camera-fill mr-1.5"></i>Photos
-                  {photos.length > 0 && (
-                    <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-bold"
-                      style={{ background: `${theme.primary}22`, color: theme.primary }}>{photos.length}</span>
-                  )}
-                </p>
-                {photos.length === 0 ? (
-                  <div className={`text-center py-8 rounded-xl border-2 border-dashed ${darkMode ? 'border-gray-700 text-gray-600' : 'border-gray-200 text-gray-300'}`}>
-                    <i className="bi bi-image text-4xl block mb-2"></i>
-                    <p className="text-xs">Aucune photo disponible</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-3 gap-2">
-                    {photos.map((photo, i) => (
-                      <button key={photo.id} onClick={() => setLightbox(i)}
-                        className="relative group rounded-xl overflow-hidden aspect-square transition-all hover:scale-105 hover:shadow-lg">
-                        <img src={photo.url} alt={photo.name} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
-                          <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 rounded-full p-2">
-                            <i className="bi bi-zoom-in text-white text-base"></i>
-                          </div>
-                        </div>
-                        {i === 0 && photos.length > 1 && (
-                          <span className="absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-black/50 text-white">
-                            1/{photos.length}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Changer le statut */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-indigo-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-arrow-repeat mr-1.5"></i>Changer le statut
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {STATUTS.map(s => (
-                    <button key={s.code} onClick={() => onChangeStatut(a.id, s.code)}
-                      className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 ${
-                        a.statut === s.code
-                          ? `${s.bg} border-transparent shadow-sm`
-                          : darkMode ? 'border-gray-700 text-gray-400 hover:bg-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-100'
-                      }`}>
-                      <i className={`${s.icon}`}></i>{s.libelle}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-between`}>
-          <div className="flex items-center gap-2">
-            <button onClick={() => onEdit(a)}
-              className="px-4 py-2.5 rounded-lg text-white text-sm font-semibold flex items-center gap-2 transition-colors shadow-sm"
-              style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
-              <i className="bi bi-pencil-fill"></i> Modifier
-            </button>
-            {!confirmDelete ? (
-              <button onClick={() => setConfirmDelete(true)}
-                className="px-4 py-2.5 rounded-lg border border-red-300 text-red-500 text-sm font-semibold flex items-center gap-2 hover:bg-red-50 transition-colors">
-                <i className="bi bi-trash3-fill"></i> Supprimer
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Confirmer ?</span>
-                <button onClick={() => { onDelete(a.id); onClose(); }}
-                  className="px-3 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-semibold transition-colors">Oui</button>
-                <button onClick={() => setConfirmDelete(false)}
-                  className={`px-3 py-2 rounded-lg text-xs font-semibold ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'} transition-colors`}>Non</button>
-              </div>
-            )}
-          </div>
-          <button onClick={onClose}
-            className={`px-5 py-2.5 rounded-lg text-sm font-semibold ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors`}>
-            Fermer
-          </button>
-        </div>
-      </div>
-
-      {/* Lightbox */}
-      {lightbox !== null && photos.length > 0 && (
-        <Lightbox photos={photos} startIndex={lightbox} onClose={() => setLightbox(null)} />
-      )}
-    </div>
-  );
-};
-
-// ============================================================================
-// MODAL FORMULAIRE ACCIDENT (Créer / Modifier)
-// ============================================================================
-const AccidentFormModal = ({ accident, darkMode, theme, onClose, onSave }) => {
-  const isEdit = !!accident;
-  const [form, setForm] = useState({
-    vehicule_immatriculation: accident?.vehicule_immatriculation || '',
-    chauffeur_id: accident?.chauffeur_id || '',
-    date_accident: accident ? new Date(accident.date_accident).toISOString().slice(0, 16) : '',
-    lieu: accident?.lieu || '',
-    description: accident?.description || '',
-    type_responsabilite: accident?.type_responsabilite || 'indetermine',
-    niveau_degats: accident?.niveau_degats || 'leger',
-    vehicule_immobilise: accident?.vehicule_immobilise || false,
-    jours_immobilisation: accident?.jours_immobilisation || '',
-    km_au_moment_accident: accident?.km_au_moment_accident || '',
-    assure: accident?.assure ?? true,
-    cout_estime: accident?.cout_estime || '',
-    cout_reparation_final: accident?.cout_reparation_final || '',
-    montant_reclame_assurance: accident?.montant_reclame_assurance || '',
-    montant_verse_assurance: accident?.montant_verse_assurance || '',
-    statut: accident?.statut || 'declare',
-    blessures: accident?.blessures || false,
-    nb_blesses: accident?.nb_blesses || 0,
-    rapport_police: accident?.rapport_police || false,
-    notes: accident?.notes || '',
-    photos: accident?.photos || [],
+  rows.forEach((row, idx) => {
+    checkNewPage();
+    drawRow(row, idx);
   });
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: typeof v === 'function' ? v(f[k]) : v }));
+  // Bordure extérieure du tableau
+  doc.setDrawColor(59, 130, 246);
+  doc.setLineWidth(0.3);
+  doc.rect(startX, 26, tableW(), y - 26);
 
-  const handleSubmit = () => {
-    if (!form.vehicule_immatriculation || !form.chauffeur_id || !form.date_accident) return;
-    onSave({ ...form, id: accident?.id });
-  };
+  // ── Pied de page sur chaque page ──────────────────────────
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(160, 160, 160);
+    doc.text(
+      `Page ${i} / ${pageCount}`,
+      pageW - margin,
+      pageH - 4,
+      { align: 'right' }
+    );
+    doc.text('© 2026 SGS — Tous droits réservés', margin, pageH - 4);
+  }
 
-  const inputCls = `w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 ${
-    darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'
-  }`;
-  const labelCls = `block text-xs font-semibold mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`;
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-2xl w-[96vw] h-[96vh] overflow-hidden flex flex-col shadow-2xl`}>
-
-        {/* Header */}
-        <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-between`}
-          style={{ background: `linear-gradient(135deg, ${theme.primary}18, transparent)` }}>
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow`}
-              style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
-              <i className={`bi ${isEdit ? 'bi-pencil-fill' : 'bi-plus-lg'} text-base`}></i>
-            </div>
-            <div>
-              <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                {isEdit ? 'Modifier l\'accident' : 'Déclarer un accident'}
-              </h2>
-              {isEdit && <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{accident.ref}</p>}
-            </div>
-          </div>
-          <button onClick={onClose} className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}>
-            <i className="bi bi-x-lg"></i>
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="grid grid-cols-2 gap-8 h-full">
-
-            {/* ══ COLONNE GAUCHE ══ */}
-            <div className="space-y-5">
-
-              {/* Section 1 — Acteurs */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-people-fill mr-1.5"></i>Acteurs
-                </p>
-                <div className="space-y-3">
-                  <div>
-                    <label className={labelCls}>Chauffeur *</label>
-                    <select value={form.chauffeur_id} onChange={e => set('chauffeur_id', e.target.value)} className={inputCls}>
-                      <option value="">Sélectionner un chauffeur</option>
-                      {CHAUFFEURS.map(c => <option key={c.id} value={c.id}>{c.nom} ({c.matricule})</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Véhicule *</label>
-                    <select value={form.vehicule_immatriculation} onChange={e => set('vehicule_immatriculation', e.target.value)} className={inputCls}>
-                      <option value="">Sélectionner un véhicule</option>
-                      {VEHICULES.map(v => <option key={v.immat} value={v.immat}>{v.immat} — {v.marque} {v.modele}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 2 — Date & Localisation */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-calendar-event-fill mr-1.5"></i>Date & Localisation
-                </p>
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>Date et heure *</label>
-                      <input type="datetime-local" value={form.date_accident} onChange={e => set('date_accident', e.target.value)} className={inputCls} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Kilométrage</label>
-                      <input type="number" value={form.km_au_moment_accident} onChange={e => set('km_au_moment_accident', e.target.value)} placeholder="Ex: 45000" className={inputCls} />
-                    </div>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Lieu de l'accident</label>
-                    <input type="text" value={form.lieu} onChange={e => set('lieu', e.target.value)} placeholder="Adresse ou lieu précis" className={inputCls} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 3 — Caractéristiques */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-exclamation-triangle-fill mr-1.5"></i>Caractéristiques
-                </p>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div>
-                    <label className={labelCls}>Niveau des dégâts *</label>
-                    <select value={form.niveau_degats} onChange={e => set('niveau_degats', e.target.value)} className={inputCls}>
-                      {NIVEAUX_DEGATS.map(n => <option key={n.code} value={n.code}>{n.libelle}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Responsabilité</label>
-                    <select value={form.type_responsabilite} onChange={e => set('type_responsabilite', e.target.value)} className={inputCls}>
-                      {TYPES_RESPONSABILITE.map(r => <option key={r.code} value={r.code}>{r.libelle}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className={labelCls}>Statut du dossier</label>
-                    <select value={form.statut} onChange={e => set('statut', e.target.value)} className={inputCls}>
-                      {STATUTS.map(s => <option key={s.code} value={s.code}>{s.libelle}</option>)}
-                    </select>
-                  </div>
-                </div>
-                {/* Toggles */}
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Véhicule immobilisé', key: 'vehicule_immobilise', icon: 'bi-car-front',          color: 'red'    },
-                    { label: 'Assuré',              key: 'assure',              icon: 'bi-shield-check',       color: 'green'  },
-                    { label: 'Avec blessures',      key: 'blessures',           icon: 'bi-person-fill-x',      color: 'orange' },
-                    { label: 'Rapport police',      key: 'rapport_police',      icon: 'bi-file-earmark-text',  color: 'blue'   },
-                  ].map(({ label, key, icon, color }) => (
-                    <button key={key} type="button" onClick={() => set(key, !form[key])}
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-semibold transition-all ${
-                        form[key]
-                          ? `bg-${color}-100 text-${color}-700 border-${color}-300`
-                          : darkMode ? 'border-gray-700 text-gray-500 hover:bg-gray-700' : 'border-gray-200 text-gray-400 hover:bg-gray-100'
-                      }`}>
-                      <i className={`bi ${icon}`}></i>{label}
-                    </button>
-                  ))}
-                </div>
-                {form.vehicule_immobilise && (
-                  <div className="mt-3">
-                    <label className={labelCls}>Jours d'immobilisation estimés</label>
-                    <input type="number" value={form.jours_immobilisation} onChange={e => set('jours_immobilisation', e.target.value)} placeholder="Nombre de jours" className={inputCls} />
-                  </div>
-                )}
-                {form.blessures && (
-                  <div className="mt-3">
-                    <label className={labelCls}>Nombre de blessés</label>
-                    <input type="number" min="1" value={form.nb_blesses} onChange={e => set('nb_blesses', e.target.value)} placeholder="Nombre" className={inputCls} />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ══ COLONNE DROITE ══ */}
-            <div className="space-y-5">
-
-              {/* Section 4 — Coûts */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-cash-stack mr-1.5"></i>Coûts (FCFA)
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { label: 'Coût estimé',                   key: 'cout_estime' },
-                    { label: 'Coût réparation final',         key: 'cout_reparation_final' },
-                    { label: 'Montant réclamé assurance',     key: 'montant_reclame_assurance' },
-                    { label: 'Montant versé assurance',       key: 'montant_verse_assurance' },
-                  ].map(({ label, key }) => (
-                    <div key={key}>
-                      <label className={labelCls}>{label}</label>
-                      <input type="number" value={form[key]} onChange={e => set(key, e.target.value)} placeholder="0" className={inputCls} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Section 5 — Photos */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-camera-fill mr-1.5"></i>Photos de l'accident
-                </p>
-                <div className={`border-2 border-dashed rounded-xl transition-colors ${darkMode ? 'border-gray-700 hover:border-gray-500' : 'border-gray-200 hover:border-gray-400'}`}>
-                  <label className="cursor-pointer block p-4">
-                    <input type="file" accept="image/*" multiple className="hidden"
-                      onChange={(e) => {
-                        Array.from(e.target.files).forEach(file => {
-                          const reader = new FileReader();
-                          reader.onload = (ev) => set('photos', prev => [...(Array.isArray(prev) ? prev : []), {
-                            id: Date.now() + Math.random(), name: file.name, url: ev.target.result, size: file.size,
-                          }]);
-                          reader.readAsDataURL(file);
-                        });
-                        e.target.value = '';
-                      }} />
-                    <div className={`flex flex-col items-center gap-2 py-2 ${form.photos?.length > 0 ? 'hidden' : ''}`}>
-                      <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: `${theme.primary}22` }}>
-                        <i className="bi bi-cloud-upload-fill text-2xl" style={{ color: theme.primary }}></i>
-                      </div>
-                      <p className={`text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Cliquer pour ajouter des photos</p>
-                      <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>JPG, PNG, WEBP — sélection multiple</p>
-                    </div>
-                  </label>
-                  {form.photos?.length > 0 && (
-                    <div className="px-4 pb-4 space-y-3">
-                      <div className="grid grid-cols-4 gap-2">
-                        {form.photos.map((photo) => (
-                          <div key={photo.id} className="relative group rounded-lg overflow-hidden aspect-square">
-                            <img src={photo.url} alt={photo.name} className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
-                              <button type="button" onClick={() => set('photos', prev => prev.filter(p => p.id !== photo.id))}
-                                className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-full bg-red-500 text-white flex items-center justify-center shadow">
-                                <i className="bi bi-trash3-fill text-xs"></i>
-                              </button>
-                            </div>
-                            <div className={`absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate ${darkMode ? 'bg-gray-900/80 text-gray-300' : 'bg-white/80 text-gray-600'}`}>
-                              {photo.name}
-                            </div>
-                          </div>
-                        ))}
-                        <label className={`cursor-pointer aspect-square rounded-lg border-2 border-dashed flex items-center justify-center transition-colors
-                          ${darkMode ? 'border-gray-600 hover:border-gray-400 text-gray-500 hover:text-gray-300' : 'border-gray-300 hover:border-gray-400 text-gray-300 hover:text-gray-500'}`}>
-                          <input type="file" accept="image/*" multiple className="hidden"
-                            onChange={(e) => {
-                              Array.from(e.target.files).forEach(file => {
-                                const reader = new FileReader();
-                                reader.onload = (ev) => set('photos', prev => [...(Array.isArray(prev) ? prev : []), {
-                                  id: Date.now() + Math.random(), name: file.name, url: ev.target.result, size: file.size,
-                                }]);
-                                reader.readAsDataURL(file);
-                              });
-                              e.target.value = '';
-                            }} />
-                          <i className="bi bi-plus-lg text-xl"></i>
-                        </label>
-                      </div>
-                      <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                        {form.photos.length} photo{form.photos.length > 1 ? 's' : ''} ajoutée{form.photos.length > 1 ? 's' : ''}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Section 6 — Description & Notes */}
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-5`}>
-                <p className={`text-xs font-bold uppercase tracking-wider mb-4 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                  <i className="bi bi-chat-left-text-fill mr-1.5"></i>Description & Notes
-                </p>
-                <div className="space-y-3">
-                  <div>
-                    <label className={labelCls}>Description de l'accident</label>
-                    <textarea rows={4} value={form.description} onChange={e => set('description', e.target.value)}
-                      placeholder="Décrire les circonstances de l'accident..." className={inputCls + ' resize-none'} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Notes internes</label>
-                    <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)}
-                      placeholder="Notes supplémentaires..." className={inputCls + ' resize-none'} />
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className={`p-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-end gap-3`}>
-          <button onClick={onClose}
-            className={`px-5 py-2.5 rounded-lg text-sm font-semibold ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors`}>
-            Annuler
-          </button>
-          <button onClick={handleSubmit}
-            className="px-6 py-2.5 rounded-lg text-white text-sm font-semibold hover:opacity-90 transition-all shadow-sm flex items-center gap-2"
-            style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
-            <i className={`bi ${isEdit ? 'bi-check-lg' : 'bi-plus-lg'}`}></i>
-            {isEdit ? 'Enregistrer les modifications' : 'Déclarer l\'accident'}
-          </button>
-        </div>
-      </div>
-    </div>
+  // ── Sauvegarde ────────────────────────────────────────────
+  doc.save(
+    `kpi_vehicules_${periode}${suffix ? '_' + suffix : ''}_${new Date().toISOString().slice(0, 10)}.pdf`
   );
 };
 
-// ============================================================================
-// MENU 3 POINTS — dropdown via portal
-// ============================================================================
-const ActionMenu = ({ accident, darkMode, theme, onView, onEdit, onDelete }) => {
-  const [open, setOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
-  const btnRef = useRef(null);
-
-  const toggle = (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (!open) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setMenuPos({
-        top: rect.bottom + 4,
-        left: rect.right - 176,
-      });
-    }
-    setOpen(o => !o);
-  };
-
-  // Fermer au clic n'importe où sauf sur le bouton lui-même
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    // Délai pour ne pas fermer au même clic qui a ouvert
-    const t = setTimeout(() => {
-      document.addEventListener('click', close, { once: true });
-    }, 0);
-    return () => {
-      clearTimeout(t);
-      document.removeEventListener('click', close);
-    };
-  }, [open]);
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        onClick={toggle}
-        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all
-          ${open
-            ? 'text-white shadow-sm'
-            : darkMode ? 'text-gray-400 hover:bg-gray-700 hover:text-white' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'
-          }`}
-        style={open ? { background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-        <i className="bi bi-three-dots-vertical text-sm"></i>
-      </button>
-
-      {open && ReactDOM.createPortal(
-        <div
-          onClick={e => e.stopPropagation()}
-          className={`fixed z-[9999] rounded-xl shadow-2xl border py-1.5 w-44
-            ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-          style={{ top: menuPos.top, left: menuPos.left, animation: 'fadeInDown .15s ease-out' }}>
-
-          <button onClick={(e) => { e.stopPropagation(); onView(accident); setOpen(false); }}
-            className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors
-              ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}>
-            <i className="bi bi-eye text-base" style={{ color: theme.primary }}></i>
-            Voir les détails
-          </button>
-
-          <button onClick={(e) => { e.stopPropagation(); onEdit(accident); setOpen(false); }}
-            className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors
-              ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}>
-            <i className="bi bi-pencil-fill text-base" style={{ color: theme.primary }}></i>
-            Modifier
-          </button>
-
-          <div className={`my-1 mx-3 h-px ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`} />
-
-          <button onClick={(e) => { e.stopPropagation(); onDelete(accident.id); setOpen(false); }}
-            className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors
-              ${darkMode ? 'text-red-400 hover:bg-red-900/20' : 'text-red-600 hover:bg-red-50'}`}>
-            <i className="bi bi-trash3-fill text-base"></i>
-            Supprimer
-          </button>
-        </div>,
-        document.body
-      )}
-    </>
-  );
-};
-
-// ============================================================================
-// KPI CARDS — chiffres animés
-// ============================================================================
-const KpiCard = ({ label, target, decimals = 0, suffix = '', prefix = '', icon, color, sub, delay, darkMode, animateCards }) => {
-  const val = useCountUp(target, 1400, decimals);
-  return (
-    <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-5`}
-      style={{ animation: animateCards ? `fadeInUp .5s ease-out ${delay}s both` : 'none' }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${color}22` }}>
-          <i className={`${icon} text-lg`} style={{ color }}></i>
-        </div>
-      </div>
-      <p className={`text-3xl font-black tabular-nums ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-        {prefix}{decimals > 0 ? val.toFixed(decimals) : Math.round(val)}{suffix}
-      </p>
-      <p className={`text-sm font-semibold mt-0.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{label}</p>
-      <p className={`text-xs mt-0.5 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</p>
-    </div>
-  );
-};
-
-const KpiCards = ({ total, nbImmobilises, nbBlessures, coutTotal, periodeInfo, darkMode, animateCards }) => (
-  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <KpiCard label="Total accidents"       target={total}               icon="bi-car-front-fill"    color="#ef4444" sub={periodeInfo.libelle}   delay={0}    darkMode={darkMode} animateCards={animateCards} />
-    <KpiCard label="Véhicules immobilisés" target={nbImmobilises}       icon="bi-slash-circle-fill" color="#f97316" sub="sur la période"        delay={0.07} darkMode={darkMode} animateCards={animateCards} />
-    <KpiCard label="Avec blessures"        target={nbBlessures}         icon="bi-person-fill-x"     color="#8b5cf6" sub="accidents corporels"   delay={0.14} darkMode={darkMode} animateCards={animateCards} />
-    <KpiCard label="Coût total estimé"     target={coutTotal / 1000000} icon="bi-cash-stack"        color="#06b6d4" sub="FCFA (estimation)"     delay={0.21} darkMode={darkMode} animateCards={animateCards} decimals={1} suffix="M" />
-  </div>
-);
-
-// ============================================================================
-// MAIN COMPONENT
-// ============================================================================
+// ═════════════════════════════════════════════════════════════
+// Composant principal
+// ═════════════════════════════════════════════════════════════
 const Dashboard = () => {
+
   const [darkMode, setDarkMode] = useState(() => {
-    try { const s = localStorage.getItem('fleetify_darkMode'); return s !== null ? s === 'true' : true; } catch { return true; }
+    try { const s = localStorage.getItem('fleetify_darkMode'); return s !== null ? s === 'true' : true; }
+    catch { return true; }
   });
   useEffect(() => { try { localStorage.setItem('fleetify_darkMode', String(darkMode)); } catch {} }, [darkMode]);
 
-  const [sidebarCollapsed, setSidebarCollapsed]   = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [showProfile, setShowProfile]             = useState(false);
-  const [animateCards, setAnimateCards]           = useState(false);
+  // ── États données backend ──
+  const [loading,                   setLoading]                   = useState(true);
+  const [error,                     setError]                     = useState(null);
+  const [statsCards,                setStatsCards]                = useState([]);
+  const [donutData,                 setDonutData]                 = useState([]);
+  const [barChartData,              setBarChartData]              = useState([]);
+  const [lineChartData,             setLineChartData]             = useState([]);
+  const [interventionsData,         setInterventionsData]         = useState([]);
+  const [interventionsJourData,     setInterventionsJourData]     = useState([]);
+  const [usersRoleData,             setUsersRoleData]             = useState([]);
+  const [vehiculesMarqueData,       setVehiculesMarqueData]       = useState([]);
+  const [vehiculesCategorieData,    setVehiculesCategorieData]    = useState([]);
+  const [documentsVehiculesData,    setDocumentsVehiculesData]    = useState([]);
+  const [documentsChauffeursData,   setDocumentsChauffeursData]   = useState([]);
+  const [missions,                  setMissions]                  = useState([]);
+  const [alerts,                    setAlerts]                    = useState([]);
+  const [performancesData,          setPerformancesData]          = useState(null);
+
+  // ── États UI ──
+  const [sidebarCollapsed,          setSidebarCollapsed]          = useState(false);
+  const [hoveredBar,                setHoveredBar]                = useState(null);
+  const [hoveredMonth,              setHoveredMonth]              = useState(null);
+  const [hoveredInterventionBar,    setHoveredInterventionBar]    = useState(null);
+  const [hoveredDayBar,             setHoveredDayBar]             = useState(null);
+  const [hoveredRoleBar,            setHoveredRoleBar]            = useState(null);
+  const [hoveredMarqueBar,          setHoveredMarqueBar]          = useState(null);
+  const [hoveredCategorieBar,       setHoveredCategorieBar]       = useState(null);
+  const [hoveredDocVehSegment,      setHoveredDocVehSegment]      = useState(null);
+  const [hoveredDocChaufSegment,    setHoveredDocChaufSegment]    = useState(null);
+  const [showNotifications,         setShowNotifications]         = useState(false);
+  const [showProfile,               setShowProfile]               = useState(false);
+  const [animateCharts,             setAnimateCharts]             = useState(false);
+
+  // ── États modal KPI ──
+  const [showKpiModal,   setShowKpiModal]   = useState(false);
+  const [kpiData,        setKpiData]        = useState([]);
+  const [kpiTotaux,      setKpiTotaux]      = useState(null);
+  const [kpiPagination,  setKpiPagination]  = useState(null);
+  const [kpiLoading,     setKpiLoading]     = useState(false);
+  const [kpiPeriode,     setKpiPeriode]     = useState('1m');
+  const [kpiSearch,      setKpiSearch]      = useState('');
+  const [kpiPage,        setKpiPage]        = useState(1);
+  const [kpiSelected,    setKpiSelected]    = useState(null);
+  const [exportLoading,  setExportLoading]  = useState(false);
+
   const { theme } = useTheme();
   const navigate  = useNavigate();
 
-  useEffect(() => {
-    const id = requestAnimationFrame(() => { const id2 = requestAnimationFrame(() => setAnimateCards(true)); return () => cancelAnimationFrame(id2); });
-    return () => cancelAnimationFrame(id);
-  }, []);
+  const periodeLabel = { '1m': 'Ce mois', '3m': '3 mois', '6m': '6 mois', '1an': '1 an' };
 
-  // ── États ──
-  const [accidents, setAccidents]             = useState(ALL_ACCIDENTS);
-  const [searchTerm, setSearchTerm]           = useState('');
-  const [filterNiveau, setFilterNiveau]       = useState('');
-  const [filterStatut, setFilterStatut]       = useState('');
-  const [filterResp, setFilterResp]           = useState('');
-  const [filterChauffeur, setFilterChauffeur] = useState('');
-  const [filterImmob, setFilterImmob]         = useState('');
-  const [filterPeriode, setFilterPeriode]     = useState('365j');
-  const [sortBy, setSortBy]                   = useState('date_accident');
-  const [sortDir, setSortDir]                 = useState('desc');
-  const [currentPage, setCurrentPage]         = useState(1);
-  const [view, setView]                       = useState('table');
-  const [selectedAccident, setSelectedAccident] = useState(null);
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showFormModal, setShowFormModal]     = useState(false);
-  const [editAccident, setEditAccident]       = useState(null);
-  const [toast, setToast]                     = useState(null);
-  const [exportOpen, setExportOpen]           = useState(false);
-  const exportRef = useRef(null);
-
-  const showToast = (msg, type = 'success') => setToast({ message: msg, type });
-
-  useEffect(() => {
-    const h = (e) => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
-
-  const ITEMS_PER_PAGE = 10;
-
-  // ── Filtrage ──
-  const periodeInfo = PERIODES.find(p => p.code === filterPeriode) || PERIODES[4];
-  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - periodeInfo.jours);
-
-  const filtered = accidents.filter(a => {
-    if (new Date(a.date_accident) < cutoff)             return false;
-    if (filterNiveau   && a.niveau_degats  !== filterNiveau)   return false;
-    if (filterStatut   && a.statut         !== filterStatut)   return false;
-    if (filterResp     && a.type_responsabilite !== filterResp) return false;
-    if (filterChauffeur && String(a.chauffeur_id) !== filterChauffeur) return false;
-    if (filterImmob === 'oui' && !a.vehicule_immobilise)  return false;
-    if (filterImmob === 'non' && a.vehicule_immobilise)   return false;
-    if (searchTerm) {
-      const q = searchTerm.toLowerCase();
-      return a.chauffeur_nom.toLowerCase().includes(q) ||
-             a.vehicule_immatriculation.toLowerCase().includes(q) ||
-             a.ref.toLowerCase().includes(q) ||
-             (a.lieu || '').toLowerCase().includes(q);
+  // ── fetchKpiVehicules ─────────────────────────────────────
+  const fetchKpiVehicules = useCallback(async (periode = '1m', search = '', page = 1) => {
+    setKpiLoading(true);
+    try {
+      const res = await getKpiVehicules({ periode, search, page, per_page: 15 });
+      setKpiData(res.data            ?? []);
+      setKpiTotaux(res.totaux        ?? null);
+      setKpiPagination(res.pagination ?? null);
+    } catch (err) {
+      console.error('Erreur KPI véhicules :', err);
+      if (err.response?.status === 401) navigate('/login');
+      setKpiData([]); setKpiTotaux(null); setKpiPagination(null);
+    } finally {
+      setKpiLoading(false);
     }
-    return true;
-  });
+  }, [navigate]);
 
-  const sorted = [...filtered].sort((a, b) => {
-    let va = a[sortBy], vb = b[sortBy];
-    if (sortBy === 'date_accident') { va = new Date(va); vb = new Date(vb); }
-    if (va < vb) return sortDir === 'asc' ? -1 : 1;
-    if (va > vb) return sortDir === 'asc' ? 1 : -1;
-    return 0;
-  });
-
-  const totalPages = Math.ceil(sorted.length / ITEMS_PER_PAGE);
-  const paginated  = sorted.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
-
-  useEffect(() => setCurrentPage(1), [filterNiveau, filterStatut, filterResp, filterChauffeur, filterImmob, filterPeriode, searchTerm, sortBy, sortDir]);
-
-  const resetFilters = () => { setFilterNiveau(''); setFilterStatut(''); setFilterResp(''); setFilterChauffeur(''); setFilterImmob(''); setSearchTerm(''); };
-  const hasFilters = filterNiveau || filterStatut || filterResp || filterChauffeur || filterImmob || searchTerm;
-
-  const handleSort = (col) => {
-    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortBy(col); setSortDir('desc'); }
+  // ── Export Excel (tous ou un seul) ────────────────────────
+  const handleExportExcel = async (immat = null) => {
+    setExportLoading(true);
+    try {
+      const rows = await fetchAllKpiRows(kpiPeriode, kpiSearch, immat ?? '');
+      await exportExcel(rows, kpiPeriode, immat ?? '');
+    } catch (e) { console.error('Export Excel :', e); alert("Erreur lors de l'export Excel."); }
+    finally { setExportLoading(false); }
   };
 
-  // ── CRUD ──
-  const handleSave = (data) => {
-    if (data.id) {
-      setAccidents(prev => prev.map(a => a.id === data.id
-        ? {
-          ...a, ...data,
-          chauffeur_nom: CHAUFFEURS.find(c => String(c.id) === String(data.chauffeur_id))?.nom || a.chauffeur_nom,
-          avatar_color: CHAUFFEURS.find(c => String(c.id) === String(data.chauffeur_id))?.avatar_color || a.avatar_color,
-          vehicule_marque: VEHICULES.find(v => v.immat === data.vehicule_immatriculation)?.marque || a.vehicule_marque,
-          vehicule_modele: VEHICULES.find(v => v.immat === data.vehicule_immatriculation)?.modele || a.vehicule_modele,
+  // ── Export PDF (tous ou un seul) ──────────────────────────
+  const handleExportPdf = async (immat = null) => {
+    setExportLoading(true);
+    try {
+      const rows = await fetchAllKpiRows(kpiPeriode, kpiSearch, immat ?? '');
+      await exportPdf(rows, kpiPeriode, periodeLabel[kpiPeriode] ?? kpiPeriode, immat ?? '');
+    } catch (e) { console.error('Export PDF :', e); alert("Erreur lors de l'export PDF."); }
+    finally { setExportLoading(false); }
+  };
+
+  // ── Chargement dashboard principal ───────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    const fetchData = async () => {
+      try {
+        setLoading(true); setError(null);
+        const data = await getDashboardData();
+        if (cancelled) return;
+        setStatsCards(data.stats_cards                          ?? []);
+        setDonutData(data.donut_data                            ?? []);
+        setBarChartData(data.bar_chart_data                     ?? []);
+        setLineChartData(data.line_chart_data                   ?? []);
+        setInterventionsData(data.interventions_data            ?? []);
+        setInterventionsJourData(data.interventions_jour_data   ?? []);
+        setUsersRoleData(data.users_role_data                   ?? []);
+        setVehiculesMarqueData(data.vehicules_marque_data       ?? []);
+        setVehiculesCategorieData(data.vehicules_categorie_data ?? []);
+        setDocumentsVehiculesData(data.documents_vehicules_data ?? []);
+        setDocumentsChauffeursData(data.documents_chauffeurs_data ?? []);
+        setMissions(data.missions                               ?? []);
+        setAlerts(data.alerts                                   ?? []);
+        setPerformancesData(data.performances_chauffeurs_data   ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          if (err.response?.status === 401) navigate('/login');
+          else setError('Impossible de charger les données du tableau de bord.');
         }
-        : a
-      ));
-      showToast('Accident mis à jour avec succès', 'success');
-    } else {
-      const ch = CHAUFFEURS.find(c => String(c.id) === String(data.chauffeur_id));
-      const veh = VEHICULES.find(v => v.immat === data.vehicule_immatriculation);
-      const newAcc = {
-        ...data,
-        id: Date.now(),
-        ref: `ACC-${String(accidents.length + 2).padStart(5, '0')}`,
-        chauffeur_nom: ch?.nom || '',
-        chauffeur_matricule: ch?.matricule || '',
-        chauffeur_direction: ch?.direction || '',
-        avatar_color: ch?.avatar_color || '#94a3b8',
-        vehicule_marque: veh?.marque || '',
-        vehicule_modele: veh?.modele || '',
-        photos: data.photos || [],
-        photos_count: (data.photos || []).length,
-        mission_id: null,
-        date_creation: new Date().toISOString(),
-        position_gps: null,
-        notes: data.notes || null,
-      };
-      setAccidents(prev => [newAcc, ...prev]);
-      showToast('Accident déclaré avec succès', 'success');
-    }
-    setShowFormModal(false);
-    setEditAccident(null);
-  };
+      } finally { if (!cancelled) setLoading(false); }
+    };
+    fetchData();
+    const interval = setInterval(fetchData, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [navigate]);
 
-  const handleDelete = (id) => {
-    setAccidents(prev => prev.filter(a => a.id !== id));
-    showToast('Accident supprimé', 'warning');
-  };
+  useEffect(() => {
+    if (loading) return;
+    setAnimateCharts(false);
+    const id = requestAnimationFrame(() => {
+      const id2 = requestAnimationFrame(() => setAnimateCharts(true));
+      return () => cancelAnimationFrame(id2);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [loading]);
 
-  const handleChangeStatut = (id, newStatut) => {
-    setAccidents(prev => prev.map(a => a.id === id ? { ...a, statut: newStatut } : a));
-    if (selectedAccident?.id === id) setSelectedAccident(prev => ({ ...prev, statut: newStatut }));
-    showToast(`Statut mis à jour : ${getStatutInfo(newStatut).libelle}`, 'info');
-  };
-
-  const handleEdit = (acc) => {
-    setShowDetailModal(false);
-    setEditAccident(acc);
-    setShowFormModal(true);
-  };
-
-  // ── Statistiques ──
-  const total          = filtered.length;
-  const nbImmobilises  = filtered.filter(a => a.vehicule_immobilise).length;
-  const nbBlessures    = filtered.filter(a => a.blessures).length;
-  const coutTotal      = filtered.reduce((s, a) => s + (Number(a.cout_estime) || 0), 0);
-  const nbCritiques    = filtered.filter(a => a.niveau_degats === 'critique' || a.niveau_degats === 'grave').length;
-
-  // Distribution par niveau
-  const niveauDistrib = NIVEAUX_DEGATS.map(n => ({
-    ...n, value: filtered.filter(a => a.niveau_degats === n.code).length,
-  }));
-  // Distribution par statut
-  const statutDistrib = STATUTS.map(s => ({
-    ...s, value: filtered.filter(a => a.statut === s.code).length,
-  }));
-  // Distribution par responsabilité
-  const respDistrib = TYPES_RESPONSABILITE.map(r => ({
-    ...r, value: filtered.filter(a => a.type_responsabilite === r.code).length,
-  }));
-  // Top chauffeurs accidentés
-  const topChauffeurs = CHAUFFEURS
-    .map(c => ({ ...c, count: filtered.filter(a => a.chauffeur_id === c.id).length }))
-    .sort((a, b) => b.count - a.count)
-    .filter(c => c.count > 0);
-  const maxCountCh = Math.max(...topChauffeurs.map(c => c.count), 1);
-
-
-
-
-  // ── Export ──
-  const expHeaders = ['Référence', 'Date', 'Chauffeur', 'Véhicule', 'Lieu', 'Niveau', 'Statut', 'Responsabilité', 'Immobilisé', 'Jours immob.', 'Coût estimé', 'Coût final', 'Assurance réclamée', 'Assurance versée', 'Blessures', 'Notes'];
-  const toRow = (a) => [
-    a.ref,
-    new Date(a.date_accident).toLocaleString('fr-FR'),
-    a.chauffeur_nom,
-    `${a.vehicule_immatriculation} (${a.vehicule_marque} ${a.vehicule_modele})`,
-    a.lieu || '—',
-    getNiveauInfo(a.niveau_degats).libelle,
-    getStatutInfo(a.statut).libelle,
-    getResponsabiliteInfo(a.type_responsabilite).libelle,
-    a.vehicule_immobilise ? 'Oui' : 'Non',
-    a.jours_immobilisation || '—',
-    a.cout_estime || 0,
-    a.cout_reparation_final || '—',
-    a.montant_reclame_assurance || '—',
-    a.montant_verse_assurance || '—',
-    a.blessures ? `Oui (${a.nb_blesses})` : 'Non',
-    a.notes || '—',
-  ];
-
-  const SortIcon = ({ col }) => (
-    <i className={`bi bi-arrow-${sortBy === col ? (sortDir === 'asc' ? 'up' : 'down') : 'down-up'} text-[10px] ml-1 opacity-60`}></i>
+  // ── Composants UI ────────────────────────────────────────
+  const ChartCard = ({ children, className = '' }) => (
+    <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden ${className}`} style={{ minHeight: '280px' }}>
+      <div className="p-5 flex flex-col h-full">{children}</div>
+    </div>
+  );
+  const ChartTitle = ({ children, icon }) => (
+    <h3 className={`text-sm font-bold mb-3 ${darkMode ? 'text-white' : 'text-gray-900'} flex items-center gap-2`}>
+      {icon && <i className={`${icon} text-blue-500`}></i>}{children}
+    </h3>
+  );
+  const LegendRow = ({ items }) => (
+    <div className="flex items-center justify-center gap-3 mt-3 flex-wrap">
+      {items.map((item, idx) => (
+        <div key={idx} className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: item.color }}></div>
+          <span className={`text-[10px] font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{item.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+  const SkeletonCard = () => (
+    <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl p-4 border shadow-sm animate-pulse`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex-1 space-y-2">
+          <div className={`h-3 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} w-2/3`}></div>
+          <div className={`h-6 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} w-1/3`}></div>
+          <div className={`h-3 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} w-1/2`}></div>
+        </div>
+        <div className={`w-10 h-10 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-200'}`}></div>
+      </div>
+    </div>
+  );
+  const SkeletonChart = () => (
+    <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm animate-pulse`} style={{ minHeight: '280px' }}>
+      <div className="p-5 space-y-3">
+        <div className={`h-4 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} w-1/3`}></div>
+        <div className={`h-44 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} w-full`}></div>
+        <div className={`h-3 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} w-1/2 mx-auto`}></div>
+      </div>
+    </div>
   );
 
-  // ============================================================================
-  // RENDER
-  // ============================================================================
+  if (error) return (
+    <div className={`${darkMode ? 'bg-gray-950' : 'bg-gray-50'} min-h-screen flex items-center justify-center`}>
+      <div className="text-center space-y-4">
+        <i className="bi bi-exclamation-triangle-fill text-red-500 text-5xl"></i>
+        <p className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{error}</p>
+        <button onClick={() => window.location.reload()} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">Réessayer</button>
+      </div>
+    </div>
+  );
+
+  // ── Bouton export générique ───────────────────────────────
+  const ExportBtn = ({ type, immat, label }) => {
+    const isExcel = type === 'excel';
+    return (
+      <button
+        disabled={exportLoading}
+        onClick={() => isExcel ? handleExportExcel(immat) : handleExportPdf(immat)}
+        title={label}
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-40 ${
+          isExcel
+            ? darkMode ? 'bg-green-900 text-green-300 hover:bg-green-800' : 'bg-green-50 text-green-700 hover:bg-green-100'
+            : darkMode ? 'bg-red-900 text-red-300 hover:bg-red-800'       : 'bg-red-50 text-red-700 hover:bg-red-100'
+        }`}
+      >
+        <i className={`bi ${isExcel ? 'bi-file-earmark-excel' : 'bi-file-earmark-pdf'} text-xs`}></i>
+        {label}
+      </button>
+    );
+  };
+
+  // ── Helper classes pour les alertes selon le type ─────────
+  const alertStyles = (type) => {
+    if (type === 'error') return {
+      border:    'border-red-500',
+      bg:        darkMode ? 'bg-red-950'    : 'bg-red-50',
+      iconColor: 'text-red-500',
+      badge:     darkMode ? 'bg-red-900 text-red-300'    : 'bg-red-100 text-red-700',
+      title:     darkMode ? 'text-red-100'  : 'text-red-800',
+      vehicle:   darkMode ? 'text-red-300'  : 'text-red-600',
+      date:      darkMode ? 'text-red-400'  : 'text-red-500',
+    };
+    if (type === 'warning') return {
+      border:    'border-yellow-500',
+      bg:        darkMode ? 'bg-yellow-950' : 'bg-yellow-50',
+      iconColor: 'text-yellow-500',
+      badge:     darkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-700',
+      title:     darkMode ? 'text-yellow-100' : 'text-yellow-800',
+      vehicle:   darkMode ? 'text-yellow-300'  : 'text-yellow-700',
+      date:      darkMode ? 'text-yellow-400'  : 'text-yellow-600',
+    };
+    // info
+    return {
+      border:    'border-blue-500',
+      bg:        darkMode ? 'bg-blue-950'   : 'bg-blue-50',
+      iconColor: 'text-blue-500',
+      badge:     darkMode ? 'bg-blue-900 text-blue-300'   : 'bg-blue-100 text-blue-700',
+      title:     darkMode ? 'text-blue-100' : 'text-blue-800',
+      vehicle:   darkMode ? 'text-blue-300' : 'text-blue-600',
+      date:      darkMode ? 'text-blue-400' : 'text-blue-500',
+    };
+  };
+
   return (
     <div className={`${darkMode ? 'bg-gray-950' : 'bg-gray-50'} min-h-screen transition-colors duration-300`}>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
-      <style>{`
-        @keyframes fadeInUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes fadeInDown { from{opacity:0;transform:translateY(-16px)} to{opacity:1;transform:translateY(0)} }
-        .row-hover:hover { filter: brightness(1.07); }
-        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
-      `}</style>
 
-      <Sidebar darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} theme={theme} navigate={navigate} />
-      <Header darkMode={darkMode} setDarkMode={setDarkMode} sidebarCollapsed={sidebarCollapsed} theme={theme}
-        showNotifications={showNotifications} setShowNotifications={setShowNotifications}
-        showProfile={showProfile} setShowProfile={setShowProfile} />
+      <Sidebar darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} />
+      <Header  darkMode={darkMode} setDarkMode={setDarkMode} sidebarCollapsed={sidebarCollapsed}
+               showNotifications={showNotifications} setShowNotifications={setShowNotifications}
+               showProfile={showProfile} setShowProfile={setShowProfile} />
 
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} theme={theme} />}
-      {(showNotifications || showProfile) && (
-        <div className="fixed inset-0 z-30" onClick={() => { setShowNotifications(false); setShowProfile(false); }} />
-      )}
+      <main className="transition-all duration-300 pt-24 px-6 pb-6" style={{ marginLeft: sidebarCollapsed ? '5rem' : '18rem' }}>
 
-      <main className="transition-all duration-300 pt-24 px-6 pb-10" style={{ marginLeft: sidebarCollapsed ? '5rem' : '18rem' }}>
-
-        {/* ════ EN-TÊTE ════ */}
-        <div className="flex items-center justify-between mb-6"
-          style={{ animation: animateCards ? 'fadeInUp .4s ease-out both' : 'none' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg"
-              style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
-              <i className="bi bi-exclamation-octagon-fill text-white text-lg"></i>
-            </div>
-            <div>
-              <h1 className={`text-2xl font-extrabold tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                Registre des Accidents
-              </h1>
-              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                Gestion et suivi des accidents de la flotte SGS
-              </p>
-            </div>
-          </div>
-
-          <button onClick={() => { setEditAccident(null); setShowFormModal(true); }}
-            className="px-5 py-2.5 rounded-xl text-white font-semibold text-sm flex items-center gap-2 shadow-lg hover:opacity-90 transition-all"
-            style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
-            <i className="bi bi-plus-circle-fill text-base"></i>
-            Déclarer un accident
-          </button>
-        </div>
-
-        {/* ════ KPI CARDS ════ */}
-        <KpiCards total={total} nbImmobilises={nbImmobilises} nbBlessures={nbBlessures}
-          coutTotal={coutTotal} periodeInfo={periodeInfo} darkMode={darkMode} animateCards={animateCards} />
-
-    {/* ════ GRAPHIQUES LIGNE 1 : Barres horizontales ════ */}
-<div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-
-  {/* Barres — Gravité des accidents */}
-  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-6`}
-    style={{ animation: animateCards ? 'fadeInUp .5s ease-out .28s both' : 'none' }}>
-    <div className="flex items-center gap-2 mb-5">
-      <div className="w-1 h-5 rounded-full" style={{ background: theme.primary }}></div>
-      <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Gravité des accidents</h3>
-      <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>
-        {total} total
-      </span>
-    </div>
-    <div className="space-y-3">
-      {niveauDistrib.map(n => {
-        const pct = total > 0 ? Math.round((n.value / total) * 100) : 0;
-        return (
-          <div key={n.code} className="group relative">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: n.color }}></div>
-                <span className={`text-xs font-medium ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{n.libelle}</span>
+        {/* ─── STATS GRID ─── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {loading
+            ? Array.from({ length: 12 }).map((_, i) => <SkeletonCard key={i} />)
+            : statsCards.map((card, idx) => (
+            <div key={idx}
+              className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl p-4 border shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 cursor-pointer group`}
+              style={{ animation: animateCharts ? `fadeInUp 0.5s ease-out ${idx * 0.1}s both` : 'none' }}>
+              <style>{`@keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}`}</style>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex-1">
+                  <p className={`text-sm font-bold ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-0.5`}>{card.title}</p>
+                  <h3 className={`text-2xl font-extrabold ${darkMode ? 'text-white' : 'text-gray-900'} mb-0.5`}>{card.value}</h3>
+                  <p className={`text-xs font-semibold ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{card.subtitle}</p>
+                </div>
+                <div className={`${card.iconBg} ${card.textColor} p-2.5 rounded-lg group-hover:scale-110 transition-transform`}>
+                  <i className={card.icon} style={{ fontSize: '1.25rem' }}></i>
+                </div>
               </div>
-              <span className={`text-xs font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{n.value}</span>
-            </div>
-            <div className={`relative h-2.5 rounded-full overflow-hidden ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-              <div className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${pct}%`, background: n.color }}></div>
-            </div>
-            {/* Tooltip */}
-            <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded-lg text-xs font-semibold text-white shadow-lg
-              opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10"
-              style={{ background: n.color }}>
-              {n.value} accident{n.value > 1 ? 's' : ''} · {pct}%
-              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent"
-                style={{ borderTopColor: n.color }}></div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  </div>
-
-  {/* Barres — Statuts des dossiers */}
-  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-6`}
-    style={{ animation: animateCards ? 'fadeInUp .5s ease-out .35s both' : 'none' }}>
-    <div className="flex items-center gap-2 mb-5">
-      <div className="w-1 h-5 rounded-full" style={{ background: theme.primary }}></div>
-      <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Statuts des dossiers</h3>
-      <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>
-        {statutDistrib.filter(s => s.value > 0).length} statut{statutDistrib.filter(s => s.value > 0).length > 1 ? 's' : ''}
-      </span>
-    </div>
-    <div className="space-y-3">
-      {statutDistrib.filter(s => s.value > 0).map(s => {
-        const pct = total > 0 ? Math.round((s.value / total) * 100) : 0;
-        return (
-          <div key={s.code} className="group relative">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }}></div>
-                <span className={`text-xs font-medium truncate max-w-[110px] ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{s.libelle}</span>
-              </div>
-              <span className={`text-xs font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{s.value}</span>
-            </div>
-            <div className={`relative h-2.5 rounded-full overflow-hidden ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-              <div className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${pct}%`, background: s.color }}></div>
-            </div>
-            {/* Tooltip */}
-            <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded-lg text-xs font-semibold text-white shadow-lg
-              opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10"
-              style={{ background: s.color }}>
-              {s.value} dossier{s.value > 1 ? 's' : ''} · {pct}%
-              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent"
-                style={{ borderTopColor: s.color }}></div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  </div>
-
-  {/* Barres — Responsabilités */}
-  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-6`}
-    style={{ animation: animateCards ? 'fadeInUp .5s ease-out .42s both' : 'none' }}>
-    <div className="flex items-center gap-2 mb-5">
-      <div className="w-1 h-5 rounded-full bg-purple-500"></div>
-      <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Responsabilités</h3>
-      <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>
-        {nbCritiques} grave{nbCritiques > 1 ? 's' : ''}
-      </span>
-    </div>
-    <div className="space-y-3">
-      {respDistrib.filter(r => r.value > 0).map(r => {
-        const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
-        return (
-          <div key={r.code} className="group relative">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: r.color }}></div>
-                <span className={`text-xs font-medium truncate max-w-[110px] ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{r.libelle}</span>
-              </div>
-              <span className={`text-xs font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{r.value}</span>
-            </div>
-            <div className={`relative h-2.5 rounded-full overflow-hidden ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-              <div className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${pct}%`, background: r.color }}></div>
-            </div>
-            {/* Tooltip */}
-            <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded-lg text-xs font-semibold text-white shadow-lg
-              opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10"
-              style={{ background: r.color }}>
-              {r.value} accident{r.value > 1 ? 's' : ''} · {pct}%
-              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent"
-                style={{ borderTopColor: r.color }}></div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  </div>
-
-</div>
-
-        {/* ════ GRAPHIQUES LIGNE 2 : Top Chauffeurs pleine largeur ════ */}
-        <div className="mb-6">
-
-          {/* Top chauffeurs accidentés */}
-          <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-6`}
-            style={{ animation: animateCards ? 'fadeInUp .5s ease-out .49s both' : 'none' }}>
-            <div className="flex items-center gap-2 mb-5">
-              <div className="w-1 h-5 rounded-full" style={{ background: theme.primary }}></div>
-              <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Chauffeurs les plus impliqués</h3>
-            </div>
-            {topChauffeurs.length === 0 ? (
-              <div className={`text-center py-8 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`}>
-                <i className="bi bi-emoji-smile text-3xl block mb-2"></i>
-                <p className="text-sm">Aucun accident sur la période</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3">
-                {topChauffeurs.slice(0, 6).map((c, i) => (
-                  <div key={c.id} className="flex items-center gap-3">
-                    <span className={`text-xs font-bold w-5 text-center ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}
-                      style={i === 0 ? { color: theme.primary } : {}}># {i + 1}</span>
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                      style={{ background: c.avatar_color }}>{c.nom.charAt(0)}</div>
-                    <span className={`text-sm font-medium w-32 truncate ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{c.nom}</span>
-                    <Tooltip darkMode={darkMode}
-                      label={`${c.nom} — ${c.count} accident${c.count > 1 ? 's' : ''} · ${c.direction}`}>
-                      <div className={`flex-1 h-2.5 rounded-full overflow-hidden ${darkMode ? 'bg-gray-800' : 'bg-gray-100'} cursor-pointer`}
-                        style={{ minWidth: '80px' }}>
-                        <div className="h-full rounded-full transition-all duration-700"
-                          style={{ width: `${(c.count / maxCountCh) * 100}%`, background: theme.primary, opacity: i === 0 ? 1 : Math.max(0.4, 1 - i * 0.15) }} />
-                      </div>
-                    </Tooltip>
-                    <span className={`text-sm font-bold w-5 text-right ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}
-                      style={i === 0 ? { color: theme.primary } : {}}>{c.count}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ════ TOOLBAR ════ */}
-        <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-4 mb-6`}
-          style={{ animation: animateCards ? 'fadeInUp .5s ease-out .6s both' : 'none' }}>
-          <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
-
-            <div className="flex items-center gap-3 flex-wrap">
-              {/* Période */}
-              <select value={filterPeriode} onChange={e => setFilterPeriode(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                {PERIODES.map(p => <option key={p.code} value={p.code}>{p.libelle}</option>)}
-              </select>
-
-              {/* Niveau */}
-              <select value={filterNiveau} onChange={e => setFilterNiveau(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Tous les niveaux</option>
-                {NIVEAUX_DEGATS.map(n => <option key={n.code} value={n.code}>{n.libelle}</option>)}
-              </select>
-
-              {/* Statut */}
-              <select value={filterStatut} onChange={e => setFilterStatut(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Tous les statuts</option>
-                {STATUTS.map(s => <option key={s.code} value={s.code}>{s.libelle}</option>)}
-              </select>
-
-              {/* Responsabilité */}
-              <select value={filterResp} onChange={e => setFilterResp(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Toutes responsabilités</option>
-                {TYPES_RESPONSABILITE.map(r => <option key={r.code} value={r.code}>{r.libelle}</option>)}
-              </select>
-
-              {/* Chauffeur */}
-              <select value={filterChauffeur} onChange={e => setFilterChauffeur(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Tous les chauffeurs</option>
-                {CHAUFFEURS.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
-              </select>
-
-              {/* Immobilisation */}
-              <select value={filterImmob} onChange={e => setFilterImmob(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Immobilisation : tous</option>
-                <option value="oui">Véhicule immobilisé</option>
-                <option value="non">Non immobilisé</option>
-              </select>
-
-              {hasFilters && (
-                <button onClick={resetFilters}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 ${darkMode ? 'bg-gray-800 text-red-400 hover:bg-gray-700' : 'bg-red-50 text-red-600 hover:bg-red-100'} transition-colors`}>
-                  <i className="bi bi-x-lg text-xs"></i> Effacer
-                </button>
+              {card.trend && (
+                <div className={`flex items-center gap-1 text-xs font-bold ${card.trend.includes('-') ? 'text-red-600' : 'text-green-600'}`}>
+                  <i className={card.trend.includes('-') ? 'bi bi-graph-down-arrow' : 'bi bi-graph-up-arrow'}></i>
+                  <span>{card.trend}</span>
+                </div>
               )}
             </div>
-
-            <div className="flex items-center gap-3">
-              {/* Vue */}
-              <div className={`flex rounded-lg border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                {[['table', 'bi-table'], ['cards', 'bi-grid-3x3-gap-fill']].map(([v, ic]) => (
-                  <button key={v} onClick={() => setView(v)}
-                    className={`p-2 text-sm transition-colors ${view === v ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
-                    style={view === v ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                    <i className={`bi ${ic}`}></i>
-                  </button>
-                ))}
-              </div>
-
-              {/* Recherche */}
-              <div className="relative">
-                <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                  placeholder="Réf, chauffeur, véhicule, lieu..."
-                  className={`pl-9 pr-4 py-2 rounded-lg border text-sm w-52 ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} />
-              </div>
-
-              {/* Export */}
-              <div className="relative" ref={exportRef}>
-                <button onClick={() => setExportOpen(!exportOpen)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                  <i className="bi bi-download"></i> Exporter
-                </button>
-                {exportOpen && (
-                  <div className={`absolute right-0 top-full mt-1 z-50 rounded-xl shadow-2xl border py-2 min-w-[210px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-                    <p className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{sorted.length} accident(s)</p>
-                    <button onClick={() => { exportToExcel(sorted.map(toRow), 'Registre_Accidents', expHeaders); showToast('Export Excel effectué', 'success'); setExportOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
-                      <i className="bi bi-file-earmark-spreadsheet text-green-500 text-base"></i>
-                      <div><p className="font-medium">Exporter en Excel</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Format CSV (UTF-8)</p></div>
-                    </button>
-                    <button onClick={() => { exportToPDF('Registre des Accidents', expHeaders, sorted.map(toRow)); showToast('Export PDF généré', 'success'); setExportOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
-                      <i className="bi bi-file-earmark-pdf text-red-500 text-base"></i>
-                      <div><p className="font-medium">Exporter en PDF</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Impression paysage</p></div>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{sorted.length} accident(s) trouvé(s)</p>
+          ))}
         </div>
 
-        {/* ════ VUE TABLEAU ════ */}
-        {view === 'table' && (
-          <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}
-            style={{ animation: animateCards ? 'fadeInUp .5s ease-out .65s both' : 'none' }}>
+        {/* ─── ROW 1 ─── */}
+        <div className="grid gap-5 mb-5" style={{ gridTemplateColumns: '1fr 1fr 1.4fr' }}>
+          {loading ? <><SkeletonChart /><SkeletonChart /><SkeletonChart /></> : (
+            <>
+              <DashboardChart darkMode={darkMode} data={donutData} animateCharts={animateCharts} />
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
-                    {[
-                      ['Réf.', 'ref'],
-                      ['Chauffeur', 'chauffeur_nom'],
-                      ['Véhicule', null],
-                      ['Date', 'date_accident'],
-                      ['Lieu', null],
-                      ['Niveau', 'niveau_degats'],
-                      ['Statut', 'statut'],
-                      ['Coût estimé', 'cout_estime'],
-                      ['Immob.', null],
-                      ['Actions', null],
-                    ].map(([h, col], i) => (
-                      <th key={i} onClick={() => col && handleSort(col)}
-                        className={`px-4 py-3.5 text-left text-xs font-bold uppercase tracking-wider text-white ${col ? 'cursor-pointer hover:bg-white/10 select-none' : ''} ${i === 9 ? 'text-center' : ''}`}>
-                        {h}{col && <SortIcon col={col} />}
-                      </th>
+              {/* Stacked Bar — Véhicules inspectés */}
+              <ChartCard>
+                <ChartTitle icon="bi-clipboard2-check-fill">Véhicules inspectés — {new Date().getFullYear()}</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 260 175" className="overflow-visible">
+                    {[45,30,15,0].map((val,i)=>(
+                      <text key={`y-${i}`} x="30" y={22+i*38} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val===0?'0':val}</text>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.length === 0 ? (
-                    <tr><td colSpan={10} className={`text-center py-16 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                      <i className="bi bi-car-front text-5xl block mb-3 opacity-40"></i>
-                      <span className="text-sm">Aucun accident pour les filtres sélectionnés</span>
-                    </td></tr>
-                  ) : paginated.map((a, idx) => {
-                    const niveau = getNiveauInfo(a.niveau_degats);
-                    const statut = getStatutInfo(a.statut);
-                    return (
-                      <tr key={a.id} className="row-hover transition-all duration-150 cursor-pointer"
-                        style={{
-                          backgroundColor: idx % 2 === 0 ? (darkMode ? '#0c1929' : '#fef2f2') : (darkMode ? '#162033' : '#fff5f5'),
-                          animation: animateCards ? `fadeInUp .4s ease-out ${idx * .04}s both` : 'none',
-                        }}
-                        onClick={() => { setSelectedAccident(a); setShowDetailModal(true); }}>
+                    {[0,1,2,3].map(i=>(
+                      <line key={`grid-${i}`} x1="36" y1={22+i*38} x2="256" y2={22+i*38} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>
+                    ))}
+                    {barChartData.map((data,idx)=>{
+                      const maxVal=45,chartH=114,barW=14,slotW=220/barChartData.length;
+                      const centerX=36+slotW*idx+slotW/2,x=centerX-barW/2,baseY=136;
+                      const hD=animateCharts?((data.danger||0)/maxVal)*chartH:0;
+                      const hN=animateCharts?((data.nonConforme||0)/maxVal)*chartH:0;
+                      const hC=animateCharts?((data.conforme||0)/maxVal)*chartH:0;
+                      return (
+                        <g key={idx} onMouseEnter={()=>setHoveredBar(idx)} onMouseLeave={()=>setHoveredBar(null)} className="cursor-pointer">
+                          <rect x={x} y={baseY-hD} width={barW} height={hD} fill="#ef4444" rx="2" style={{transition:`height 0.8s ease-out ${idx*0.07}s,y 0.8s ease-out ${idx*0.07}s`}}/>
+                          <rect x={x} y={baseY-hD-hN} width={barW} height={hN} fill="#f97316" style={{transition:`height 0.8s ease-out ${idx*0.07+0.15}s,y 0.8s ease-out ${idx*0.07+0.15}s`}}/>
+                          <rect x={x} y={baseY-hD-hN-hC} width={barW} height={hC} fill="#10b981" rx="2" style={{transition:`height 0.8s ease-out ${idx*0.07+0.3}s,y 0.8s ease-out ${idx*0.07+0.3}s`}}/>
+                          <text x={centerX} y="158" textAnchor="middle" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{data.month}</text>
+                          {hoveredBar===idx&&(
+                            <g>
+                              <rect x={centerX-42} y={baseY-hD-hN-hC-68} width="84" height="62" rx="6" fill="#1f2937"/>
+                              <text x={centerX} y={baseY-hD-hN-hC-56} textAnchor="middle" fontSize="9" fill="#fff" fontWeight="600">{data.month} — {data.total} véh.</text>
+                              <circle cx={centerX-32} cy={baseY-hD-hN-hC-44} r="3" fill="#10b981"/><text x={centerX-26} y={baseY-hD-hN-hC-41} fontSize="8" fill="#d1d5db">Conforme: {data.conforme||0}</text>
+                              <circle cx={centerX-32} cy={baseY-hD-hN-hC-30} r="3" fill="#f97316"/><text x={centerX-26} y={baseY-hD-hN-hC-27} fontSize="8" fill="#d1d5db">Non conf.: {data.nonConforme||0}</text>
+                              <circle cx={centerX-32} cy={baseY-hD-hN-hC-16} r="3" fill="#ef4444"/><text x={centerX-26} y={baseY-hD-hN-hC-13} fontSize="8" fill="#d1d5db">Danger: {data.danger||0}</text>
+                            </g>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+                <LegendRow items={[{label:'Conforme',color:'#10b981'},{label:'Non conforme',color:'#f97316'},{label:'Danger',color:'#ef4444'}]}/>
+              </ChartCard>
 
-                        {/* Réf */}
-                        <td className="px-4 py-4">
-                          <span className={`text-xs font-mono font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{a.ref}</span>
-                          {a.blessures && <span className="ml-2 text-red-500 text-xs" title="Blessures"><i className="bi bi-person-fill-x"></i></span>}
-                        </td>
+              {/* Line — Interventions */}
+              <ChartCard>
+                <ChartTitle icon="bi-graph-up">Interventions Créées vs Résolues</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 345 165" className="overflow-visible">
+                    {[60,45,30,15,0].map((val,i)=>(<text key={`y-${i}`} x="26" y={18+i*30} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="30" y1={18+i*30} x2="340" y2={18+i*30} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+                    {(()=>{
+                      if(!interventionsData.length) return null;
+                      const cl=32,cw=308,sw=cw/(interventionsData.length-1),bY=138,cH=120,mV=60;
+                      const gX=i=>cl+i*sw, gY=v=>bY-(v/mV)*cH;
+                      const pC=interventionsData.map((d,i)=>(i===0?'M':'L')+` ${gX(i)},${gY(d.creees)}`).join(' ');
+                      const pR=interventionsData.map((d,i)=>(i===0?'M':'L')+` ${gX(i)},${gY(d.resolues)}`).join(' ');
+                      return(<>
+                        <path d={pC+` L ${gX(interventionsData.length-1)},${bY} L ${gX(0)},${bY} Z`} fill="#06b6d4" fillOpacity="0.08"/>
+                        <path d={pR+` L ${gX(interventionsData.length-1)},${bY} L ${gX(0)},${bY} Z`} fill="#8b5cf6" fillOpacity="0.08"/>
+                        <path d={pC} fill="none" stroke="#06b6d4" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{strokeDasharray:animateCharts?'0':'1000',strokeDashoffset:animateCharts?'0':'1000',transition:'stroke-dashoffset 1.5s ease-out'}}/>
+                        <path d={pR} fill="none" stroke="#8b5cf6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{strokeDasharray:animateCharts?'0':'1000',strokeDashoffset:animateCharts?'0':'1000',transition:'stroke-dashoffset 1.5s ease-out 0.3s'}}/>
+                        {interventionsData.map((d,i)=>(
+                          <g key={i} onMouseEnter={()=>setHoveredInterventionBar(i)} onMouseLeave={()=>setHoveredInterventionBar(null)} className="cursor-pointer">
+                            <circle cx={gX(i)} cy={gY(d.creees)} r="3.5" fill="#06b6d4" style={{opacity:animateCharts?1:0,transition:`opacity 0.3s ease-out ${i*0.08+1}s`}}/>
+                            <circle cx={gX(i)} cy={gY(d.resolues)} r="3.5" fill="#8b5cf6" style={{opacity:animateCharts?1:0,transition:`opacity 0.3s ease-out ${i*0.08+1.2}s`}}/>
+                            <text x={gX(i)} y="155" textAnchor="middle" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{d.month}</text>
+                          </g>
+                        ))}
+                        {hoveredInterventionBar!==null&&(()=>{
+                          const i=hoveredInterventionBar,d=interventionsData[i],tx=gX(i),ty=Math.min(gY(d.creees),gY(d.resolues))-50;
+                          return(<g><rect x={tx-38} y={ty} width="76" height="42" rx="6" fill="#1f2937"/>
+                            <text x={tx} y={ty+14} textAnchor="middle" fontSize="9" fill="#fff" fontWeight="600">{d.month}</text>
+                            <circle cx={tx-28} cy={ty+26} r="3" fill="#06b6d4"/><text x={tx-22} y={ty+29} fontSize="8" fill="#d1d5db">C: {d.creees}</text>
+                            <circle cx={tx+6} cy={ty+26} r="3" fill="#8b5cf6"/><text x={tx+12} y={ty+29} fontSize="8" fill="#d1d5db">R: {d.resolues}</text>
+                          </g>);
+                        })()}
+                      </>);
+                    })()}
+                  </svg>
+                </div>
+                <LegendRow items={[{label:'Créées',color:'#06b6d4'},{label:'Résolues',color:'#8b5cf6'}]}/>
+              </ChartCard>
+            </>
+          )}
+        </div>
 
-                        {/* Chauffeur */}
-                        <td className="px-4 py-4">
+        {/* ─── ROW 2 ─── */}
+        <div className="grid gap-5 mb-5" style={{ gridTemplateColumns: '1fr 1fr 1.4fr' }}>
+          {loading ? <><SkeletonChart /><SkeletonChart /><SkeletonChart /></> : (
+            <>
+              {/* Interventions / Jour */}
+              <ChartCard>
+                <ChartTitle icon="bi-calendar-week">Interventions / Jour</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
+                    {[20,15,10,5,0].map((val,i)=>(<text key={`y-${i}`} x="22" y={16+i*28} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+                    {(()=>{
+                      const cl=28,cw=168,sw=cw/interventionsJourData.length,bY=128,cH=112,mV=22;
+                      return interventionsJourData.map((d,idx)=>{
+                        const cx2=cl+sw*idx+sw/2,bw=10,x=cx2-bw/2,h=animateCharts?(d.count/mV)*cH:0;
+                        return(<g key={idx} onMouseEnter={()=>setHoveredDayBar(idx)} onMouseLeave={()=>setHoveredDayBar(null)} className="cursor-pointer">
+                          <defs><linearGradient id={`dayGrad-${idx}`} x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#06b6d4"/><stop offset="100%" stopColor="#3b82f6"/></linearGradient></defs>
+                          <rect x={x} y={bY-h} width={bw} height={h} fill={`url(#dayGrad-${idx})`} rx="3" style={{transition:`height 0.8s ease-out ${idx*0.1}s,y 0.8s ease-out ${idx*0.1}s`}}/>
+                          <text x={cx2} y="147" textAnchor="middle" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{d.day}</text>
+                          {hoveredDayBar===idx&&(<g><rect x={cx2-28} y={bY-h-34} width="56" height="26" rx="5" fill="#1f2937"/>
+                            <text x={cx2} y={bY-h-20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.day}</text>
+                            <text x={cx2} y={bY-h-9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} interv.</text>
+                          </g>)}
+                        </g>);
+                      });
+                    })()}
+                  </svg>
+                </div>
+                <LegendRow items={[{label:'Interventions',color:'#06b6d4'}]}/>
+              </ChartCard>
+
+              {/* Utilisateurs par Rôle */}
+              <ChartCard>
+                <ChartTitle icon="bi-people-fill">Utilisateurs par Rôle</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 220 155" className="overflow-visible">
+                    {[30,22,15,8,0].map((val,i)=>(<text key={`y-${i}`} x="22" y={16+i*28} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="216" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+                    {(()=>{
+                      const cl=28,cw=188,sw=cw/usersRoleData.length,bY=128,cH=112,mV=30;
+                      return usersRoleData.map((d,idx)=>{
+                        const cx2=cl+sw*idx+sw/2,bw=12,x=cx2-bw/2,h=animateCharts?(d.count/mV)*cH:0;
+                        return(<g key={idx} onMouseEnter={()=>setHoveredRoleBar(idx)} onMouseLeave={()=>setHoveredRoleBar(null)} className="cursor-pointer">
+                          <rect x={x} y={bY-h} width={bw} height={h} fill={d.color} rx="3" style={{transition:`height 0.8s ease-out ${idx*0.1}s,y 0.8s ease-out ${idx*0.1}s`}}/>
+                          <text x={cx2} y="147" textAnchor="middle" fontSize="7.5" fill={darkMode?'#6b7280':'#9ca3af'}>{d.role.length>8?d.role.slice(0,7)+'…':d.role}</text>
+                          {hoveredRoleBar===idx&&(<g><rect x={cx2-36} y={bY-h-34} width="72" height="26" rx="5" fill="#1f2937"/>
+                            <text x={cx2} y={bY-h-20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.role}</text>
+                            <text x={cx2} y={bY-h-9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} utilisateurs</text>
+                          </g>)}
+                        </g>);
+                      });
+                    })()}
+                  </svg>
+                </div>
+                <div className="flex flex-col gap-1.5 mt-3">
+                  <div className="flex items-center justify-center gap-3">{usersRoleData.slice(0,3).map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.role}</span></div>))}</div>
+                  <div className="flex items-center justify-center gap-3">{usersRoleData.slice(3).map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.role}</span></div>))}</div>
+                </div>
+              </ChartCard>
+
+              {/* Consommation & Économies */}
+              <ChartCard>
+                <ChartTitle icon="bi-fuel-pump">Consommation & Économies</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 350 165" className="overflow-visible">
+                    {[8000,6000,4000,2000,0].map((val,i)=>(<text key={`ly-${i}`} x="30" y={18+i*30} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {['400k','300k','200k','100k','0'].map((val,i)=>(<text key={`ry-${i}`} x="342" y={18+i*30} textAnchor="start" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="34" y1={18+i*30} x2="308" y2={18+i*30} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+                    {(()=>{
+                      if(!lineChartData.length) return null;
+                      const cl=36,cw=272,sw=cw/lineChartData.length,bY=138,cH=120;
+                      const gLX=i=>cl+sw*i+sw/2,gBX=i=>gLX(i)-5;
+                      const gBY=v=>bY-(v/8000)*cH,gLY=v=>bY-(v/400000)*cH;
+                      const ep=lineChartData.map((d,i)=>(i===0?'M':'L')+` ${gLX(i)},${gLY(d.economies)}`).join(' ');
+                      return(<>
+                        {lineChartData.map((d,i)=>{const h=animateCharts?(d.consommation/8000)*cH:0;return(
+                          <rect key={`bar-${i}`} x={gBX(i)} y={bY-h} width={10} height={h} fill="#10b981" rx="2"
+                            onMouseEnter={()=>setHoveredMonth(i)} onMouseLeave={()=>setHoveredMonth(null)} className="cursor-pointer"
+                            style={{transition:`height 0.8s ease-out ${i*0.08}s,y 0.8s ease-out ${i*0.08}s`}}/>
+                        );})}
+                        <path d={ep} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{strokeDasharray:animateCharts?'0':'1000',strokeDashoffset:animateCharts?'0':'1000',transition:'stroke-dashoffset 1.5s ease-out 0.5s'}}/>
+                        {lineChartData.map((d,i)=>(<g key={`dot-${i}`} onMouseEnter={()=>setHoveredMonth(i)} onMouseLeave={()=>setHoveredMonth(null)} className="cursor-pointer">
+                          <circle cx={gLX(i)} cy={gLY(d.economies)} r="3.5" fill="#f59e0b" style={{opacity:animateCharts?1:0,transition:`opacity 0.3s ease-out ${i*0.08+1.5}s`}}/>
+                          <text x={gLX(i)} y="155" textAnchor="middle" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{d.month}</text>
+                        </g>))}
+                        {hoveredMonth!==null&&(()=>{const i=hoveredMonth,d=lineChartData[i],tx=gLX(i),ty=gBY(d.consommation)-48;return(
+                          <g><rect x={tx-44} y={ty} width="88" height="42" rx="6" fill="#1f2937"/>
+                            <text x={tx} y={ty+14} textAnchor="middle" fontSize="9" fill="#fff" fontWeight="600">{d.month}</text>
+                            <circle cx={tx-36} cy={ty+28} r="3" fill="#10b981"/><text x={tx-30} y={ty+31} fontSize="8" fill="#d1d5db">{d.consommation} L</text>
+                            <circle cx={tx+4} cy={ty+28} r="3" fill="#f59e0b"/><text x={tx+10} y={ty+31} fontSize="8" fill="#d1d5db">{(d.economies/1000).toFixed(0)}k</text>
+                          </g>);
+                        })()}
+                      </>);
+                    })()}
+                  </svg>
+                </div>
+                <LegendRow items={[{label:'Consommation (L)',color:'#10b981'},{label:'Économies (CFA)',color:'#f59e0b'}]}/>
+              </ChartCard>
+            </>
+          )}
+        </div>
+
+        {/* ─── ROW 3 ─── */}
+        <div className="grid gap-5 mb-5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          {loading ? <><SkeletonChart /><SkeletonChart /><SkeletonChart /></> : (
+            <>
+              {/* Véhicules par Marque */}
+              <ChartCard>
+                <ChartTitle icon="bi-bookmark-star-fill">Véhicules par Marque</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
+                    {[20,15,10,5,0].map((val,i)=>(<text key={`y-${i}`} x="22" y={16+i*28} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+                    {(()=>{const cl=28,cw=168,sw=cw/vehiculesMarqueData.length,bY=128,cH=112,mV=20;
+                      return vehiculesMarqueData.map((d,idx)=>{const cx2=cl+sw*idx+sw/2,bw=14,x=cx2-bw/2,h=animateCharts?(d.count/mV)*cH:0;
+                        return(<g key={idx} onMouseEnter={()=>setHoveredMarqueBar(idx)} onMouseLeave={()=>setHoveredMarqueBar(null)} className="cursor-pointer">
+                          <rect x={x} y={bY-h} width={bw} height={h} fill={d.color} rx="3" style={{transition:`height 0.8s ease-out ${idx*0.1}s,y 0.8s ease-out ${idx*0.1}s`}}/>
+                          <text x={cx2} y="147" textAnchor="middle" fontSize="8" fill={darkMode?'#6b7280':'#9ca3af'}>{d.marque.length>6?d.marque.slice(0,5)+'.':d.marque}</text>
+                          {hoveredMarqueBar===idx&&(<g><rect x={cx2-30} y={bY-h-34} width="60" height="26" rx="5" fill="#1f2937"/>
+                            <text x={cx2} y={bY-h-20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.marque}</text>
+                            <text x={cx2} y={bY-h-9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} véhicules</text>
+                          </g>)}
+                        </g>);});})()}
+                  </svg>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
+                  {vehiculesMarqueData.map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.marque}</span></div>))}
+                </div>
+              </ChartCard>
+
+              {/* Véhicules par Catégorie */}
+              <ChartCard>
+                <ChartTitle icon="bi-grid-3x3-gap-fill">Véhicules par Catégorie</ChartTitle>
+                <div className="flex-1 flex flex-col justify-center">
+                  <svg width="100%" viewBox="0 0 200 155" className="overflow-visible">
+                    {[20,15,10,5,0].map((val,i)=>(<text key={`y-${i}`} x="22" y={16+i*28} textAnchor="end" fontSize="9" fill={darkMode?'#6b7280':'#9ca3af'}>{val}</text>))}
+                    {[0,1,2,3,4].map(i=>(<line key={`g-${i}`} x1="26" y1={16+i*28} x2="196" y2={16+i*28} stroke={darkMode?'#374151':'#e5e7eb'} strokeWidth="0.7"/>))}
+                    {(()=>{const cl=28,cw=168,sw=cw/vehiculesCategorieData.length,bY=128,cH=112,mV=22;
+                      return vehiculesCategorieData.map((d,idx)=>{const cx2=cl+sw*idx+sw/2,bw=14,x=cx2-bw/2,h=animateCharts?(d.count/mV)*cH:0;
+                        return(<g key={idx} onMouseEnter={()=>setHoveredCategorieBar(idx)} onMouseLeave={()=>setHoveredCategorieBar(null)} className="cursor-pointer">
+                          <rect x={x} y={bY-h} width={bw} height={h} fill={d.color} rx="3" style={{transition:`height 0.8s ease-out ${idx*0.1}s,y 0.8s ease-out ${idx*0.1}s`}}/>
+                          <text x={cx2} y="147" textAnchor="middle" fontSize="8" fill={darkMode?'#6b7280':'#9ca3af'}>{d.categorie.length>7?d.categorie.slice(0,6)+'.':d.categorie}</text>
+                          {hoveredCategorieBar===idx&&(<g><rect x={cx2-32} y={bY-h-34} width="64" height="26" rx="5" fill="#1f2937"/>
+                            <text x={cx2} y={bY-h-20} textAnchor="middle" fontSize="8" fill="#fff" fontWeight="600">{d.categorie}</text>
+                            <text x={cx2} y={bY-h-9} textAnchor="middle" fontSize="8" fill="#d1d5db">{d.count} véhicules</text>
+                          </g>)}
+                        </g>);});})()}
+                  </svg>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
+                  {vehiculesCategorieData.map((d,i)=>(<div key={i} className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor:d.color}}></div><span className={`text-[10px] font-medium ${darkMode?'text-gray-400':'text-gray-600'}`}>{d.categorie}</span></div>))}
+                </div>
+              </ChartCard>
+
+              {/* Documents Véhicules */}
+              <ChartCard>
+                <ChartTitle icon="bi-file-earmark-text-fill">Documents Véhicules</ChartTitle>
+                <div className="flex-1 flex items-center justify-center relative">
+                  <svg width="140" height="140" viewBox="0 0 200 200">
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="#10b981" strokeWidth="32" strokeDasharray="343.27 439.82" strokeDashoffset={animateCharts?0:439.82} onMouseEnter={()=>setHoveredDocVehSegment('valide')} onMouseLeave={()=>setHoveredDocVehSegment(null)} className="cursor-pointer" style={{transition:'stroke-dashoffset 1s ease-out'}}/>
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="#f59e0b" strokeWidth="32" strokeDasharray="65.97 439.82" strokeDashoffset={animateCharts?-343.27:-439.82} onMouseEnter={()=>setHoveredDocVehSegment('expire_bientot')} onMouseLeave={()=>setHoveredDocVehSegment(null)} className="cursor-pointer" style={{transition:'stroke-dashoffset 1s ease-out 0.2s'}}/>
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="#ef4444" strokeWidth="32" strokeDasharray="30.79 439.82" strokeDashoffset={animateCharts?-409.24:-439.82} onMouseEnter={()=>setHoveredDocVehSegment('expire')} onMouseLeave={()=>setHoveredDocVehSegment(null)} className="cursor-pointer" style={{transition:'stroke-dashoffset 1s ease-out 0.4s'}}/>
+                  </svg>
+                  {hoveredDocVehSegment&&(<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 text-white px-3 py-1.5 rounded-lg shadow-lg text-sm font-bold pointer-events-none z-10">
+                    {documentsVehiculesData.find(d=>(hoveredDocVehSegment==='valide'&&d.label==='Assurance Valide')||(hoveredDocVehSegment==='expire_bientot'&&d.label==='Expire < 30j')||(hoveredDocVehSegment==='expire'&&d.label==='Expirés'))?.percentage??0}%
+                  </div>)}
+                </div>
+                <div className="space-y-1">
+                  {documentsVehiculesData.map((item,idx)=>(<div key={idx} className="flex items-center justify-between px-2 py-1 rounded transition-colors">
+                    <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{backgroundColor:item.color}}></div><span className={`text-xs ${darkMode?'text-gray-300':'text-gray-700'}`}>{item.label}</span></div>
+                    <span className={`text-xs font-semibold ${darkMode?'text-gray-400':'text-gray-600'}`}>{item.percentage}%</span>
+                  </div>))}
+                </div>
+              </ChartCard>
+            </>
+          )}
+        </div>
+
+        {/* ─── ROW 4 ─── */}
+        <div className="grid gap-5 mb-5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          {loading ? <><SkeletonChart /><SkeletonChart /><SkeletonChart /></> : (
+            <>
+              {/* Documents Chauffeurs */}
+              <ChartCard>
+                <ChartTitle icon="bi-person-badge-fill">Documents Chauffeurs</ChartTitle>
+                <div className="flex-1 flex items-center justify-center relative">
+                  <svg width="140" height="140" viewBox="0 0 200 200">
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="#10b981" strokeWidth="32" strokeDasharray="378.24 439.82" strokeDashoffset={animateCharts?0:439.82} onMouseEnter={()=>setHoveredDocChaufSegment('valide')} onMouseLeave={()=>setHoveredDocChaufSegment(null)} className="cursor-pointer" style={{transition:'stroke-dashoffset 1s ease-out'}}/>
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="#f59e0b" strokeWidth="32" strokeDasharray="48.38 439.82" strokeDashoffset={animateCharts?-378.24:-439.82} onMouseEnter={()=>setHoveredDocChaufSegment('expire_bientot')} onMouseLeave={()=>setHoveredDocChaufSegment(null)} className="cursor-pointer" style={{transition:'stroke-dashoffset 1s ease-out 0.2s'}}/>
+                    <circle cx="100" cy="100" r="70" fill="none" stroke="#ef4444" strokeWidth="32" strokeDasharray="13.19 439.82" strokeDashoffset={animateCharts?-426.62:-439.82} onMouseEnter={()=>setHoveredDocChaufSegment('expire')} onMouseLeave={()=>setHoveredDocChaufSegment(null)} className="cursor-pointer" style={{transition:'stroke-dashoffset 1s ease-out 0.4s'}}/>
+                  </svg>
+                  {hoveredDocChaufSegment&&(<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 text-white px-3 py-1.5 rounded-lg shadow-lg text-sm font-bold pointer-events-none z-10">
+                    {documentsChauffeursData.find(d=>(hoveredDocChaufSegment==='valide'&&d.label==='Permis Valide')||(hoveredDocChaufSegment==='expire_bientot'&&d.label==='Expire < 30j')||(hoveredDocChaufSegment==='expire'&&d.label==='Expirés'))?.percentage??0}%
+                  </div>)}
+                </div>
+                <div className="space-y-1">
+                  {documentsChauffeursData.map((item,idx)=>(<div key={idx} className="flex items-center justify-between px-2 py-1 rounded transition-colors">
+                    <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{backgroundColor:item.color}}></div><span className={`text-xs ${darkMode?'text-gray-300':'text-gray-700'}`}>{item.label}</span></div>
+                    <span className={`text-xs font-semibold ${darkMode?'text-gray-400':'text-gray-600'}`}>{item.percentage}%</span>
+                  </div>))}
+                </div>
+              </ChartCard>
+
+              {/* KPI Véhicules — résumé */}
+              <ChartCard>
+                <ChartTitle icon="bi-graph-up-arrow">KPI Véhicules</ChartTitle>
+                {performancesData ? (
+                  <div className="flex-1 flex flex-col justify-center gap-3">
+                    {[
+                      {label:'Missions terminées ce mois',value:performancesData.summary.total_missions,          icon:'bi-flag-fill',                color:'text-blue-500'},
+                      {label:'Km parcourus',              value:`${(performancesData.summary.total_km/1000).toFixed(1)}k`,icon:'bi-speedometer2',    color:'text-purple-500'},
+                      {label:'Accidents',                 value:performancesData.summary.total_accidents,          icon:'bi-shield-exclamation',      color:'text-red-500'},
+                      {label:'Anomalies signalées',       value:performancesData.summary.total_anomalies,          icon:'bi-exclamation-triangle-fill',color:'text-yellow-500'},
+                      {label:'Score moyen',               value:`${performancesData.summary.score_moyen}/100`,     icon:'bi-star-fill',               color:'text-green-500'},
+                    ].map((kpi,i)=>(
+                      <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg ${darkMode?'bg-gray-800':'bg-gray-50'}`}>
+                        <div className="flex items-center gap-2"><i className={`${kpi.icon} ${kpi.color}`}></i><span className={`text-xs ${darkMode?'text-gray-300':'text-gray-700'}`}>{kpi.label}</span></div>
+                        <span className={`text-sm font-bold ${darkMode?'text-white':'text-gray-900'}`}>{kpi.value}</span>
+                      </div>
+                    ))}
+                    <button
+                      onClick={()=>{ setShowKpiModal(true); setKpiPeriode('1m'); setKpiSearch(''); setKpiPage(1); setKpiSelected(null); fetchKpiVehicules('1m','',1); }}
+                      className="mt-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all hover:opacity-80"
+                      style={{background:`linear-gradient(to right,${theme.primary}22,${theme.primaryDark}22)`,color:theme.primary}}
+                    >
+                      <i className="bi bi-arrows-fullscreen text-xs"></i>
+                      Voir le détail par véhicule
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className={`text-center ${darkMode?'text-gray-500':'text-gray-400'}`}>
+                      <i className="bi bi-bar-chart text-4xl mb-2"></i><p className="text-sm">Aucune donnée disponible</p>
+                    </div>
+                  </div>
+                )}
+              </ChartCard>
+
+              {/* Performance Chauffeurs */}
+              <ChartCard>
+                <ChartTitle icon="bi-speedometer">Performance Chauffeurs</ChartTitle>
+                {performancesData?.classement?.length > 0 ? (
+                  <div className="flex-1 overflow-y-auto space-y-2 pr-1" style={{maxHeight:'220px'}}>
+                    {performancesData.classement.map((c,i)=>(
+                      <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-lg ${darkMode?'bg-gray-800':'bg-gray-50'}`}>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-bold w-5 text-center ${i===0?'text-yellow-400':i===1?'text-gray-400':i===2?'text-orange-400':darkMode?'text-gray-500':'text-gray-400'}`}>{i===0?'🥇':i===1?'🥈':i===2?'🥉':`#${c.rang}`}</span>
+                          <span className={`text-xs font-medium truncate max-w-[90px] ${darkMode?'text-gray-300':'text-gray-700'}`}>{c.chauffeur}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-bold ${darkMode?'text-white':'text-gray-900'}`}>{c.score??'—'}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${BADGE_COLORS[c.badge]??'bg-gray-100 text-gray-700'}`}>{c.badge}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className={`text-center ${darkMode?'text-gray-500':'text-gray-400'}`}><i className="bi bi-trophy text-4xl mb-2"></i><p className="text-sm">Aucune donnée disponible</p></div>
+                  </div>
+                )}
+              </ChartCard>
+            </>
+          )}
+        </div>
+
+        {/* ─── BOTTOM ROW ─── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {loading ? <><SkeletonChart className="lg:col-span-2"/><SkeletonChart/></> : (
+            <>
+              {/* ── Missions du Jour ── */}
+              <div className={`lg:col-span-2 ${darkMode?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} rounded-xl p-6 border shadow-sm`}>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className={`text-lg font-bold ${darkMode?'text-white':'text-gray-900'} flex items-center gap-2`}>
+                    <i className="bi bi-pin-map-fill text-blue-500"></i>Missions du Jour
+                  </h3>
+                  <span className={`text-sm px-3 py-1 rounded-full ${darkMode?'bg-gray-800 text-gray-400':'bg-gray-100 text-gray-600'}`}>{missions.length} missions</span>
+                </div>
+                <div className="space-y-3">
+                  {missions.length===0 ? (
+                    <p className={`text-sm text-center py-8 ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucune mission planifiée aujourd'hui</p>
+                  ) : (
+                    missions.map((mission,idx)=>(
+                      <div key={idx} className={`flex items-center justify-between p-4 rounded-lg ${darkMode?'bg-gray-800':'bg-gray-50'} transition-all cursor-pointer`}>
+                        <div className="flex items-center gap-4">
+                          <div className={`text-3xl ${darkMode?'text-gray-300':'text-gray-700'}`}><i className={mission.icon} style={{fontSize:'2rem'}}></i></div>
+                          <div>
+                            <p className={`font-semibold ${darkMode?'text-white':'text-gray-900'}`}>{mission.id}</p>
+                            <p className={`text-sm ${darkMode?'text-gray-400':'text-gray-600'}`}>{mission.route}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
                           <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: a.avatar_color }}>
-                              {a.chauffeur_nom.charAt(0)}
+                            <i className={`bi bi-clock ${darkMode?'text-gray-500':'text-gray-400'}`}></i>
+                            <span className={`text-sm ${darkMode?'text-gray-400':'text-gray-600'}`}>{mission.time}</span>
+                          </div>
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${mission.status==='En cours'?'bg-yellow-100 text-yellow-700':'bg-gray-200 text-gray-700'}`}>{mission.status}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* ── Alertes — mode clair/sombre corrigé ── */}
+              <div className={`${darkMode?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} rounded-xl p-6 border shadow-sm flex flex-col`}>
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className={`text-lg font-bold flex items-center gap-2 ${darkMode?'text-white':'text-gray-900'}`}>
+                    <i className="bi bi-exclamation-triangle-fill text-red-500"></i>Alertes
+                  </h3>
+                  <span className="w-6 h-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                    {alerts.length}
+                  </span>
+                </div>
+
+                <div className="flex-1 space-y-3 overflow-y-auto" style={{maxHeight:'360px'}}>
+                  {alerts.length === 0 ? (
+                    <p className={`text-sm text-center py-8 ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucune alerte active</p>
+                  ) : (
+                    alerts.map((alert, idx) => {
+                      const st = alertStyles(alert.type);
+                      return (
+                        <div key={idx} className={`p-3 rounded-xl border-l-4 ${st.border} ${st.bg} cursor-pointer transition-all hover:opacity-90`}>
+                          <div className="flex items-start gap-3">
+                            {/* Icône */}
+                            <div className="flex-shrink-0 mt-0.5">
+                              <i className={`${alert.icon} ${st.iconColor}`} style={{fontSize:'1.25rem'}}></i>
                             </div>
-                            <div>
-                              <p className={`text-sm font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{a.chauffeur_nom}</p>
-                              <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.chauffeur_matricule}</p>
+
+                            {/* Contenu */}
+                            <div className="flex-1 min-w-0">
+                              {/* Titre */}
+                              <p className={`font-semibold text-sm leading-snug mb-0.5 ${st.title}`}>
+                                {alert.title}
+                              </p>
+                              {/* Véhicule / Chauffeur */}
+                              <p className={`text-xs font-medium truncate mb-1.5 ${st.vehicle}`}>
+                                {alert.vehicle}
+                              </p>
+                              {/* Badge + date */}
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${st.badge}`}>
+                                  {alert.days} {alert.status}
+                                </span>
+                                <span className={`text-xs ${st.date}`}>
+                                  {alert.date}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </td>
-
-                        {/* Véhicule */}
-                        <td className="px-4 py-4">
-                          <p className={`text-sm font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{a.vehicule_immatriculation}</p>
-                          <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.vehicule_marque} {a.vehicule_modele}</p>
-                        </td>
-
-                        {/* Date */}
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <p className={`text-sm font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{new Date(a.date_accident).toLocaleDateString('fr-FR')}</p>
-                          <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{new Date(a.date_accident).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
-                        </td>
-
-                        {/* Lieu */}
-                        <td className="px-4 py-4">
-                          <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'} max-w-[140px] truncate`} title={a.lieu}>{a.lieu || '—'}</p>
-                        </td>
-
-                        {/* Niveau */}
-                        <td className="px-4 py-4">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${niveau.bg}`}>
-                            <i className={`${niveau.icon} mr-1`}></i>{niveau.libelle}
-                          </span>
-                        </td>
-
-                        {/* Statut */}
-                        <td className="px-4 py-4">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statut.bg}`}>
-                            <i className={`${statut.icon} mr-1`}></i>{statut.libelle}
-                          </span>
-                        </td>
-
-                        {/* Coût */}
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <p className={`text-sm font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
-                            {a.cout_estime ? `${(a.cout_estime / 1000).toFixed(0)}k` : '—'} FCFA
-                          </p>
-                        </td>
-
-                        {/* Immobilisé */}
-                        <td className="px-4 py-4 text-center">
-                          {a.vehicule_immobilise
-                            ? <span className="text-red-500"><i className="bi bi-x-circle-fill"></i></span>
-                            : <span className="text-green-500"><i className="bi bi-check-circle-fill"></i></span>}
-                        </td>
-
-                        {/* Actions */}
-                        <td className="px-4 py-4 text-center" onClick={e => e.stopPropagation()}>
-                          <ActionMenu
-                            accident={a}
-                            darkMode={darkMode}
-                            theme={theme}
-                            onView={(acc) => { setSelectedAccident(acc); setShowDetailModal(true); }}
-                            onEdit={handleEdit}
-                            onDelete={(id) => { if (window.confirm('Supprimer cet accident ?')) handleDelete(id); }}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-800' : 'border-gray-100'} flex items-center justify-between`}>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {((currentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, sorted.length)} sur {sorted.length}
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
-                    className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'} transition-colors`}>
-                    <i className="bi bi-chevron-left"></i>
-                  </button>
-                  {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                    let page;
-                    if (totalPages <= 7) page = i + 1;
-                    else if (currentPage <= 4) page = i + 1;
-                    else if (currentPage >= totalPages - 3) page = totalPages - 6 + i;
-                    else page = currentPage - 3 + i;
-                    return (
-                      <button key={page} onClick={() => setCurrentPage(page)}
-                        className={`w-8 h-8 rounded-lg text-sm font-semibold transition-all ${currentPage === page ? 'text-white shadow-sm' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
-                        style={currentPage === page ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                        {page}
-                      </button>
-                    );
-                  })}
-                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}
-                    className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'} transition-colors`}>
-                    <i className="bi bi-chevron-right"></i>
-                  </button>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
+
+                {/* ── Bouton → page Notifications ── */}
+                <button
+                  onClick={() => navigate('/Admin/Configuration/Notifications')}
+                  className={`mt-4 w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all hover:opacity-80 active:scale-95 ${
+                    darkMode
+                      ? 'bg-gray-800 text-gray-200 hover:bg-gray-700 border border-gray-700'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
+                  }`}
+                >
+                  <i className="bi bi-bell-fill text-xs"></i>
+                  Voir toutes les alertes
+                  <i className="bi bi-chevron-right text-xs"></i>
+                </button>
               </div>
-            )}
+            </>
+          )}
+        </div>
+
+        <div className={`mt-8 py-6 border-t ${darkMode?'border-gray-800':'border-gray-200'}`}>
+          <div className="flex items-center justify-center">
+            <p className={`text-sm ${darkMode?'text-gray-500':'text-gray-600'}`}>© 2026 SGS Tous droits reservés - Version 1.0</p>
           </div>
-        )}
-
-        {/* ════ VUE CARDS ════ */}
-        {view === 'cards' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-            style={{ animation: animateCards ? 'fadeInUp .5s ease-out .65s both' : 'none' }}>
-            {paginated.map((a, idx) => {
-              const niveau = getNiveauInfo(a.niveau_degats);
-              const statut = getStatutInfo(a.statut);
-              return (
-                <div key={a.id} onClick={() => { setSelectedAccident(a); setShowDetailModal(true); }}
-                  className={`${darkMode ? 'bg-gray-900 border-gray-800 hover:border-gray-600' : 'bg-white border-gray-100 hover:border-gray-300'} rounded-xl border shadow-sm p-5 cursor-pointer transition-all card-hover`}
-                  style={{ animation: animateCards ? `fadeInUp .4s ease-out ${idx * .04}s both` : 'none' }}>
-
-                  {/* Header */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-mono font-bold ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{a.ref}</span>
-                      {a.blessures && <span className="text-red-500 text-xs" title="Blessures"><i className="bi bi-person-fill-x"></i></span>}
-                      {a.rapport_police && <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`} title="Rapport police"><i className="bi bi-file-earmark-text"></i></span>}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${niveau.bg}`}>{niveau.libelle}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statut.bg}`}>{statut.libelle}</span>
-                    </div>
-                  </div>
-
-                  {/* Chauffeur */}
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0" style={{ background: a.avatar_color }}>
-                      {a.chauffeur_nom.charAt(0)}
-                    </div>
-                    <div>
-                      <p className={`text-sm font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{a.chauffeur_nom}</p>
-                      <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.chauffeur_matricule}</p>
-                    </div>
-                    <div className="ml-auto text-right">
-                      <p className={`text-xs font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>{a.vehicule_immatriculation}</p>
-                      <p className={`text-[10px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.vehicule_marque} {a.vehicule_modele}</p>
-                    </div>
-                  </div>
-
-                  {/* Infos */}
-                  <div className={`rounded-lg p-3 space-y-1.5 mb-3 ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                    <div className="flex items-center gap-2">
-                      <i className={`bi bi-calendar2-event text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                      <span className={`text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {new Date(a.date_accident).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <i className={`bi bi-geo-alt text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                      <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} truncate`}>{a.lieu || '—'}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <i className={`bi bi-cash text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                      <span className={`text-xs font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                        {a.cout_estime ? `${(a.cout_estime / 1000).toFixed(0)}k FCFA` : '—'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Footer */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      {a.vehicule_immobilise && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${darkMode ? 'bg-red-900/30 text-red-400' : 'bg-red-100 text-red-600'}`}>
-                          <i className="bi bi-slash-circle mr-0.5"></i>Immob. {a.jours_immobilisation}j
-                        </span>
-                      )}
-                      {a.assure && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${darkMode ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-600'}`}>
-                          <i className="bi bi-shield-check mr-0.5"></i>Assuré
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>{formatRelative(a.date_accident)}</span>
-                      <div onClick={e => e.stopPropagation()}>
-                        <ActionMenu
-                          accident={a}
-                          darkMode={darkMode}
-                          theme={theme}
-                          onView={(acc) => { setSelectedAccident(acc); setShowDetailModal(true); }}
-                          onEdit={handleEdit}
-                          onDelete={(id) => { if (window.confirm('Supprimer cet accident ?')) handleDelete(id); }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Pagination cards */}
-            {totalPages > 1 && (
-              <div className="col-span-full flex items-center justify-between px-2 py-3">
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{((currentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, sorted.length)} sur {sorted.length}</p>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
-                    className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'}`}>
-                    <i className="bi bi-chevron-left"></i>
-                  </button>
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2)).map(page => (
-                    <button key={page} onClick={() => setCurrentPage(page)}
-                      className={`w-8 h-8 rounded-lg text-sm font-semibold ${currentPage === page ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
-                      style={currentPage === page ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                      {page}
-                    </button>
-                  ))}
-                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}
-                    className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'}`}>
-                    <i className="bi bi-chevron-right"></i>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className={`mt-8 py-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-center`}>
-          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-600'}`}>
-            {"© 2026 SGS — Registre des Accidents — Fleetify"}
-          </p>
         </div>
       </main>
 
-      {/* ════ MODALS ════ */}
-      {showDetailModal && selectedAccident && (
-        <AccidentModal
-          accident={selectedAccident}
-          darkMode={darkMode}
-          theme={theme}
-          onClose={() => setShowDetailModal(false)}
-          onEdit={handleEdit}
-          onDelete={(id) => { handleDelete(id); setShowDetailModal(false); }}
-          onChangeStatut={handleChangeStatut}
-        />
+      {/* ═══════════════════════════════════════════════════════
+          MODAL KPI VÉHICULES
+      ════════════════════════════════════════════════════════ */}
+      {showKpiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3" style={{backgroundColor:'rgba(0,0,0,0.65)'}}
+          onClick={(e)=>e.target===e.currentTarget&&setShowKpiModal(false)}>
+          <div className={`relative flex flex-col w-full h-full max-w-[98vw] max-h-[96vh] rounded-2xl shadow-2xl overflow-hidden ${darkMode?'bg-gray-900':'bg-white'}`}>
+
+            {/* ── En-tête ── */}
+            <div className={`flex-none flex items-center justify-between px-6 py-4 border-b ${darkMode?'border-gray-700':'border-gray-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{background:`linear-gradient(135deg,${theme.primary},${theme.primaryDark})`}}>
+                  <i className="bi bi-graph-up-arrow text-white text-lg"></i>
+                </div>
+                <div>
+                  <h2 className={`text-xl font-bold ${darkMode?'text-white':'text-gray-900'}`}>KPI Véhicules</h2>
+                  <p className={`text-xs ${darkMode?'text-gray-400':'text-gray-500'}`}>
+                    {kpiSelected ? `Véhicule sélectionné : ${kpiSelected}` : 'Performances détaillées — tous les véhicules'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {exportLoading && (
+                  <span className={`text-xs flex items-center gap-1.5 ${darkMode?'text-gray-400':'text-gray-500'}`}>
+                    <span className="w-3 h-3 rounded-full border-2 border-t-transparent animate-spin" style={{borderColor:`${theme.primary} transparent transparent transparent`}}></span>
+                    Export en cours…
+                  </span>
+                )}
+                <ExportBtn type="excel" immat={null} label="Excel (tous)" />
+                <ExportBtn type="pdf"   immat={null} label="PDF (tous)" />
+                {kpiSelected && (<>
+                  <ExportBtn type="excel" immat={kpiSelected} label={`Excel (${kpiSelected})`} />
+                  <ExportBtn type="pdf"   immat={kpiSelected} label={`PDF (${kpiSelected})`}   />
+                  <button onClick={()=>setKpiSelected(null)}
+                    className={`text-xs px-2 py-1.5 rounded-lg border ${darkMode?'border-gray-600 text-gray-400 hover:bg-gray-700':'border-gray-300 text-gray-500 hover:bg-gray-100'}`}>
+                    ✕ Désélectionner
+                  </button>
+                </>)}
+                <button onClick={()=>setShowKpiModal(false)}
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${darkMode?'hover:bg-gray-700 text-gray-400':'hover:bg-gray-100 text-gray-500'}`}>
+                  <i className="bi bi-x-lg text-lg"></i>
+                </button>
+              </div>
+            </div>
+
+            {/* ── Filtres ── */}
+            <div className={`flex-none flex flex-wrap items-center gap-3 px-6 py-3 border-b ${darkMode?'border-gray-700 bg-gray-900':'border-gray-100 bg-gray-50'}`}>
+              <div className="relative flex-1 min-w-[200px] max-w-xs">
+                <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm ${darkMode?'text-gray-500':'text-gray-400'}`}></i>
+                <input type="text" placeholder="Immatriculation, marque, direction…" value={kpiSearch}
+                  onChange={(e)=>{ setKpiSearch(e.target.value); setKpiPage(1); clearTimeout(window._kpiSearchTimer); window._kpiSearchTimer=setTimeout(()=>fetchKpiVehicules(kpiPeriode,e.target.value,1),350); }}
+                  className={`w-full pl-9 pr-4 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2 ${darkMode?'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:ring-blue-500':'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-blue-400'}`}/>
+                {kpiSearch&&(<button onClick={()=>{setKpiSearch('');setKpiPage(1);fetchKpiVehicules(kpiPeriode,'',1);}} className="absolute right-3 top-1/2 -translate-y-1/2"><i className={`bi bi-x text-sm ${darkMode?'text-gray-400':'text-gray-500'}`}></i></button>)}
+              </div>
+
+              <div className={`flex rounded-lg overflow-hidden border ${darkMode?'border-gray-700':'border-gray-200'}`}>
+                {[['1m','Ce mois'],['3m','3 mois'],['6m','6 mois'],['1an','1 an']].map(([key,label])=>(
+                  <button key={key} onClick={()=>{setKpiPeriode(key);setKpiPage(1);fetchKpiVehicules(key,kpiSearch,1);}}
+                    className={`px-4 py-2 text-sm font-medium transition-all ${kpiPeriode===key?'text-white':darkMode?'bg-gray-800 text-gray-400 hover:bg-gray-700':'bg-white text-gray-600 hover:bg-gray-50'}`}
+                    style={kpiPeriode===key?{background:`linear-gradient(to right,${theme.primary},${theme.primaryDark})`}:{}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {kpiPagination&&(<span className={`text-xs ml-auto ${darkMode?'text-gray-500':'text-gray-400'}`}>{kpiPagination.total} véhicule{kpiPagination.total>1?'s':''}</span>)}
+            </div>
+
+            {/* ── Totaux globaux ── */}
+            {kpiTotaux&&(
+              <div className={`flex-none grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 px-6 py-3 border-b ${darkMode?'border-gray-700':'border-gray-100'}`}>
+                {[
+                  {icon:'bi-flag-fill',        label:'Total missions',value:Number(kpiTotaux.total_missions).toLocaleString('fr-FR'),color:'text-blue-500',  bg:darkMode?'bg-blue-900':'bg-blue-50'},
+                  {icon:'bi-speedometer2',      label:'Km parcourus',  value:Number(kpiTotaux.total_km).toLocaleString('fr-FR')+' km',color:'text-purple-500',bg:darkMode?'bg-purple-900':'bg-purple-50'},
+                  {icon:'bi-tools',             label:'Interventions', value:Number(kpiTotaux.total_interventions).toLocaleString('fr-FR'),color:'text-orange-500',bg:darkMode?'bg-orange-900':'bg-orange-50'},
+                  {icon:'bi-currency-dollar',   label:'Coût total',    value:Number(kpiTotaux.cout_total)>=1_000_000?(Number(kpiTotaux.cout_total)/1_000_000).toFixed(1)+'M CFA':Number(kpiTotaux.cout_total).toLocaleString('fr-FR')+' CFA',color:'text-green-500',bg:darkMode?'bg-green-900':'bg-green-50'},
+                  {icon:'bi-shield-exclamation',label:'Accidents',     value:Number(kpiTotaux.nb_accidents).toLocaleString('fr-FR'),color:'text-red-500',    bg:darkMode?'bg-red-900':'bg-red-50'},
+                ].map((t,i)=>(
+                  <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-xl ${t.bg}`}>
+                    <i className={`${t.icon} text-lg ${t.color}`}></i>
+                    <div><p className={`text-xs ${darkMode?'text-gray-400':'text-gray-500'}`}>{t.label}</p><p className={`text-sm font-bold ${darkMode?'text-white':'text-gray-900'}`}>{t.value}</p></div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── Légende sélection ── */}
+            {!kpiLoading && kpiData.length > 0 && (
+              <div className={`flex-none px-6 py-2 text-xs ${darkMode?'text-gray-500':'text-gray-400'} border-b ${darkMode?'border-gray-800':'border-gray-100'}`}>
+                <i className="bi bi-hand-index-thumb mr-1"></i>
+                Cliquez sur une ligne pour la sélectionner et l'exporter individuellement.
+                {kpiSelected && <span className="ml-2 font-semibold" style={{color:theme.primary}}>{kpiSelected} sélectionné</span>}
+              </div>
+            )}
+
+            {/* ── Tableau scrollable ── */}
+            <div className="flex-1 overflow-auto">
+              {kpiLoading ? (
+                <div className="flex items-center justify-center h-48">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-10 h-10 rounded-full border-4 border-t-transparent animate-spin" style={{borderColor:`${theme.primary} transparent transparent transparent`}}></div>
+                    <p className={`text-sm ${darkMode?'text-gray-400':'text-gray-500'}`}>Chargement…</p>
+                  </div>
+                </div>
+              ) : kpiData.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-3">
+                  <i className={`bi bi-inbox text-4xl ${darkMode?'text-gray-600':'text-gray-300'}`}></i>
+                  <p className={`text-sm ${darkMode?'text-gray-500':'text-gray-400'}`}>Aucun résultat pour cette période</p>
+                </div>
+              ) : (
+                <table className="w-full text-sm min-w-[900px]">
+                  <thead className={`sticky top-0 z-10 ${darkMode?'bg-gray-800':'bg-gray-50'}`}>
+                    <tr>
+                      {[
+                        {label:'',              align:'center'},
+                        {label:'Immatriculation',align:'left'},
+                        {label:'Marque / Modèle',align:'left'},
+                        {label:'Direction',      align:'left'},
+                        {label:'Statut',         align:'center'},
+                        {label:'Dispo %',        align:'center'},
+                        {label:'Missions',       align:'right'},
+                        {label:'Km',             align:'right'},
+                        {label:'Interv.',        align:'right'},
+                        {label:'Durée interv.',  align:'right'},
+                        {label:'Coût total',     align:'right'},
+                        {label:'CFA/km',         align:'right'},
+                        {label:'Anomalies',      align:'right'},
+                        {label:'Accidents',      align:'right'},
+                        {label:'Export',         align:'center'},
+                      ].map((col,ci)=>(
+                        <th key={ci} className={`px-3 py-3 text-${col.align} text-xs font-semibold uppercase tracking-wide whitespace-nowrap ${darkMode?'text-gray-400 border-b border-gray-700':'text-gray-500 border-b border-gray-200'}`}>
+                          {col.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kpiData.map((row)=>{
+                      const statutMap={
+                        disponible:    {label:'Disponible', cls:darkMode?'bg-green-900 text-green-300' :'bg-green-100 text-green-700'},
+                        en_mission:    {label:'En mission', cls:darkMode?'bg-blue-900 text-blue-300'   :'bg-blue-100 text-blue-700'},
+                        en_maintenance:{label:'Maintenance',cls:darkMode?'bg-orange-900 text-orange-300':'bg-orange-100 text-orange-700'},
+                        immobilise:    {label:'Immobilisé', cls:darkMode?'bg-red-900 text-red-300'     :'bg-red-100 text-red-700'},
+                      };
+                      const s=statutMap[row.statut]??{label:row.statut,cls:'bg-gray-100 text-gray-600'};
+                      const tc=row.taux_disponibilite>=80?'text-green-500':row.taux_disponibilite>=50?'text-yellow-500':'text-red-500';
+                      const isSelected=kpiSelected===row.immatriculation;
+                      return(
+                        <tr key={row.immatriculation}
+                          onClick={()=>setKpiSelected(isSelected?null:row.immatriculation)}
+                          className={`border-b cursor-pointer transition-colors ${
+                            isSelected
+                              ? darkMode?'bg-blue-950 border-blue-800':'bg-blue-50 border-blue-200'
+                              : darkMode?'border-gray-700 hover:bg-gray-800':'border-gray-100 hover:bg-gray-50'
+                          }`}>
+                          <td className="px-3 py-2.5 text-center">
+                            <div className={`w-4 h-4 rounded border-2 mx-auto flex items-center justify-center transition-all ${isSelected?'border-blue-500 bg-blue-500':'border-gray-400'}`}>
+                              {isSelected&&<i className="bi bi-check text-white" style={{fontSize:'10px'}}></i>}
+                            </div>
+                          </td>
+                          <td className={`px-3 py-2.5 font-mono text-xs font-semibold ${darkMode?'text-white':'text-gray-900'}`}>{row.immatriculation}</td>
+                          <td className={`px-3 py-2.5 text-xs ${darkMode?'text-gray-300':'text-gray-700'}`}>
+                            <div className="font-medium">{row.marque}</div>
+                            <div className={`text-xs ${darkMode?'text-gray-500':'text-gray-400'}`}>{row.modele}</div>
+                          </td>
+                          <td className={`px-3 py-2.5 text-xs ${darkMode?'text-gray-400':'text-gray-600'}`}>{row.direction}</td>
+                          <td className="px-3 py-2.5 text-center"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.cls}`}>{s.label}</span></td>
+                          <td className={`px-3 py-2.5 text-center text-sm font-bold ${tc}`}>{row.taux_disponibilite}%</td>
+                          <td className={`px-3 py-2.5 text-right text-xs font-medium ${darkMode?'text-blue-400':'text-blue-600'}`}>{Number(row.total_missions).toLocaleString('fr-FR')}</td>
+                          <td className={`px-3 py-2.5 text-right text-xs ${darkMode?'text-gray-300':'text-gray-700'}`}>{Number(row.total_km).toLocaleString('fr-FR')}</td>
+                          <td className={`px-3 py-2.5 text-right text-xs ${darkMode?'text-orange-400':'text-orange-600'}`}>{Number(row.total_interventions).toLocaleString('fr-FR')}</td>
+                          <td className={`px-3 py-2.5 text-right text-xs ${darkMode?'text-gray-400':'text-gray-500'}`}>{row.total_duree_interventions_h}h</td>
+                          <td className={`px-3 py-2.5 text-right text-xs font-medium ${darkMode?'text-purple-400':'text-purple-600'}`}>
+                            {Number(row.cout_total)>=1_000_000?(Number(row.cout_total)/1_000_000).toFixed(1)+'M':Number(row.cout_total).toLocaleString('fr-FR')} CFA
+                          </td>
+                          <td className={`px-3 py-2.5 text-right text-xs ${darkMode?'text-gray-400':'text-gray-500'}`}>{row.cout_par_km!=null?Number(row.cout_par_km).toLocaleString('fr-FR'):'—'}</td>
+                          <td className={`px-3 py-2.5 text-right text-xs font-medium ${row.nb_anomalies>0?'text-yellow-500':darkMode?'text-gray-500':'text-gray-400'}`}>{row.nb_anomalies}</td>
+                          <td className={`px-3 py-2.5 text-right text-xs font-bold ${row.nb_accidents>0?'text-red-500':darkMode?'text-gray-500':'text-gray-400'}`}>{row.nb_accidents}</td>
+                          <td className="px-2 py-2.5 text-center" onClick={e=>e.stopPropagation()}>
+                            <div className="flex items-center gap-1 justify-center">
+                              <button disabled={exportLoading} onClick={()=>handleExportExcel(row.immatriculation)}
+                                title={`Excel — ${row.immatriculation}`}
+                                className={`w-6 h-6 rounded flex items-center justify-center text-xs transition-all disabled:opacity-40 ${darkMode?'bg-green-900 text-green-300 hover:bg-green-800':'bg-green-50 text-green-700 hover:bg-green-100'}`}>
+                                <i className="bi bi-file-earmark-excel"></i>
+                              </button>
+                              <button disabled={exportLoading} onClick={()=>handleExportPdf(row.immatriculation)}
+                                title={`PDF — ${row.immatriculation}`}
+                                className={`w-6 h-6 rounded flex items-center justify-center text-xs transition-all disabled:opacity-40 ${darkMode?'bg-red-900 text-red-300 hover:bg-red-800':'bg-red-50 text-red-700 hover:bg-red-100'}`}>
+                                <i className="bi bi-file-earmark-pdf"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* ── Pagination ── */}
+            {kpiPagination&&kpiPagination.last_page>1&&(
+              <div className={`flex-none flex items-center justify-between px-6 py-3 border-t ${darkMode?'border-gray-700':'border-gray-200'}`}>
+                <span className={`text-xs ${darkMode?'text-gray-500':'text-gray-400'}`}>Page {kpiPagination.current_page} / {kpiPagination.last_page}</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={()=>{const p=Math.max(1,kpiPage-1);setKpiPage(p);fetchKpiVehicules(kpiPeriode,kpiSearch,p);}} disabled={kpiPage<=1}
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm disabled:opacity-30 ${darkMode?'hover:bg-gray-700 text-gray-300':'hover:bg-gray-100 text-gray-600'}`}>
+                    <i className="bi bi-chevron-left"></i>
+                  </button>
+                  {Array.from({length:Math.min(7,kpiPagination.last_page)},(_,i)=>{
+                    const start=Math.max(1,Math.min(kpiPage-3,kpiPagination.last_page-6)),p=start+i;
+                    return(<button key={p} onClick={()=>{setKpiPage(p);fetchKpiVehicules(kpiPeriode,kpiSearch,p);}}
+                      className={`w-8 h-8 rounded-lg text-xs font-medium transition-all ${p===kpiPage?'text-white':darkMode?'text-gray-400 hover:bg-gray-700':'text-gray-600 hover:bg-gray-100'}`}
+                      style={p===kpiPage?{background:`linear-gradient(to right,${theme.primary},${theme.primaryDark})`}:{}}>{p}</button>);
+                  })}
+                  <button onClick={()=>{const p=Math.min(kpiPagination.last_page,kpiPage+1);setKpiPage(p);fetchKpiVehicules(kpiPeriode,kpiSearch,p);}} disabled={kpiPage>=kpiPagination.last_page}
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm disabled:opacity-30 ${darkMode?'hover:bg-gray-700 text-gray-300':'hover:bg-gray-100 text-gray-600'}`}>
+                    <i className="bi bi-chevron-right"></i>
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
       )}
 
-      {showFormModal && (
-        <AccidentFormModal
-          accident={editAccident}
-          darkMode={darkMode}
-          theme={theme}
-          onClose={() => { setShowFormModal(false); setEditAccident(null); }}
-          onSave={handleSave}
-        />
-      )}
     </div>
   );
 };

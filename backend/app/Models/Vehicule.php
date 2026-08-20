@@ -20,11 +20,16 @@ class Vehicule extends Model
     protected $fillable = [
         'immatriculation',
         'numero_chassis',
-        'marque',
-        'modele',
-        'type_vehicule',
+        'marque_id',        // ← FK vers marques.id
+        'modele_id',        // ← FK vers modeles.id
+        'categorie_id',     // ← FK vers categories_vehicules.id
+        'annee_id',         // ← FK vers annees.id
         'nb_places',
         'direction_id',
+        'ville',
+        'affectation_id',
+        'affectation',
+        'responsable_du_vehicule',
         'kilometrage',
         'date_maj_km',
         'km_prochaine_vidange',
@@ -39,6 +44,7 @@ class Vehicule extends Model
         'date_expiration_visite_technique',
         'cout_acquisition',
         'valeur_residuelle',
+        'couleur',
         'photo',
         'notes',
         'est_actif',
@@ -47,27 +53,50 @@ class Vehicule extends Model
     ];
 
     protected $casts = [
-        'kilometrage' => 'integer',
-        'km_prochaine_vidange' => 'integer',
-        'km_prochaine_revision' => 'integer',
-        'nb_places' => 'integer',
-        'capacite_reservoir' => 'integer',
-        'consommation_moyenne' => 'decimal:2',
-        'cout_acquisition' => 'decimal:2',
-        'valeur_residuelle' => 'decimal:2',
-        'date_maj_km' => 'date',
-        'date_acquisition' => 'date',
-        'date_expiration_assurance' => 'date',
+        'kilometrage'                      => 'integer',
+        'km_prochaine_vidange'             => 'integer',
+        'km_prochaine_revision'            => 'integer',
+        'nb_places'                        => 'integer',
+        'capacite_reservoir'               => 'integer',
+        'consommation_moyenne'             => 'decimal:2',
+        'cout_acquisition'                 => 'decimal:2',
+        'valeur_residuelle'                => 'decimal:2',
+        'date_maj_km'                      => 'date',
+        'date_acquisition'                 => 'date',
+        'date_expiration_assurance'        => 'date',
         'date_expiration_visite_technique' => 'date',
-        'date_immobilisation' => 'datetime',
-        'est_actif' => 'boolean',
-        'est_supprime' => 'boolean',
-        'date_creation' => 'datetime',
-        'date_modification' => 'datetime',
-        'date_suppression' => 'datetime',
+        'date_immobilisation'              => 'datetime',
+        'est_actif'                        => 'boolean',
+        'est_supprime'                     => 'boolean',
+        'date_creation'                    => 'datetime',
+        'date_modification'                => 'datetime',
+        'date_suppression'                 => 'datetime',
     ];
 
-    // Relations
+    // =========================================================================
+    // RELATIONS
+    // =========================================================================
+
+    public function marque(): BelongsTo
+    {
+        return $this->belongsTo(Marque::class, 'marque_id');
+    }
+
+    public function modele(): BelongsTo
+    {
+        return $this->belongsTo(Modele::class, 'modele_id');
+    }
+
+    public function categorie(): BelongsTo
+    {
+        return $this->belongsTo(CategorieVehicule::class, 'categorie_id');
+    }
+
+    public function annee(): BelongsTo
+    {
+        return $this->belongsTo(Annee::class, 'annee_id');
+    }
+
     public function direction(): BelongsTo
     {
         return $this->belongsTo(Direction::class, 'direction_id');
@@ -133,7 +162,10 @@ class Vehicule extends Model
         return $this->hasMany(InspectionVehicule::class, 'vehicule_immatriculation');
     }
 
-    // Scopes
+    // =========================================================================
+    // SCOPES
+    // =========================================================================
+
     public function scopeActif($query)
     {
         return $query->where('est_actif', true)->where('est_supprime', false);
@@ -159,7 +191,10 @@ class Vehicule extends Model
         return $query->where('statut', 'immobilise');
     }
 
-    // Méthodes helper
+    // =========================================================================
+    // HELPERS
+    // =========================================================================
+
     public function isDisponible(): bool
     {
         return $this->statut === 'disponible';

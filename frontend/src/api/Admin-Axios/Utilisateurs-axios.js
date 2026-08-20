@@ -59,7 +59,6 @@ export const generatePassword = (nom = '') =>
 /**
  * POST /admin/utilisateurs
  * Corps : { nom, email, role_id, direction_id?, mot_de_passe }
- * NOTE: pas de champ telephone (absent de la BDD)
  */
 export const createUtilisateur = (data) =>
   utilisateursApi.post('/admin/utilisateurs', data);
@@ -67,7 +66,6 @@ export const createUtilisateur = (data) =>
 /**
  * PUT /admin/utilisateurs/{id}
  * Corps : { nom?, email?, role_id?, direction_id? }
- * NOTE: pas de champ telephone (absent de la BDD)
  */
 export const updateUtilisateur = (id, data) =>
   utilisateursApi.put(`/admin/utilisateurs/${id}`, data);
@@ -101,7 +99,7 @@ export const createRole = (data) =>
 
 /**
  * PUT /admin/roles/{id}
- * Corps : { libelle?, description? }
+ * Corps : { code?, libelle?, description? }
  */
 export const updateRole = (id, data) =>
   utilisateursApi.put(`/admin/roles/${id}`, data);
@@ -116,9 +114,8 @@ export const toggleStatutRole = (id) =>
 
 // ──────────────────────────────────────────────────────────────────────
 // 🏢 DIRECTIONS
-// Le champ BDD s'appelle 'reference' mais le frontend l'appelle 'code'.
-// Le backend (formatDirection) expose déjà 'code' en lecture.
-// En écriture on envoie 'reference' au backend.
+// Le champ BDD s'appelle 'reference' — on l'utilise directement partout.
+// Plus aucun alias code→reference.
 // ──────────────────────────────────────────────────────────────────────
 
 /** GET /admin/directions */
@@ -127,21 +124,17 @@ export const getDirections = (params = {}) =>
 
 /**
  * POST /admin/directions
- * Le frontend envoie { nom, code } → on renomme code→reference pour le backend
+ * Corps : { nom, reference? }
  */
-export const createDirection = (data) => {
-  const { code, ...rest } = data;
-  return utilisateursApi.post('/admin/directions', { ...rest, reference: code });
-};
+export const createDirection = (data) =>
+  utilisateursApi.post('/admin/directions', data);
 
 /**
  * PUT /admin/directions/{id}
- * Le frontend envoie { nom?, code? } → on renomme code→reference pour le backend
+ * Corps : { nom?, reference? }
  */
-export const updateDirection = (id, data) => {
-  const { code, ...rest } = data;
-  return utilisateursApi.put(`/admin/directions/${id}`, { ...rest, reference: code });
-};
+export const updateDirection = (id, data) =>
+  utilisateursApi.put(`/admin/directions/${id}`, data);
 
 /** DELETE /admin/directions/{id} */
 export const deleteDirection = (id) =>
