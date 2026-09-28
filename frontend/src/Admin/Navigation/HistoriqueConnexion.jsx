@@ -66,14 +66,29 @@ const colorForName = (name = '') => {
 // ============================================================================
 // UTILITAIRES
 // ============================================================================
+
+/**
+ * Initiales : 1re lettre du nom + 1re lettre du prénom (ex. "MBA Jean" → "MJ").
+ * Calculé à partir du nom complet (user_nom) : aucun changement backend nécessaire.
+ * - 2 mots ou plus : 1re lettre des deux premiers mots
+ * - 1 seul mot     : ses deux premières lettres
+ * - vide           : "?"
+ */
+const getInitiales = (nomComplet) => {
+  const mots = String(nomComplet || '').trim().split(/\s+/).filter(Boolean);
+  if (mots.length === 0) return '?';
+  if (mots.length === 1) return mots[0].slice(0, 2).toUpperCase();
+  return (mots[0].charAt(0) + mots[1].charAt(0)).toUpperCase();
+};
+
 const getRoleInfo = (code, libelleFallback) => {
   const found = ROLES.find(r => r.code === code);
   if (found) return found;
-  return { libelle: libelleFallback || code || '—', color: '#94a3b8', bg: 'bg-gray-100 text-gray-600' };
+  return { libelle: libelleFallback || code || '  ', color: '#94a3b8', bg: 'bg-gray-100 text-gray-600' };
 };
 
 const formatDuree = (mins) => {
-  if (mins == null) return '—';
+  if (mins == null) return '  ';
   if (mins < 1)   return '< 1 min';
   if (mins < 60)  return `${mins} min`;
   const h = Math.floor(mins / 60), m = mins % 60;
@@ -125,13 +140,24 @@ const exportToPDF = (title, headers, rows) => {
   tr:nth-child(odd) td{background:#f0f4ff}tr:nth-child(even) td{background:#f8fafc}
   .footer{margin-top:20px;text-align:center;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;padding-top:8px}
   </style></head><body>
-  <h1>${title}</h1><div class="meta">Export le ${new Date().toLocaleDateString('fr-FR')} — ${rows.length} session(s)</div>
+  <h1>${title}</h1><div class="meta">Export le ${new Date().toLocaleDateString('fr-FR')}  ${rows.length} session(s)</div>
   <table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-  <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c ?? '—'}</td>`).join('')}</tr>`).join('')}</tbody></table>
-  <div class="footer">SGS Fleetify — Historique Connexions — ${new Date().getFullYear()}</div>
+  <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c ?? '  '}</td>`).join('')}</tr>`).join('')}</tbody></table>
+  <div class="footer">SGS Fleetify  Historique Connexions ${new Date().getFullYear()}</div>
   <script>window.onload=()=>window.print()</script></body></html>`);
   win.document.close();
 };
+
+// ============================================================================
+// AVATAR (initiales nom + prénom)
+// ============================================================================
+const Avatar = ({ name, sizeClass = 'w-8 h-8', textClass = 'text-xs', roundedClass = 'rounded-full', className = '' }) => (
+  <div className={`${sizeClass} ${roundedClass} ${textClass} flex items-center justify-center text-white font-bold shrink-0 tracking-wide select-none ${className}`}
+    style={{ background: colorForName(name) }}
+    title={name}>
+    {getInitiales(name)}
+  </div>
+);
 
 // ============================================================================
 // TOAST
@@ -236,12 +262,10 @@ const PageSkeleton = ({ darkMode }) => (
 const SessionModal = ({ session: s, darkMode, theme, onClose, onForceLogout }) => {
   const ri = getRoleInfo(s.user_role, s.user_role_libelle);
   const { anomalies, score } = computeAnomalies(s);
-  const risk = getRiskColor(score);
   const navMeta = getNavMeta(s.navigateur);
   const osMeta = getOsMeta(s.os);
   const loginDate  = new Date(s.login_at);
   const logoutDate = s.logout_at ? new Date(s.logout_at) : null;
-  const avatarColor = colorForName(s.user_nom);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -251,8 +275,7 @@ const SessionModal = ({ session: s, darkMode, theme, onClose, onForceLogout }) =
         <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-between`}
           style={{ background: `linear-gradient(135deg, ${theme.primary}18, transparent)` }}>
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white text-xl font-bold shadow-lg"
-              style={{ background: avatarColor }}>{(s.user_nom || '?').charAt(0)}</div>
+            <Avatar name={s.user_nom} sizeClass="w-12 h-12" textClass="text-base" roundedClass="rounded-xl" className="shadow-lg" />
             <div>
               <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{s.user_nom}</h2>
               <div className="flex items-center gap-2 mt-0.5">
@@ -294,7 +317,7 @@ const SessionModal = ({ session: s, darkMode, theme, onClose, onForceLogout }) =
                   ['Nom',       s.user_nom],
                   ['Email',     s.user_email],
                   ['Rôle',      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${ri.bg}`}>{ri.libelle}</span>],
-                  ['Direction', s.user_direction || '—'],
+                  ['Direction', s.user_direction || ' '],
                 ].map(([l, v], i) => (
                   <div key={i} className="flex items-center justify-between gap-2">
                     <span className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{l}</span>
@@ -311,7 +334,7 @@ const SessionModal = ({ session: s, darkMode, theme, onClose, onForceLogout }) =
                 {[
                   ['Navigateur',  <span className="flex items-center gap-1.5 text-sm font-medium"><i className={navMeta.icon} style={{ color: navMeta.color }}></i>{s.navigateur} {s.navigateur_version}</span>],
                   ['Système',     <span className="flex items-center gap-1.5 text-sm font-medium"><i className={osMeta.icon} style={{ color: osMeta.color }}></i>{s.os} {s.os_version}</span>],
-                  ['Adresse IP',  <span className={`font-mono text-sm font-semibold ${s.is_externe ? 'text-orange-500' : (darkMode ? 'text-gray-200' : 'text-gray-800')}`}>{s.adresse_ip || '—'}{s.is_externe && ' ⚠️'}</span>],
+                  ['Adresse IP',  <span className={`font-mono text-sm font-semibold ${s.is_externe ? 'text-orange-500' : (darkMode ? 'text-gray-200' : 'text-gray-800')}`}>{s.adresse_ip || '  '}{s.is_externe && ' ⚠️'}</span>],
                 ].map(([l, v], i) => (
                   <div key={i} className="flex items-center justify-between gap-2">
                     <span className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'} shrink-0`}>{l}</span>
@@ -394,12 +417,6 @@ const SessionModal = ({ session: s, darkMode, theme, onClose, onForceLogout }) =
                 <i className="bi bi-power"></i> Forcer la déconnexion
               </button>
             )}
-            <button onClick={() => {
-              const h = ['ID Session', 'Utilisateur', 'Email', 'Rôle', 'Connexion', 'Durée', 'Navigateur', 'OS', 'IP', 'Risque'];
-              exportToExcel([[s.session_id, s.user_nom, s.user_email, ri.libelle, new Date(s.login_at).toLocaleString('fr-FR'), formatDuree(s.duree_mins), `${s.navigateur} ${s.navigateur_version}`, `${s.os} ${s.os_version}`, s.adresse_ip, score]], `Session_${s.id}`, h);
-            }} className={`px-4 py-2.5 rounded-lg border text-sm flex items-center gap-2 ${darkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-700 hover:bg-gray-100'} transition-colors`}>
-              <i className="bi bi-file-earmark-spreadsheet text-green-500"></i> Exporter
-            </button>
           </div>
           <button onClick={onClose}
             className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold hover:opacity-90 transition-all"
@@ -669,7 +686,7 @@ const HistoriqueConnexion = () => {
             </div>
             <div>
               <h1 className={`text-2xl font-extrabold tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>Historique des Connexions</h1>
-              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Surveillance des sessions utilisateurs — navigateurs, IP, durée</p>
+              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Surveillance des sessions utilisateurs navigateurs, IP, durée</p>
             </div>
           </div>
 
@@ -688,81 +705,6 @@ const HistoriqueConnexion = () => {
           </div>
         )}
 
-        {/* ════ TOOLBAR (toujours visible, filtres accessibles même pendant le chargement) ════ */}
-        <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-4 mb-6`}
-          style={{ animation: animateCards ? 'fadeInUp .5s ease-out .1s both' : 'none' }}>
-          <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
-
-            <div className="flex items-center gap-3 flex-wrap">
-              <select value={filterPeriode} onChange={e => setFilterPeriode(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                {PERIODES.map(p => <option key={p.code} value={p.code}>{p.libelle}</option>)}
-              </select>
-
-              <select value={filterStatut} onChange={e => setFilterStatut(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Tous les statuts</option>
-                <option value="active">En ligne</option>
-                <option value="inactive">Déconnectés</option>
-              </select>
-
-              <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
-                <option value="">Tous les rôles</option>
-                {ROLES.map(r => <option key={r.code} value={r.code}>{r.libelle}</option>)}
-              </select>
-
-              {hasFilters && (
-                <button onClick={resetFilters}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 ${darkMode ? 'bg-gray-800 text-red-400 hover:bg-gray-700' : 'bg-red-50 text-red-600 hover:bg-red-100'} transition-colors`}>
-                  <i className="bi bi-x-lg text-xs"></i> Effacer
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className={`flex rounded-lg border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                {[['table', 'bi-table'], ['cards', 'bi-grid-3x3-gap-fill']].map(([v, ic]) => (
-                  <button key={v} onClick={() => setView(v)}
-                    className={`p-2 text-sm transition-colors ${view === v ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
-                    style={view === v ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                    <i className={`bi ${ic}`}></i>
-                  </button>
-                ))}
-              </div>
-
-              <div className="relative">
-                <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                  placeholder="Nom, email..."
-                  className={`pl-9 pr-4 py-2 rounded-lg border text-sm w-52 ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} />
-              </div>
-
-              <div className="relative" ref={exportRef}>
-                <button onClick={() => setExportOpen(!exportOpen)} disabled={exporting}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-50 ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                  {exporting ? <i className="bi bi-arrow-repeat animate-spin"></i> : <i className="bi bi-download"></i>} Exporter
-                </button>
-                {exportOpen && (
-                  <div className={`absolute right-0 top-full mt-1 z-50 rounded-xl shadow-2xl border py-2 min-w-[210px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-                    <p className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{meta.total} session(s) filtrée(s)</p>
-                    <button onClick={() => handleExport('excel')}
-                      className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
-                      <i className="bi bi-file-earmark-spreadsheet text-green-500 text-base"></i>
-                      <div><p className="font-medium">Exporter en Excel</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Format CSV (UTF-8)</p></div>
-                    </button>
-                    <button onClick={() => handleExport('pdf')}
-                      className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
-                      <i className="bi bi-file-earmark-pdf text-red-500 text-base"></i>
-                      <div><p className="font-medium">Exporter en PDF</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Impression paysage</p></div>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{loading ? 'Chargement...' : `${meta.total} session(s) trouvée(s)`}</p>
-        </div>
 
         {loading ? (
           <PageSkeleton darkMode={darkMode} />
@@ -863,7 +805,7 @@ const HistoriqueConnexion = () => {
                   })}
                 </div>
                 <p className={`text-xs text-center ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-                  Heure de pointe : {heurePointe?.heure ?? '—'}h00
+                  Heure de pointe : {heurePointe?.heure ?? ' '}h00
                 </p>
               </div>
             </div>
@@ -884,9 +826,7 @@ const HistoriqueConnexion = () => {
                     <button key={s.id} onClick={() => { setSelectedSession(s); setShowModal(true); }}
                       className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all hover:scale-105 ${darkMode ? 'bg-gray-800 border-gray-700 hover:border-green-500/50' : 'bg-gray-50 border-gray-200 hover:border-green-400'}`}>
                       <div className="relative">
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ background: colorForName(s.user_nom) }}>
-                          {(s.user_nom || '?').charAt(0)}
-                        </div>
+                        <Avatar name={s.user_nom} sizeClass="w-9 h-9" textClass="text-xs" />
                         <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-400 border-2 border-gray-900" style={{ animation: 'pulse-dot 2s infinite' }}></span>
                       </div>
                       <div className="text-left">
@@ -900,6 +840,61 @@ const HistoriqueConnexion = () => {
               </div>
             )}
 
+        {/* ════ TOOLBAR ════ */}
+        <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-4 mb-6`}
+          style={{ animation: animateCards ? 'fadeInUp .5s ease-out .1s both' : 'none' }}>
+          <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <select value={filterPeriode} onChange={e => setFilterPeriode(e.target.value)}
+                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
+                {PERIODES.map(p => <option key={p.code} value={p.code}>{p.libelle}</option>)}
+              </select>
+
+              <select value={filterStatut} onChange={e => setFilterStatut(e.target.value)}
+                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
+                <option value="">Tous les statuts</option>
+                <option value="active">En ligne</option>
+                <option value="inactive">Déconnectés</option>
+              </select>
+
+              <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
+                className={`px-3 py-2 rounded-lg border text-sm font-medium ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
+                <option value="">Tous les rôles</option>
+                {ROLES.map(r => <option key={r.code} value={r.code}>{r.libelle}</option>)}
+              </select>
+
+              {hasFilters && (
+                <button onClick={resetFilters}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 ${darkMode ? 'bg-gray-800 text-red-400 hover:bg-gray-700' : 'bg-red-50 text-red-600 hover:bg-red-100'} transition-colors`}>
+                  <i className="bi bi-x-lg text-xs"></i> Effacer
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className={`flex rounded-lg border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                {[['table', 'bi-table'], ['cards', 'bi-grid-3x3-gap-fill']].map(([v, ic]) => (
+                  <button key={v} onClick={() => setView(v)}
+                    className={`p-2 text-sm transition-colors ${view === v ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
+                    style={view === v ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
+                    <i className={`bi ${ic}`}></i>
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative">
+                <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
+                <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Nom, email..."
+                  className={`pl-9 pr-4 py-2 rounded-lg border text-sm w-52 ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`} />
+              </div>
+
+            </div>
+          </div>
+          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{loading ? 'Chargement...' : `${meta.total} session(s) trouvée(s)`}</p>
+        </div>
+
             {/* ════ VUE TABLEAU ════ */}
             {view === 'table' && (
               <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}
@@ -907,7 +902,7 @@ const HistoriqueConnexion = () => {
 
                 <div className={`px-6 py-3 flex items-center justify-between border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
                   <p className={`text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    <i className="bi bi-person-check mr-2"></i>{meta.total} session(s) — {periodeInfo.libelle}
+                    <i className="bi bi-person-check mr-2"></i>{meta.total} session(s)   {periodeInfo.libelle}
                   </p>
                   <div className="flex items-center gap-6">
                     {[
@@ -970,9 +965,7 @@ const HistoriqueConnexion = () => {
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="relative">
-                                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: colorForName(s.user_nom) }}>
-                                    {(s.user_nom || '?').charAt(0)}
-                                  </div>
+                                  <Avatar name={s.user_nom} sizeClass="w-9 h-9" textClass="text-xs" />
                                   {s.is_active && <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-400 border-2 border-gray-900" style={{ animation: 'pulse-dot 2s infinite' }}></span>}
                                 </div>
                                 <div>
@@ -1091,9 +1084,7 @@ const HistoriqueConnexion = () => {
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
                           <div className="relative">
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold" style={{ background: colorForName(s.user_nom) }}>
-                              {(s.user_nom || '?').charAt(0)}
-                            </div>
+                            <Avatar name={s.user_nom} sizeClass="w-10 h-10" textClass="text-sm" />
                             {s.is_active && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-400 border-2 border-gray-900" style={{ animation: 'pulse-dot 2s infinite' }}></span>}
                           </div>
                           <div>
@@ -1169,7 +1160,7 @@ const HistoriqueConnexion = () => {
         )}
 
         <div className={`mt-8 py-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-center`}>
-          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-600'}`}>{"© 2026 SGS — Historique des Connexions — Surveillance en temps réel"}</p>
+          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-600'}`}>{"© 2026 SGS  Historique des Connexions  Surveillance en temps réel"}</p>
         </div>
       </main>
 

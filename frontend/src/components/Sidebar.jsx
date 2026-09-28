@@ -23,6 +23,7 @@ const ALL_ROLES = Object.values(ROLES);
 // Menu
 // ─────────────────────────────────────────────────────────────────────────────
 const buildMenuItems = (navigate) => [
+
   {
     items: [
       {
@@ -31,7 +32,13 @@ const buildMenuItems = (navigate) => [
         path: '/Admin/Navigation/Dashboard',
         onClick: () => navigate('/Admin/Navigation/Dashboard'),
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
+     
       },
+    ],
+  },
+
+  {
+    items: [
       {
         icon: 'bi-car-front-fill',
         label: 'Gestion des véhicules',
@@ -39,15 +46,23 @@ const buildMenuItems = (navigate) => [
         onClick: () => navigate('/Admin/Navigation/Vehicules'),
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
       },
+    ],
+  },
 
+  {
+    items: [
       {
         icon: 'bi-truck-front-fill',
-        label: 'Documents des véhicules',
+        label: 'Documents de véhicules',
         path: '/Admin/Navigation/HistoriqueVehicule',
         onClick: () => navigate('/Admin/Navigation/HistoriqueVehicule'),
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
       },
+    ],
+  },
 
+  {
+    items: [
       {
         icon: 'bi-fuel-pump-fill',
         label: 'Carnet de carburant',
@@ -57,6 +72,10 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
+
+
+
+
   {
     items: [
       {
@@ -68,6 +87,8 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
+
+
   {
     items: [
       {
@@ -211,41 +232,36 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
-  {
-    section: 'CONFIGURATION',
+
+
+{
     items: [
       {
-        icon: 'bi-gear-fill',
-        label: 'Configuration',
-        hasSubmenu: true,
-        key: 'configuration',
+        icon: 'bi-bell-fill',
+        label: 'Notifications',
+        path: '/Admin/Configuration/Notifications',
+        onClick: () => navigate('/Admin/Configuration/Notifications'),
         roles: [ROLES.ADMIN],
-        submenu: [
-          {
-            label: 'Notifications',
-            icon: 'bi-bell-fill',
-            path: '/Admin/Configuration/Notifications',
-            onClick: () => navigate('/Admin/Configuration/Notifications'),
-            roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
-          },
-          {
-            label: 'Paramètres',
-            icon: 'bi-gear-fill',
-            path: '/Admin/Configuration/Parametres',
-            onClick: () => navigate('/Admin/Configuration/Parametres'),
-            roles: [ROLES.ADMIN],
-          },
-          {
-            icon: 'bi-palette-fill',
-            label: 'Thème',
-            path: '/Admin/Navigation/Theme',
-            onClick: () => navigate('/Admin/Navigation/Theme'),
-            roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
-          },
-        ],
       },
     ],
   },
+  
+
+
+  
+{
+    items: [
+      {
+        icon: 'bi-palette-fill',
+        label: 'Thème',
+        path: '/Admin/Navigation/Theme',
+        onClick: () => navigate('/Admin/Navigation/Theme'),
+        roles: [ROLES.ADMIN],
+      },
+    ],
+  },
+  
+
   {
     items: [
       {
@@ -257,6 +273,9 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
+
+
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

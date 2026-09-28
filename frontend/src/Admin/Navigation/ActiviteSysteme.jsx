@@ -552,27 +552,8 @@ const Activitesysteme = () => {
                 style={{ '--tw-ring-color': theme.primary }} />
               {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><i className="bi bi-x"></i></button>}
             </div>
-
-            <div className="relative" ref={exportRef}>
-              <button onClick={() => setExportDropdownOpen(!exportDropdownOpen)} disabled={exporting}
-                className={`px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors disabled:opacity-50 ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <i className={`bi ${exporting ? 'bi-arrow-repeat' : 'bi-download'}`}></i> {exporting ? 'Export...' : 'Exporter'}
-                <i className={`bi bi-chevron-${exportDropdownOpen ? 'up' : 'down'} text-xs`}></i>
-              </button>
-              {exportDropdownOpen && (
-                <div className={`absolute right-0 top-full mt-1 z-50 rounded-xl shadow-2xl border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} py-2 min-w-[200px]`}>
-                  <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{meta.total.toLocaleString()} entrée(s) filtrée(s)</p>
-                  <button onClick={() => handleExport('csv')} className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
-                    <i className="bi bi-file-earmark-spreadsheet text-emerald-500 text-base"></i>
-                    <div><p className="font-medium">Exporter en Excel</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Format CSV (UTF-8)</p></div>
-                  </button>
-                  <button onClick={() => handleExport('pdf')} className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
-                    <i className="bi bi-file-earmark-pdf text-red-500 text-base"></i>
-                    <div><p className="font-medium">Exporter en PDF</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Impression paysage</p></div>
-                  </button>
-                </div>
-              )}
-            </div>
+         
+         
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
@@ -828,7 +809,7 @@ const Activitesysteme = () => {
                       {[
                         ['Action', <Badge text={`${actionInfo.libelle}`} bg={actionInfo.bg} />],
                         ['Table', <span className={`text-sm font-mono font-semibold ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{log.nom_table}</span>],
-                        ['Enregistrement', <span className={`text-sm font-mono ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>#{log.id_enregistrement}</span>],
+                    
                         ['Adresse IP', <span className={`text-sm font-mono ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{log.adresse_ip}</span>],
                         ['Navigateur', <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{log.user_agent}</span>],
                       ].map(([label, val], i) => (
@@ -864,19 +845,11 @@ const Activitesysteme = () => {
               </div>
 
               <div className={`p-5 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-between`}>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => {
-                    const headers = getExportHeaders();
-                    exportToCSV([getExportRow(log)], `Audit_${log.id}`, headers);
-                    showToast('Entrée exportée', 'success');
-                  }}
-                    className={`px-4 py-2 rounded-lg border text-sm flex items-center gap-2 ${darkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-700 hover:bg-gray-100'} transition-colors`}>
-                    <i className="bi bi-file-earmark-spreadsheet text-emerald-500"></i>Exporter cette entrée
-                  </button>
-                </div>
+
+
                 <button onClick={() => setShowDetailModal(false)}
                   className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold shadow-sm hover:opacity-90 transition-all"
-                  style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
+                  style={{ background: `linear-gradient(to left, ${theme.primary}, ${theme.primaryDark})` }}>
                   Fermer
                 </button>
               </div>

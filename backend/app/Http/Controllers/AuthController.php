@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Utilisateur;
-use App\Models\Role;
 use App\Models\HistoriqueConnexion;
 use App\Mail\MailPasswordUtilisateurs;
 use Illuminate\Http\Request;
@@ -14,10 +13,10 @@ use Illuminate\Support\Facades\Mail;
 class AuthController extends Controller
 {
     /**
-     * Durée de session fixe : 2 heures
+     * Durée de session fixe : 2 heures (une seule valeur pour tout le fichier)
      */
-    private const SESSION_DURATION_HOURS = 4;
-    private const SESSION_DURATION_SECONDS = 4 * 60 * 60; // 14400 secondes
+    private const SESSION_DURATION_HOURS = 2;
+    private const SESSION_DURATION_SECONDS = self::SESSION_DURATION_HOURS * 60 * 60; // 7200
 
     /**
      * Connexion utilisateur avec vérification complète
@@ -36,6 +35,9 @@ class AuthController extends Controller
         ]);
 
         try {
+            // 0. Fermer les sessions dont le token a expiré (logout_at = expires_at)
+            HistoriqueConnexion::closeExpired();
+
             // 1. Rechercher l'utilisateur avec ses relations
             $user = Utilisateur::with(['role', 'direction'])
                 ->where('email', $request->email)
@@ -81,25 +83,27 @@ class AuthController extends Controller
                 ], 500);
             }
 
-            // 7. Session fixe de 2 heures
+            // 7. Session fixe
             $rememberMe = $request->boolean('remember_me', false);
-            $tokenExpiration = now()->addHours(self::SESSION_DURATION_HOURS);
+            $loginAt = now();
+            $tokenExpiration = $loginAt->copy()->addHours(self::SESSION_DURATION_HOURS);
 
-            // 8. Créer le token Sanctum avec expiration de 2 heures
+            // 8. Créer le token Sanctum avec expiration
             $tokenResult = $user->createToken('auth_token', ['*'], $tokenExpiration);
             $token = $tokenResult->plainTextToken;
 
-            // 8bis. Enregistrer la connexion dans l'historique
+            // 8bis. Enregistrer la connexion dans l'historique (avec l'heure d'expiration)
             HistoriqueConnexion::create([
                 'user_id'                  => $user->id,
                 'personal_access_token_id' => $tokenResult->accessToken->id,
                 'adresse_ip'               => $request->ip(),
                 'user_agent'               => $request->userAgent(),
-                'login_at'                 => now(),
+                'login_at'                 => $loginAt,
+                'expires_at'               => $tokenExpiration,
             ]);
 
             // 9. Mettre à jour la dernière connexion
-            $user->derniere_connexion = now();
+            $user->derniere_connexion = $loginAt;
             $user->save();
 
             // 10. Préparer les données utilisateur complètes
@@ -180,7 +184,7 @@ class AuthController extends Controller
                 ], 401);
             }
 
-            // Vérifier si le token a expiré (session de 2 heures dépassée)
+            // Sécurité supplémentaire : token expiré non encore purgé
             $currentToken = $request->user()->currentAccessToken();
             if ($currentToken && $currentToken->expires_at && now()->greaterThan($currentToken->expires_at)) {
                 HistoriqueConnexion::where('personal_access_token_id', $currentToken->id)
@@ -192,7 +196,7 @@ class AuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'session_expired' => true,
-                    'message' => 'Votre session de 2 heures est écoulée. Veuillez vous reconnecter.'
+                    'message' => $this->sessionExpiredMessage()
                 ], 401);
             }
 
@@ -268,7 +272,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Rafraîchir le token (repart sur une nouvelle session de 2 heures)
+     * Rafraîchir le token (repart sur une nouvelle session)
      */
     public function refresh(Request $request)
     {
@@ -283,9 +287,13 @@ class AuthController extends Controller
             $token = $tokenResult->plainTextToken;
 
             // La session continue : on rattache l'historique ouvert au nouveau token
+            // et on repousse la date d'expiration
             HistoriqueConnexion::where('personal_access_token_id', $oldTokenId)
                 ->whereNull('logout_at')
-                ->update(['personal_access_token_id' => $tokenResult->accessToken->id]);
+                ->update([
+                    'personal_access_token_id' => $tokenResult->accessToken->id,
+                    'expires_at'               => $tokenExpiration,
+                ]);
 
             return response()->json([
                 'success' => true,
@@ -336,7 +344,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Vérifier si la session de 2 heures est toujours valide
+     * Vérifier si la session est toujours valide
      */
     public function checkSession(Request $request)
     {
@@ -347,7 +355,7 @@ class AuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'session_expired' => true,
-                    'message' => 'Votre session de 2 heures est écoulée. Veuillez vous reconnecter.'
+                    'message' => $this->sessionExpiredMessage()
                 ], 401);
             }
 
@@ -364,7 +372,7 @@ class AuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'session_expired' => true,
-                    'message' => 'Votre session de 2 heures est écoulée. Veuillez vous reconnecter.'
+                    'message' => $this->sessionExpiredMessage()
                 ], 401);
             }
 
@@ -473,6 +481,14 @@ class AuthController extends Controller
                 'error'   => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
+    }
+
+    /**
+     * Message d'expiration cohérent avec la durée configurée
+     */
+    private function sessionExpiredMessage(): string
+    {
+        return 'Votre session de ' . self::SESSION_DURATION_HOURS . ' heures est écoulée. Veuillez vous reconnecter.';
     }
 
     /**

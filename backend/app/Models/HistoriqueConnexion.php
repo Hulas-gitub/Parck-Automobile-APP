@@ -2,17 +2,20 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Jenssegers\Agent\Agent;
 
 class HistoriqueConnexion extends Model
 {
     protected $fillable = [
-        'user_id', 'personal_access_token_id', 'adresse_ip', 'user_agent', 'login_at', 'logout_at',
+        'user_id', 'personal_access_token_id', 'adresse_ip', 'user_agent',
+        'login_at', 'expires_at', 'logout_at',
     ];
 
     protected $casts = [
-        'login_at'  => 'datetime',
-        'logout_at' => 'datetime',
+        'login_at'   => 'datetime',
+        'expires_at' => 'datetime',
+        'logout_at'  => 'datetime',
     ];
 
     public function utilisateur()
@@ -20,9 +23,23 @@ class HistoriqueConnexion extends Model
         return $this->belongsTo(Utilisateur::class, 'user_id');
     }
 
+    /**
+     * Ferme toutes les sessions dont le token a expiré.
+     * logout_at = expires_at (l'heure réelle de fin de session).
+     */
+    public static function closeExpired(): int
+    {
+        return static::whereNull('logout_at')
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<', now())
+            ->update(['logout_at' => DB::raw('expires_at')]);
+    }
+
+    // Session active = pas de déconnexion ET pas expirée
     public function getIsActiveAttribute(): bool
     {
-        return is_null($this->logout_at);
+        return is_null($this->logout_at)
+            && ($this->expires_at === null || $this->expires_at->isFuture());
     }
 
     public function getDureeMinsAttribute(): int

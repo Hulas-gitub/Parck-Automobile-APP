@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
@@ -21,6 +22,9 @@ class HistoriqueConnexionController extends Controller
 
     public function index(Request $request)
     {
+        // Ferme toutes les sessions dont le token a expiré avant de lire la table
+        HistoriqueConnexion::closeExpired();
+
         $jours = $this->periodeJours($request->get('periode'));
 
         $query = HistoriqueConnexion::with(['utilisateur.role', 'utilisateur.direction'])
@@ -66,6 +70,7 @@ class HistoriqueConnexionController extends Controller
                 'adresse_ip'         => $h->adresse_ip,
                 'is_externe'         => $h->is_externe,
                 'login_at'           => $h->login_at,
+                'expires_at'         => $h->expires_at,
                 'logout_at'          => $h->logout_at,
                 'duree_mins'         => $h->duree_mins,
                 'is_active'          => $h->is_active,
@@ -92,8 +97,8 @@ class HistoriqueConnexionController extends Controller
         $heures   = $enriched->groupBy(fn ($s) => Carbon::parse($s['login_at'])->format('G'))->map->count();
 
         // ── Pagination manuelle (le tri/parsing se fait en mémoire) ──
-        $perPage = (int) $request->get('per_page', 10);
-        $page    = (int) $request->get('page', 1);
+        $perPage = max((int) $request->get('per_page', 10), 1);
+        $page    = max((int) $request->get('page', 1), 1);
 
         return response()->json([
             'data' => $enriched->forPage($page, $perPage)->values(),
@@ -117,6 +122,8 @@ class HistoriqueConnexionController extends Controller
 
     public function show($id)
     {
+        HistoriqueConnexion::closeExpired();
+
         $h = HistoriqueConnexion::with(['utilisateur.role', 'utilisateur.direction'])->findOrFail($id);
         $agentInfo = $h->parsedAgent();
 
@@ -128,6 +135,7 @@ class HistoriqueConnexionController extends Controller
             'adresse_ip'  => $h->adresse_ip,
             'is_externe'  => $h->is_externe,
             'login_at'    => $h->login_at,
+            'expires_at'  => $h->expires_at,
             'logout_at'   => $h->logout_at,
             'duree_mins'  => $h->duree_mins,
             'is_active'   => $h->is_active,
@@ -137,13 +145,18 @@ class HistoriqueConnexionController extends Controller
 
     public function forceLogout($id)
     {
+        HistoriqueConnexion::closeExpired();
+
         $h = HistoriqueConnexion::findOrFail($id);
 
         if ($h->personal_access_token_id) {
             \Laravel\Sanctum\PersonalAccessToken::where('id', $h->personal_access_token_id)->delete();
         }
 
-        $h->update(['logout_at' => now()]);
+        // On ne réécrit pas logout_at si la session est déjà fermée
+        if ($h->logout_at === null) {
+            $h->update(['logout_at' => now()]);
+        }
 
         return response()->json(['message' => 'Session déconnectée de force']);
     }
