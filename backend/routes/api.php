@@ -16,7 +16,9 @@ use App\Http\Controllers\Admin\InspectionsVehiculesController;
 use App\Http\Controllers\Admin\ParametresSystemeController;
 use App\Http\Controllers\Admin\HistoriqueAffectationController;
 use App\Http\Controllers\Admin\HistoriqueVehiculeController;
+use App\Http\Controllers\Admin\HistoriqueConnexionController;
 use App\Http\Controllers\Admin\AccidentController;
+use App\Http\Controllers\Admin\ActivitesSystemesController;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,7 +31,7 @@ use App\Http\Controllers\Admin\AccidentController;
 // ──────────────────────────────────────────────────────────────────────
 Route::post('/login',    [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
-
+Route::post('/forgot-password', [AuthController::class, 'forgotPassword']); 
 // ──────────────────────────────────────────────────────────────────────
 // 🔒 ROUTES PROTÉGÉES
 // ──────────────────────────────────────────────────────────────────────
@@ -45,10 +47,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ──────────────────────────────────────────────────────────────────
     // 👤 PROFIL UTILISATEUR (tous les rôles)
+    //
+    // ⚠️ CORRECTION : le préfixe 'profile' est déjà appliqué par le groupe.
+    // Les routes internes doivent donc utiliser '/' (racine du préfixe) et
+    // non '/profile', sinon l'URL générée devient /api/profile/profile
+    // au lieu de /api/profile → 404.
     // ──────────────────────────────────────────────────────────────────
     Route::prefix('profile')->name('profile.')->group(function () {
-        Route::get ('/profile',                 [ProfileController::class, 'show'])->name('show');
-        Route::put ('/profile',                 [ProfileController::class, 'update'])->name('update');
+        Route::get ('/',                [ProfileController::class, 'show'])->name('show');
+        Route::put ('/',                [ProfileController::class, 'update'])->name('update');
         Route::post('/change-password', [ProfileController::class, 'changePassword'])->name('change-password');
     });
 
@@ -70,6 +77,27 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dashboard',                  [DashboardController::class, 'index'])->name('dashboard');
         Route::get('/dashboard/kpi-vehicules',    [DashboardController::class, 'getKpiVehiculesDetail'])->name('dashboard.kpi-vehicules');
         Route::get('/documents/check-expiration', [DocumentExpirationController::class, 'checkExpiration'])->name('documents.check-expiration');
+
+        /*
+        |----------------------------------------------------------------------
+        | 📋 ACTIVITÉS SYSTÈME — JOURNAL D'AUDIT
+        |
+        | RÈGLE CRITIQUE : les routes fixes (stats, utilisateurs, export)
+        | doivent être déclarées AVANT la route paramétrique ({id}).
+        | Sinon Laravel interprète "stats" / "utilisateurs" / "export"
+        | comme une valeur de {id} → erreur de cast / 404.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('activites-systeme')->name('activites-systeme.')->group(function () {
+            // ── Routes fixes AVANT {id} ──────────────────────────────────
+            Route::get('/stats',        [ActivitesSystemesController::class, 'stats'])->name('stats');
+            Route::get('/utilisateurs', [ActivitesSystemesController::class, 'utilisateurs'])->name('utilisateurs');
+            Route::get('/export',       [ActivitesSystemesController::class, 'export'])->name('export');
+
+            // ── CRUD (lecture seule) ─────────────────────────────────────
+            Route::get('/',     [ActivitesSystemesController::class, 'index'])->name('index');
+            Route::get('/{id}', [ActivitesSystemesController::class, 'show'])->name('show');
+        });
 
         /*
         |----------------------------------------------------------------------
@@ -307,6 +335,20 @@ Route::middleware('auth:sanctum')->group(function () {
 
             // ── 3. Action clôture — toujours après le GET /{id} ────────────
             Route::post('/{id}/cloturer', [HistoriqueAffectationController::class, 'cloturer'])->name('cloturer');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | 🕓 HISTORIQUE DES CONNEXIONS
+        |
+        | RÈGLE CRITIQUE : aucune route à segment fixe autre que {id} ici,
+        | mais on garde la convention : {id} et ses actions en dernier.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('historique-connexions')->name('historique-connexions.')->group(function () {
+            Route::get ('/',                    [HistoriqueConnexionController::class, 'index'])->name('index');
+            Route::get ('/{id}',                [HistoriqueConnexionController::class, 'show'])->name('show');
+            Route::post('/{id}/force-logout',   [HistoriqueConnexionController::class, 'forceLogout'])->name('force-logout');
         });
 
         /*

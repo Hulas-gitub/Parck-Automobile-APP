@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\JournalAudit;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -13,40 +14,6 @@ use Illuminate\Support\Facades\Validator;
  * HistoriqueAffectationController
  *
  * CRUD complet de la table `historique_affectations`.
- * Vérifié contre le dump SQL fleetify_db :
- *
- *  - historique_affectations : id, vehicule_immatriculation,
- *      direction_origine_id (int UNSIGNED NOT NULL),
- *      affectation_origine_id (bigint UNSIGNED NULL),
- *      direction_origine_nom (varchar 150 NOT NULL),
- *      affectation_origine_nom (varchar 150 NULL),
- *      direction_emprunt_id (int UNSIGNED NOT NULL),
- *      affectation_emprunt_id (bigint UNSIGNED NULL),
- *      direction_emprunt_nom (varchar 150 NOT NULL),
- *      affectation_emprunt_nom (varchar 150 NULL),
- *      date_debut (datetime NOT NULL),
- *      date_fin_prevue (datetime NULL),
- *      date_fin_reelle (datetime NULL),
- *      duree_emprunt_minutes (int UNSIGNED NULL),
- *      demande_par_user_id (bigint NULL),
- *      valide_par_user_id (bigint NULL),
- *      cloture_par_user_id (bigint NULL),
- *      statut (varchar 50 DEFAULT 'en_cours'),
- *      motif (varchar 255 NULL),
- *      notes (text NULL),
- *      km_depart (bigint UNSIGNED NULL),
- *      km_retour (bigint UNSIGNED NULL),
- *      est_supprime (tinyint DEFAULT 0),
- *      date_suppression (timestamp NULL),
- *      created_at (timestamp NULL),
- *      updated_at (timestamp NULL)
- *
- *  - directions : id (int UNSIGNED), nom, reference, est_supprime, affectation
- *  - affectations : id (bigint UNSIGNED), nom, code, est_actif, deleted_at
- *  - utilisateurs : id (bigint UNSIGNED), nom, email, est_actif, est_supprime
- *  - vehicules : immatriculation (varchar 30 PK), marque_id, modele_id,
- *                direction_id (int), affectation_id (bigint NULL),
- *                affectation (varchar — cache dénormalisé), kilometrage, photo
  *
  * Routes :
  *   GET    /admin/historique-affectations/references    → references
@@ -57,6 +24,10 @@ use Illuminate\Support\Facades\Validator;
  *   PUT    /admin/historique-affectations/{id}          → update
  *   DELETE /admin/historique-affectations/{id}          → destroy
  *   POST   /admin/historique-affectations/{id}/cloturer → cloturer
+ *
+ * Audit : ce controller utilise DB::table() (Query Builder), pas Eloquent,
+ * donc chaque action d'écriture appelle JournalAudit::tracer() explicitement
+ * (le trait Auditable, basé sur les events Eloquent, ne se déclenche pas ici).
  */
 class HistoriqueAffectationController extends Controller
 {
@@ -67,25 +38,18 @@ class HistoriqueAffectationController extends Controller
     private function baseQuery()
     {
         return DB::table('historique_affectations as ha')
-            // Véhicule
             ->leftJoin('vehicules as v',        'v.immatriculation', '=', 'ha.vehicule_immatriculation')
             ->leftJoin('marques as ma',          'ma.id',             '=', 'v.marque_id')
             ->leftJoin('modeles as mo',          'mo.id',             '=', 'v.modele_id')
-            // Direction d'origine (directions.id est int UNSIGNED)
             ->leftJoin('directions as dor',      'dor.id',            '=', 'ha.direction_origine_id')
-            // Direction d'emprunt
             ->leftJoin('directions as dem',      'dem.id',            '=', 'ha.direction_emprunt_id')
-            // Affectation d'origine (affectations.id est bigint UNSIGNED)
             ->leftJoin('affectations as aor',    'aor.id',            '=', 'ha.affectation_origine_id')
-            // Affectation d'emprunt
             ->leftJoin('affectations as aem',    'aem.id',            '=', 'ha.affectation_emprunt_id')
-            // Acteurs (utilisateurs)
             ->leftJoin('utilisateurs as u_dem',  'u_dem.id',          '=', 'ha.demande_par_user_id')
             ->leftJoin('utilisateurs as u_val',  'u_val.id',          '=', 'ha.valide_par_user_id')
             ->leftJoin('utilisateurs as u_clo',  'u_clo.id',          '=', 'ha.cloture_par_user_id')
             ->where('ha.est_supprime', 0)
             ->select(
-                // Emprunt
                 'ha.id',
                 'ha.vehicule_immatriculation',
                 'ha.direction_origine_id',
@@ -110,18 +74,15 @@ class HistoriqueAffectationController extends Controller
                 'ha.km_retour',
                 'ha.created_at',
                 'ha.updated_at',
-                // Véhicule
                 'v.photo              as vehicule_photo',
                 'v.couleur            as vehicule_couleur',
                 'v.kilometrage        as vehicule_km_actuel',
                 'ma.nom               as vehicule_marque',
                 'mo.nom               as vehicule_modele',
-                // Noms live depuis jointures (fallback si snapshot null)
                 'dor.nom              as direction_origine_nom_live',
                 'dem.nom              as direction_emprunt_nom_live',
                 'aor.nom              as affectation_origine_nom_live',
                 'aem.nom              as affectation_emprunt_nom_live',
-                // Acteurs
                 'u_dem.nom            as demande_par_nom',
                 'u_val.nom            as valide_par_nom',
                 'u_clo.nom            as cloture_par_nom'
@@ -146,30 +107,25 @@ class HistoriqueAffectationController extends Controller
             'vehicule_photo'           => $row->vehicule_photo           ?? null,
             'vehicule_couleur'         => $row->vehicule_couleur         ?? null,
             'vehicule_km_actuel'       => $row->vehicule_km_actuel       ?? null,
-            // Origine — snapshot en priorité, jointure en fallback
             'direction_origine_id'     => $row->direction_origine_id,
             'direction_origine_nom'    => $row->direction_origine_nom    ?? $row->direction_origine_nom_live  ?? null,
             'affectation_origine_id'   => $row->affectation_origine_id  ?? null,
             'affectation_origine_nom'  => $row->affectation_origine_nom ?? $row->affectation_origine_nom_live ?? null,
-            // Emprunt
             'direction_emprunt_id'     => $row->direction_emprunt_id,
             'direction_emprunt_nom'    => $row->direction_emprunt_nom    ?? $row->direction_emprunt_nom_live  ?? null,
             'affectation_emprunt_id'   => $row->affectation_emprunt_id  ?? null,
             'affectation_emprunt_nom'  => $row->affectation_emprunt_nom ?? $row->affectation_emprunt_nom_live ?? null,
-            // Période
             'date_debut'               => $row->date_debut,
             'date_fin_prevue'          => $row->date_fin_prevue          ?? null,
             'date_fin_reelle'          => $row->date_fin_reelle          ?? null,
             'duree_emprunt_minutes'    => $row->duree_emprunt_minutes    ?? null,
             'duree_lisible'            => $duree,
-            // Acteurs
             'demande_par_user_id'      => $row->demande_par_user_id      ?? null,
             'demande_par_nom'          => $row->demande_par_nom          ?? null,
             'valide_par_user_id'       => $row->valide_par_user_id       ?? null,
             'valide_par_nom'           => $row->valide_par_nom           ?? null,
             'cloture_par_user_id'      => $row->cloture_par_user_id      ?? null,
             'cloture_par_nom'          => $row->cloture_par_nom          ?? null,
-            // Divers
             'statut'                   => $row->statut,
             'motif'                    => $row->motif                    ?? null,
             'notes'                    => $row->notes                    ?? null,
@@ -178,6 +134,28 @@ class HistoriqueAffectationController extends Controller
             'created_at'               => $row->created_at,
             'updated_at'               => $row->updated_at,
         ];
+    }
+
+    /**
+     * Libellé d'audit intelligent selon ce qui a changé lors d'une modification.
+     */
+    private function libelleAuditUpdate(object $avant, array $data): string
+    {
+        $immat = $avant->vehicule_immatriculation;
+
+        if (array_key_exists('statut', $data) && $data['statut'] !== $avant->statut) {
+            return "Changement de statut de l'affectation du véhicule {$immat} : {$avant->statut} → {$data['statut']}";
+        }
+        if (array_key_exists('direction_emprunt_id', $data)) {
+            return "Modification de la direction d'emprunt du véhicule {$immat} : {$data['direction_emprunt_nom']}";
+        }
+        if (array_key_exists('date_fin_reelle', $data)) {
+            return "Mise à jour de la date de retour du véhicule {$immat}";
+        }
+        if (array_key_exists('km_retour', $data)) {
+            return "Mise à jour du kilométrage de retour du véhicule {$immat} : {$data['km_retour']} km";
+        }
+        return "Modification de l'affectation #{$avant->id} du véhicule {$immat}";
     }
 
     // =========================================================================
@@ -278,7 +256,6 @@ class HistoriqueAffectationController extends Controller
         }
 
         try {
-            // ── Snapshot situation actuelle du véhicule ───────────────────────
             $vehicule = DB::table('vehicules as v')
                 ->leftJoin('affectations as af', 'af.id', '=', 'v.affectation_id')
                 ->leftJoin('directions as di',   'di.id', '=', 'v.direction_id')
@@ -296,7 +273,6 @@ class HistoriqueAffectationController extends Controller
                 return response()->json(['message' => 'Véhicule introuvable ou supprimé.'], 404);
             }
 
-            // ── Vérifier absence d'emprunt en cours pour ce véhicule ─────────
             $enCours = DB::table('historique_affectations')
                 ->where('vehicule_immatriculation', $request->vehicule_immatriculation)
                 ->where('statut', 'en_cours')
@@ -309,7 +285,6 @@ class HistoriqueAffectationController extends Controller
                 ], 422);
             }
 
-            // ── Résolution noms direction/affectation d'emprunt ───────────────
             $dirEmprunt = DB::table('directions')
                 ->where('id', $request->direction_emprunt_id)
                 ->where('est_supprime', 0)
@@ -327,26 +302,20 @@ class HistoriqueAffectationController extends Controller
                     ->first();
             }
 
-            // ── Insertion ─────────────────────────────────────────────────────
             $id = DB::table('historique_affectations')->insertGetId([
                 'vehicule_immatriculation' => $request->vehicule_immatriculation,
-                // Origine — snapshot depuis vehicules
                 'direction_origine_id'     => $vehicule->direction_id,
                 'direction_origine_nom'    => $vehicule->direction_nom     ?? 'N/A',
                 'affectation_origine_id'   => $vehicule->affectation_id,
                 'affectation_origine_nom'  => $vehicule->affectation_nom   ?? $vehicule->affectation_cache,
-                // Emprunt
                 'direction_emprunt_id'     => $request->direction_emprunt_id,
                 'direction_emprunt_nom'    => $dirEmprunt->nom,
                 'affectation_emprunt_id'   => $request->affectation_emprunt_id ?? null,
                 'affectation_emprunt_nom'  => $affEmprunt?->nom,
-                // Période
                 'date_debut'               => $request->date_debut,
                 'date_fin_prevue'          => $request->date_fin_prevue ?? null,
-                // Acteurs
                 'demande_par_user_id'      => $request->demande_par_user_id ?? null,
                 'valide_par_user_id'       => $request->valide_par_user_id  ?? null,
-                // Divers
                 'statut'                   => 'en_cours',
                 'motif'                    => $request->motif     ?? null,
                 'notes'                    => $request->notes     ?? null,
@@ -355,6 +324,22 @@ class HistoriqueAffectationController extends Controller
                 'created_at'               => now(),
                 'updated_at'               => now(),
             ]);
+
+            $inserted = DB::table('historique_affectations')->find($id);
+
+            // ── AUDIT : nouvelle affectation (emprunt) d'un véhicule ────────────
+            JournalAudit::tracer(
+                auth()->id(),
+                'CREATE',
+                'historique_affectations',
+                (string) $id,
+                null,
+                (array) $inserted,
+                "Affectation du véhicule {$request->vehicule_immatriculation} : "
+                    . ($vehicule->direction_nom ?? 'N/A') . " → {$dirEmprunt->nom}"
+                    . ($request->filled('motif') ? " (motif : {$request->motif})" : '')
+            );
+            // ─────────────────────────────────────────────────────────────────
 
             $row = $this->baseQuery()->where('ha.id', $id)->first();
             return response()->json($this->format($row), 201);
@@ -426,6 +411,24 @@ class HistoriqueAffectationController extends Controller
             if ($request->has('valide_par_user_id'))  $data['valide_par_user_id'] = $request->valide_par_user_id ?: null;
 
             DB::table('historique_affectations')->where('id', $id)->update($data);
+
+            // ── AUDIT : modification d'un emprunt ───────────────────────────────
+            $champsAudit      = collect($data)->except(['updated_at'])->all();
+            $anciennesValeurs = collect((array) $row)->only(array_keys($champsAudit))->all();
+
+            if (!empty($champsAudit)) {
+                JournalAudit::tracer(
+                    auth()->id(),
+                    'UPDATE',
+                    'historique_affectations',
+                    (string) $id,
+                    $anciennesValeurs,
+                    $champsAudit,
+                    $this->libelleAuditUpdate($row, $champsAudit)
+                );
+            }
+            // ─────────────────────────────────────────────────────────────────
+
             $updated = $this->baseQuery()->where('ha.id', $id)->first();
             return response()->json($this->format($updated));
 
@@ -463,12 +466,10 @@ class HistoriqueAffectationController extends Controller
         try {
             $finReelle = now();
 
-            // ── Calcul durée en minutes (différence directe en secondes) ──────
             $debut      = new \DateTime($row->date_debut);
             $dureeMin   = (int) round(($finReelle->getTimestamp() - $debut->getTimestamp()) / 60);
             $dureeMin   = max($dureeMin, 0);
 
-            // ── Fusion notes ──────────────────────────────────────────────────
             $notesFinales = $row->notes;
             if (!empty($request->notes)) {
                 $notesFinales = $notesFinales
@@ -476,7 +477,7 @@ class HistoriqueAffectationController extends Controller
                     : $request->notes;
             }
 
-            DB::table('historique_affectations')->where('id', $id)->update([
+            $cloture = [
                 'statut'                => 'termine',
                 'date_fin_reelle'       => $finReelle,
                 'duree_emprunt_minutes' => $dureeMin,
@@ -484,7 +485,28 @@ class HistoriqueAffectationController extends Controller
                 'cloture_par_user_id'   => $request->cloture_par_user_id  ?? null,
                 'notes'                 => $notesFinales,
                 'updated_at'            => now(),
-            ]);
+            ];
+
+            DB::table('historique_affectations')->where('id', $id)->update($cloture);
+
+            // ── AUDIT : clôture d'un emprunt ─────────────────────────────────
+            $h = intdiv($dureeMin, 60);
+            $m = $dureeMin % 60;
+            $dureeLisible = ($h > 0 ? "{$h}h " : '') . "{$m}min";
+
+            JournalAudit::tracer(
+                auth()->id(),
+                'UPDATE',
+                'historique_affectations',
+                (string) $id,
+                ['statut' => $row->statut],
+                collect($cloture)->except(['updated_at'])->all(),
+                "Clôture de l'affectation du véhicule {$row->vehicule_immatriculation} — retour vers {$row->direction_origine_nom}"
+                    . " (durée : {$dureeLisible}"
+                    . ($request->filled('km_retour') ? ", {$request->km_retour} km" : '')
+                    . ")"
+            );
+            // ─────────────────────────────────────────────────────────────────
 
             $updated = $this->baseQuery()->where('ha.id', $id)->first();
             return response()->json($this->format($updated));
@@ -501,7 +523,16 @@ class HistoriqueAffectationController extends Controller
     public function destroy(int $id): JsonResponse
     {
         try {
-            $rows = DB::table('historique_affectations')
+            $avant = DB::table('historique_affectations')
+                ->where('id', $id)
+                ->where('est_supprime', 0)
+                ->first();
+
+            if (!$avant) {
+                return response()->json(['message' => 'Enregistrement introuvable.'], 404);
+            }
+
+            DB::table('historique_affectations')
                 ->where('id', $id)
                 ->where('est_supprime', 0)
                 ->update([
@@ -510,9 +541,17 @@ class HistoriqueAffectationController extends Controller
                     'updated_at'       => now(),
                 ]);
 
-            if (!$rows) {
-                return response()->json(['message' => 'Enregistrement introuvable.'], 404);
-            }
+            // ── AUDIT : suppression d'un historique d'affectation ────────────────
+            JournalAudit::tracer(
+                auth()->id(),
+                'DELETE',
+                'historique_affectations',
+                (string) $id,
+                (array) $avant,
+                null,
+                "Suppression de l'historique d'affectation #{$id} du véhicule {$avant->vehicule_immatriculation}"
+            );
+            // ─────────────────────────────────────────────────────────────────
 
             return response()->json(['message' => 'Emprunt supprimé.']);
 
@@ -528,7 +567,6 @@ class HistoriqueAffectationController extends Controller
     public function references(): JsonResponse
     {
         try {
-            // Véhicules actifs (avec marque + modèle)
             $vehicules = DB::table('vehicules as v')
                 ->leftJoin('marques as ma', 'ma.id', '=', 'v.marque_id')
                 ->leftJoin('modeles as mo', 'mo.id', '=', 'v.modele_id')
@@ -539,21 +577,19 @@ class HistoriqueAffectationController extends Controller
                     'v.immatriculation',
                     'v.direction_id',
                     'v.affectation_id',
-                    'v.affectation',       // cache varchar dénormalisé
+                    'v.affectation',
                     'v.kilometrage',
                     'v.photo',
                     'ma.nom as marque',
                     'mo.nom as modele'
                 )->get();
 
-            // Directions actives (est_supprime = 0)
             $directions = DB::table('directions')
                 ->where('est_supprime', 0)
                 ->orderBy('nom')
                 ->select('id', 'nom', 'reference')
                 ->get();
 
-            // Affectations actives
             $affectations = DB::table('affectations')
                 ->where('est_actif', 1)
                 ->whereNull('deleted_at')
@@ -561,7 +597,6 @@ class HistoriqueAffectationController extends Controller
                 ->select('id', 'nom', 'code')
                 ->get();
 
-            // Utilisateurs actifs (pour demande_par / valide_par / cloture_par)
             $utilisateurs = DB::table('utilisateurs')
                 ->where('est_actif',    1)
                 ->where('est_supprime', 0)
@@ -604,7 +639,6 @@ class HistoriqueAffectationController extends Controller
                 ->whereNotNull('duree_emprunt_minutes')
                 ->avg('duree_emprunt_minutes') ?? 0;
 
-            // Top 10 directions d'emprunt
             $parDirection = DB::table('historique_affectations as ha')
                 ->leftJoin('directions as d', 'd.id', '=', 'ha.direction_emprunt_id')
                 ->where('ha.est_supprime', 0)
@@ -617,7 +651,6 @@ class HistoriqueAffectationController extends Controller
                 ->limit(10)
                 ->get();
 
-            // Top 10 véhicules
             $parVehicule = DB::table('historique_affectations')
                 ->where('est_supprime', 0)
                 ->groupBy('vehicule_immatriculation')

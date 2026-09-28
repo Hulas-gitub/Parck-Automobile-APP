@@ -1,23 +1,32 @@
 import React, { useState } from 'react';
 
+const CIRCUMFERENCE = 2 * Math.PI * 70; // ≈ 439.82
+
+// ── Génère N couleurs bien distinctes, réparties sur toute la roue chromatique ──
+const generateDistinctColors = (count) => {
+  if (count <= 0) return [];
+  return Array.from({ length: count }, (_, i) => `hsl(${Math.round((360 / count) * i)}, 70%, 55%)`);
+};
+
 const DashboardChart = ({ darkMode, data, animateCharts }) => {
   const [hoveredSegment, setHoveredSegment] = useState(null);
 
-  const segments = [
-    { key: 'generale',    dashArray: '131.95 439.82', dashOffset: 0,        delay: '0s'   },
-    { key: 'technique',   dashArray: '105.56 439.82', dashOffset: -131.95,  delay: '0.2s' },
-    { key: 'transport',   dashArray: '43.98 439.82',  dashOffset: -237.51,  delay: '0.4s' },
-    { key: 'commerciale', dashArray: '26.39 439.82',  dashOffset: -281.49,  delay: '0.6s' },
-    { key: 'autres',      dashArray: '131.95 439.82', dashOffset: -307.88,  delay: '0.8s' },
-  ];
+  const total  = data.reduce((sum, d) => sum + (d.value || 0), 0);
+  const colors = generateDistinctColors(data.length); // ← une couleur unique par direction, toujours
 
-  const segMap = {
-    generale:    { label: 'Dir. Générale',    idx: 0 },
-    technique:   { label: 'Dir. Technique',   idx: 1 },
-    transport:   { label: 'Transport Fonds',  idx: 2 },
-    commerciale: { label: 'Dir. Commerciale', idx: 3 },
-    autres:      { label: 'Autres',           idx: 4 },
-  };
+  // ── Calcul dynamique des segments à partir de data (N éléments, pas figé) ──
+  let cumulative = 0;
+  const segments = data.map((item, idx) => {
+    const length     = total > 0 ? (item.value / total) * CIRCUMFERENCE : 0;
+    const dashOffset = -cumulative;
+    cumulative += length;
+    return {
+      idx,
+      dashArray: `${length} ${CIRCUMFERENCE}`,
+      dashOffset,
+      delay: `${idx * 0.15}s`,
+    };
+  });
 
   return (
     <div
@@ -25,7 +34,6 @@ const DashboardChart = ({ darkMode, data, animateCharts }) => {
       style={{ minHeight: '280px' }}
     >
       <div className="p-5 flex flex-col h-full">
-
         {/* ── Titre ── */}
         <h3 className={`text-sm font-bold mb-3 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
           <i className="bi bi-pie-chart-fill text-blue-500"></i>
@@ -35,16 +43,16 @@ const DashboardChart = ({ darkMode, data, animateCharts }) => {
         {/* ── Donut SVG ── */}
         <div className="flex-1 flex items-center justify-center relative">
           <svg width="140" height="140" viewBox="0 0 200 200">
-            {segments.map((seg, i) => (
+            {segments.map((seg) => (
               <circle
-                key={seg.key}
+                key={seg.idx}
                 cx="100" cy="100" r="70"
                 fill="none"
-                stroke={data[i]?.color}
+                stroke={colors[seg.idx]}
                 strokeWidth="32"
                 strokeDasharray={seg.dashArray}
-                strokeDashoffset={animateCharts ? seg.dashOffset : -439.82}
-                onMouseEnter={() => setHoveredSegment(seg.key)}
+                strokeDashoffset={animateCharts ? seg.dashOffset : -CIRCUMFERENCE}
+                onMouseEnter={() => setHoveredSegment(seg.idx)}
                 onMouseLeave={() => setHoveredSegment(null)}
                 className="transition-all duration-200 hover:opacity-80 cursor-pointer"
                 style={{ transition: `stroke-dashoffset 1s ease-out ${seg.delay}` }}
@@ -53,29 +61,26 @@ const DashboardChart = ({ darkMode, data, animateCharts }) => {
           </svg>
 
           {/* ── Tooltip ── */}
-          {hoveredSegment && (() => {
-            const { label, idx } = segMap[hoveredSegment];
-            return (
-              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 text-white px-3 py-1.5 rounded-lg shadow-lg pointer-events-none z-10 whitespace-nowrap">
-                <p className="text-sm font-bold">{label} : {data[idx]?.value}</p>
-              </div>
-            );
-          })()}
+          {hoveredSegment !== null && data[hoveredSegment] && (
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 text-white px-3 py-1.5 rounded-lg shadow-lg pointer-events-none z-10 whitespace-nowrap">
+              <p className="text-sm font-bold">{data[hoveredSegment].label} : {data[hoveredSegment].value}</p>
+            </div>
+          )}
         </div>
 
         {/* ── Légende ── */}
-        <div className="space-y-1 mt-2">
+        <div className="space-y-1 mt-2 overflow-y-auto" style={{ maxHeight: '140px' }}>
           {data.map((item, idx) => (
             <div
               key={idx}
               className={`flex items-center justify-between px-2 py-1 rounded transition-colors ${
-                hoveredSegment === segments[idx]?.key
+                hoveredSegment === idx
                   ? darkMode ? 'bg-gray-800' : 'bg-gray-100'
                   : ''
               }`}
             >
               <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }}></div>
+                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colors[idx] }}></div>
                 <span className={`text-xs font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   {item.label}
                 </span>
@@ -86,7 +91,6 @@ const DashboardChart = ({ darkMode, data, animateCharts }) => {
             </div>
           ))}
         </div>
-
       </div>
     </div>
   );

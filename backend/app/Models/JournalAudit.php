@@ -14,169 +14,136 @@ class JournalAudit extends Model
 
     const CREATED_AT = 'date_creation';
 
+    /** Actions reconnues, alignées sur le frontend Activitesysteme.jsx */
+    const ACTIONS = [
+        'CREATE'    => 'Création',
+        'UPDATE'    => 'Modification',
+        'DELETE'    => 'Suppression',
+        'READ'      => 'Consultation',
+        'BLOQUER'   => 'Blocage',
+        'DEBLOQUER' => 'Déblocage',
+        'LOGIN'     => 'Connexion',
+        'LOGOUT'    => 'Déconnexion',
+    ];
+
+    /** Périodes reconnues, alignées sur le frontend */
+    const PERIODES = [
+        '7j'          => ['libelle' => '7 derniers jours',  'jours' => 7],
+        '30j'         => ['libelle' => '30 derniers jours', 'jours' => 30],
+        'mensuel'     => ['libelle' => 'Mensuel',            'jours' => 30],
+        'trimestriel' => ['libelle' => 'Trimestriel',        'jours' => 90],
+        'semestriel'  => ['libelle' => 'Semestriel',         'jours' => 180],
+        'annuel'      => ['libelle' => 'Annuel',              'jours' => 365],
+    ];
+
     protected $fillable = [
-        'user_id',
-        'action',
-        'nom_table',
-        'id_enregistrement',
-        'anciennes_valeurs',
-        'nouvelles_valeurs',
-        'adresse_ip',
-        'user_agent',
+        'user_id', 'action', 'libelle', 'nom_table', 'id_enregistrement',
+        'anciennes_valeurs', 'nouvelles_valeurs', 'adresse_ip', 'user_agent',
     ];
 
     protected $casts = [
         'anciennes_valeurs' => 'array',
         'nouvelles_valeurs' => 'array',
-        'date_creation' => 'datetime',
+        'date_creation'     => 'datetime',
     ];
 
-    // Relations
     public function utilisateur(): BelongsTo
     {
         return $this->belongsTo(Utilisateur::class, 'user_id');
     }
 
-    // Scopes
-    public function scopeParUtilisateur($query, int $userId)
+    // ────────────────────────────────────────────────────────────
+    // Scope générique utilisé par ActivitesSystemesController
+    // ────────────────────────────────────────────────────────────
+    public function scopeFiltrer($query, array $filtres)
     {
-        return $query->where('user_id', $userId);
+        if (!empty($filtres['periode']) && isset(self::PERIODES[$filtres['periode']])) {
+            $jours = self::PERIODES[$filtres['periode']]['jours'];
+            $query->where('journaux_audit.date_creation', '>=', now()->subDays($jours)->startOfDay());
+        }
+
+        if (!empty($filtres['action'])) {
+            $query->where('journaux_audit.action', $filtres['action']);
+        }
+
+        if (!empty($filtres['table'])) {
+            $query->where('journaux_audit.nom_table', $filtres['table']);
+        }
+
+        if (!empty($filtres['user_id'])) {
+            $query->where('journaux_audit.user_id', $filtres['user_id']);
+        }
+
+        if (!empty($filtres['role'])) {
+            $query->whereHas('utilisateur.role', fn ($q) => $q->where('code', $filtres['role']));
+        }
+
+        if (!empty($filtres['recherche'])) {
+            $recherche = $filtres['recherche'];
+            $query->where(function ($q) use ($recherche) {
+                $q->where('journaux_audit.nom_table', 'like', "%{$recherche}%")
+                  ->orWhere('journaux_audit.libelle', 'like', "%{$recherche}%")
+                  ->orWhere('journaux_audit.adresse_ip', 'like', "%{$recherche}%")
+                  ->orWhereHas('utilisateur', fn ($u) => $u->where('nom', 'like', "%{$recherche}%"));
+            });
+        }
+
+        return $query;
     }
 
-    public function scopeParAction($query, string $action)
-    {
-        return $query->where('action', $action);
-    }
-
-    public function scopeParTable($query, string $table)
-    {
-        return $query->where('nom_table', $table);
-    }
-
+    // Scopes existants conservés (compat éventuelle avec du code déjà écrit)
+    public function scopeParUtilisateur($query, int $userId) { return $query->where('user_id', $userId); }
+    public function scopeParAction($query, string $action) { return $query->where('action', $action); }
+    public function scopeParTable($query, string $table) { return $query->where('nom_table', $table); }
     public function scopeParEnregistrement($query, string $table, string $id)
     {
-        return $query->where('nom_table', $table)
-                    ->where('id_enregistrement', $id);
+        return $query->where('nom_table', $table)->where('id_enregistrement', $id);
     }
+    public function scopeRecent($query, int $jours = 30) { return $query->where('date_creation', '>=', now()->subDays($jours)); }
+    public function scopeParPeriode($query, $dateDebut, $dateFin) { return $query->whereBetween('date_creation', [$dateDebut, $dateFin]); }
 
-    public function scopeCreation($query)
-    {
-        return $query->where('action', 'creation');
-    }
-
-    public function scopeModification($query)
-    {
-        return $query->where('action', 'modification');
-    }
-
-    public function scopeSuppression($query)
-    {
-        return $query->where('action', 'suppression');
-    }
-
-    public function scopeRecent($query, int $jours = 30)
-    {
-        return $query->where('date_creation', '>=', now()->subDays($jours));
-    }
-
-    public function scopeParPeriode($query, $dateDebut, $dateFin)
-    {
-        return $query->whereBetween('date_creation', [$dateDebut, $dateFin]);
-    }
-
-    // Méthodes helper
     public function getChangements(): array
     {
         $changements = [];
-        
-        if (!$this->anciennes_valeurs || !$this->nouvelles_valeurs) {
-            return $changements;
-        }
+        if (!$this->anciennes_valeurs || !$this->nouvelles_valeurs) return $changements;
 
         foreach ($this->nouvelles_valeurs as $champ => $nouvelleValeur) {
             $ancienneValeur = $this->anciennes_valeurs[$champ] ?? null;
-            
             if ($ancienneValeur != $nouvelleValeur) {
-                $changements[$champ] = [
-                    'avant' => $ancienneValeur,
-                    'apres' => $nouvelleValeur,
-                ];
+                $changements[$champ] = ['avant' => $ancienneValeur, 'apres' => $nouvelleValeur];
             }
         }
-
         return $changements;
     }
 
-    public function getNombreChangements(): int
-    {
-        return count($this->getChangements());
-    }
-
-    public static function enregistrer(string $action, string $table, string $idEnregistrement, ?array $anciennes = null, ?array $nouvelles = null, ?int $userId = null): self
-    {
+    // ────────────────────────────────────────────────────────────
+    // Point d'entrée unique utilisé partout (trait + controllers)
+    // ────────────────────────────────────────────────────────────
+    public static function tracer(
+        ?int $userId,
+        string $action,
+        string $table,
+        ?string $idEnregistrement = null,
+        ?array $anciennes = null,
+        ?array $nouvelles = null,
+        ?string $libelle = null
+    ): self {
         return self::create([
-            'user_id' => $userId ?? auth()->id(),
-            'action' => $action,
-            'nom_table' => $table,
-            'id_enregistrement' => $idEnregistrement,
-            'anciennes_valeurs' => $anciennes,
-            'nouvelles_valeurs' => $nouvelles,
-            'adresse_ip' => request()->ip(),
-            'user_agent' => request()->userAgent(),
+            'user_id'            => $userId ?? auth()->id(),
+            'action'             => $action,
+            'libelle'            => $libelle,
+            'nom_table'          => $table,
+            'id_enregistrement'  => $idEnregistrement,
+            'anciennes_valeurs'  => $anciennes,
+            'nouvelles_valeurs'  => $nouvelles,
+            'adresse_ip'         => request()->ip(),
+            'user_agent'         => request()->userAgent(),
         ]);
     }
 
-    public static function enregistrerCreation(string $table, string $id, array $valeurs, ?int $userId = null): self
+    public static function getHistorique(string $table, string $id, int $limite = 50)
     {
-        return self::enregistrer('creation', $table, $id, null, $valeurs, $userId);
-    }
-
-    public static function enregistrerModification(string $table, string $id, array $anciennes, array $nouvelles, ?int $userId = null): self
-    {
-        return self::enregistrer('modification', $table, $id, $anciennes, $nouvelles, $userId);
-    }
-
-    public static function enregistrerSuppression(string $table, string $id, array $valeurs, ?int $userId = null): self
-    {
-        return self::enregistrer('suppression', $table, $id, $valeurs, null, $userId);
-    }
-
-    public static function getHistorique(string $table, string $id, int $limite = 50): \Illuminate\Support\Collection
-    {
-        return self::where('nom_table', $table)
-            ->where('id_enregistrement', $id)
-            ->orderBy('date_creation', 'desc')
-            ->limit($limite)
-            ->get();
-    }
-
-    public static function getActiviteUtilisateur(int $userId, int $jours = 30): \Illuminate\Support\Collection
-    {
-        return self::where('user_id', $userId)
-            ->where('date_creation', '>=', now()->subDays($jours))
-            ->orderBy('date_creation', 'desc')
-            ->get();
-    }
-
-    public static function getStatistiquesParAction(int $jours = 30): array
-    {
-        $stats = self::where('date_creation', '>=', now()->subDays($jours))
-            ->selectRaw('action, COUNT(*) as total')
-            ->groupBy('action')
-            ->get();
-
-        return $stats->pluck('total', 'action')->toArray();
-    }
-
-    public static function getTablesLesPlusModifiees(int $jours = 30, int $limite = 10): array
-    {
-        $stats = self::where('date_creation', '>=', now()->subDays($jours))
-            ->selectRaw('nom_table, COUNT(*) as total')
-            ->groupBy('nom_table')
-            ->orderBy('total', 'desc')
-            ->limit($limite)
-            ->get();
-
-        return $stats->pluck('total', 'nom_table')->toArray();
+        return self::where('nom_table', $table)->where('id_enregistrement', $id)
+            ->orderBy('date_creation', 'desc')->limit($limite)->get();
     }
 }

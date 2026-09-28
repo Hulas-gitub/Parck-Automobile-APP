@@ -13,6 +13,8 @@ use App\Models\Accident;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -155,6 +157,105 @@ class ChauffeurController extends Controller
     }
 
     /**
+     * GET /api/chauffeurs/documents/check-expiration
+     * Scan de TOUS les documents chauffeurs actifs (chauffeurs actifs et non
+     * supprimés) et envoi des alertes (mail + in-app) pour ceux à 30 jours ou
+     * moins de leur expiration, ou déjà expirés.
+     *
+     * À appeler quotidiennement par le scheduler (voir routes/console.php),
+     * en plus de l'appel automatique fait à l'ajout/la modification d'un
+     * document — le scan couvre les seuils 15 j et 5 j qu'aucune action
+     * utilisateur ne déclencherait autrement.
+     */
+    public function checkExpirationDocuments(): JsonResponse
+    {
+        // L'envoi des emails est synchrone : on évite le timeout PHP (30 s par défaut)
+        @set_time_limit(300);
+
+        $result = $this->scanDocumentsChauffeurs();
+
+        return response()->json([
+            'message' => $result['message'],
+            'summary' => $result['summary'],
+            'date'    => Carbon::today()->format('d/m/Y'),
+        ]);
+    }
+
+    /**
+     * Scan proprement dit. Public via checkExpirationDocuments(), mais aussi
+     * appelable directement depuis une commande Artisan si besoin :
+     *   app(ChauffeurController::class)->scanDocumentsChauffeurs();
+     *
+     * @return array{message: string, summary: array<string,int>}
+     */
+    public function scanDocumentsChauffeurs(): array
+    {
+        $summary = [
+            'traites'   => 0,
+            'expires'   => 0,
+            'seuil_5j'  => 0,
+            'seuil_15j' => 0,
+            'seuil_30j' => 0,
+            'ignores'   => 0,
+        ];
+
+        $documents = DocumentChauffeur::with('chauffeur')
+            ->actif()
+            ->whereNotNull('date_expiration')
+            ->whereHas('chauffeur', function ($q) {
+                $q->where('est_actif', 1)->where('est_supprime', 0);
+            })
+            ->orderBy('date_expiration')
+            ->get();
+
+        if ($documents->isEmpty()) {
+            Log::info('[DocumentChauffeur] Aucun document avec date_expiration trouvé.');
+            return ['message' => 'Aucun document chauffeur à vérifier.', 'summary' => $summary];
+        }
+
+        foreach ($documents as $document) {
+            $summary['traites']++;
+
+            $joursRestants = $this->joursAvantExpiration($document->date_expiration);
+
+            $niveau = match (true) {
+                $joursRestants <= 0  => 'expire',
+                $joursRestants <= 5  => 'seuil_5',
+                $joursRestants <= 15 => 'seuil_15',
+                $joursRestants <= 30 => 'seuil_30',
+                default              => null,
+            };
+
+            if ($niveau === null) {
+                $summary['ignores']++;
+                continue;
+            }
+
+            match ($niveau) {
+                'expire'   => $summary['expires']++,
+                'seuil_5'  => $summary['seuil_5j']++,
+                'seuil_15' => $summary['seuil_15j']++,
+                'seuil_30' => $summary['seuil_30j']++,
+            };
+
+            $chauffeur = $document->chauffeur;
+            if (!$chauffeur) {
+                continue;
+            }
+
+            try {
+                $this->dispatchAlertesMail($document, $chauffeur);
+            } catch (\Throwable $e) {
+                Log::error("[DocumentChauffeur] ✗ scan doc#{$document->id} | {$e->getMessage()}");
+            }
+        }
+
+        Log::info('[DocumentChauffeur] Scan terminé.', $summary);
+
+        return ['message' => 'Vérification des documents chauffeurs terminée.', 'summary' => $summary];
+    }
+
+    /**
      * GET /api/chauffeurs/{id}/documents
      * Documents d'un chauffeur précis.
      */
@@ -177,7 +278,7 @@ class ChauffeurController extends Controller
     /**
      * POST /api/chauffeurs/{id}/documents
      * Ajouter un document avec upload de fichier.
-     * → Déclenche les alertes mail si date_expiration <= 30 jours.
+     * → Déclenche les alertes mail si date_expiration <= 30 jours (ou déjà expirée).
      */
     public function storeDocument(Request $request, int $id): JsonResponse
     {
@@ -215,7 +316,8 @@ class ChauffeurController extends Controller
             'pays_delivrance'        => $request->input('pays_delivrance', 'Gabon'),
             'date_delivrance'        => $request->date_delivrance,
             'date_expiration'        => $request->date_expiration,
-            'telecharge_par_user_id' => auth()->id(),
+            // ⚠ auth()->id() renvoie l'EMAIL dans ce projet → la colonne attend l'id numérique
+            'telecharge_par_user_id' => $request->user()?->id,
             'notes'                  => $request->notes,
         ]);
 
@@ -232,7 +334,8 @@ class ChauffeurController extends Controller
     /**
      * POST /api/documents/chauffeurs/{id}  (_method=PUT via FormData)
      * Modifier un document, fichier optionnel.
-     * → Déclenche les alertes mail si date_expiration <= 30 jours.
+     * → Les alertes mail ne repartent que si la date d'expiration a changé
+     *   (évite de renvoyer le même mail à chaque modification des notes, du nom, etc.).
      */
     public function updateDocument(Request $request, int $docId): JsonResponse
     {
@@ -257,6 +360,9 @@ class ChauffeurController extends Controller
             ], 422);
         }
 
+        // Date d'expiration AVANT modification (format Y-m-d pour une comparaison fiable)
+        $ancienneDate = $this->dateSeule($document->date_expiration);
+
         if ($request->hasFile('fichier')) {
             if ($document->chemin_fichier) {
                 Storage::disk('public')->delete($document->chemin_fichier);
@@ -272,10 +378,12 @@ class ChauffeurController extends Controller
         ]))->save();
 
         $document->load('chauffeur');
-        $chauffeur = $this->findChauffeur($document->chauffeur_user_id);
 
-        // ── Alertes mail si la date d'expiration est dans <= 30 jours ────────
-        $this->dispatchAlertesMail($document, $chauffeur);
+        // ── Alertes mail uniquement si la date d'expiration a changé ─────────
+        if ($this->dateSeule($document->date_expiration) !== $ancienneDate) {
+            $chauffeur = $this->findChauffeur($document->chauffeur_user_id);
+            $this->dispatchAlertesMail($document, $chauffeur);
+        }
 
         return response()->json([
             'success' => true,
@@ -308,15 +416,20 @@ class ChauffeurController extends Controller
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Détermine si un mail doit partir (date_expiration <= 30 jours ou déjà expirée)
-     * et l'envoie à tous les destinataires concernés :
-     *   - le chauffeur lui-même
-     *   - les admins (role code = 'admin')
-     *   - les chefs de parc (role code = 'chef_parc')
-     *   - les TF (role code = 'tf')
+     * Envoie un mail si date_expiration est à 30 jours ou moins (ou déjà expirée).
      *
-     * Le niveau (expire / seuil_5 / seuil_15 / seuil_30) est dérivé
-     * du nombre de jours restants exactement comme dans MailDocumentVehicule.
+     * Destinataires :
+     *   - le chauffeur lui-même
+     *   - les admins            (roles.code = 'admin')
+     *   - les chefs de parc     (roles.code = 'chef_parc')
+     *   - les chefs TF          (roles.code = 'chef_tf')
+     *
+     * Niveaux (mêmes règles que les documents véhicules) :
+     *   ≤ 0 jour   → expire     (le jour J, le document est expiré)
+     *   1  à  5    → seuil_5
+     *   6  à 15    → seuil_15
+     *   16 à 30    → seuil_30
+     *   > 30       → aucun mail
      */
     private function dispatchAlertesMail(DocumentChauffeur $document, Utilisateur $chauffeur): void
     {
@@ -325,9 +438,7 @@ class ChauffeurController extends Controller
             return;
         }
 
-        $now            = Carbon::now()->startOfDay();
-        $dateExpiration = Carbon::parse($document->date_expiration)->startOfDay();
-        $joursRestants  = (int) $now->diffInDays($dateExpiration, false); // négatif si expiré
+        $joursRestants = $this->joursAvantExpiration($document->date_expiration); // négatif si expiré
 
         // On n'envoie que si <= 30 jours (ou déjà expiré)
         if ($joursRestants > 30) {
@@ -336,24 +447,24 @@ class ChauffeurController extends Controller
 
         // Calcul du niveau
         $niveau = match (true) {
-            $joursRestants < 0  => 'expire',
-            $joursRestants < 5  => 'seuil_5',
-            $joursRestants < 15 => 'seuil_15',
-            default             => 'seuil_30',
+            $joursRestants <= 0  => 'expire',
+            $joursRestants <= 5  => 'seuil_5',
+            $joursRestants <= 15 => 'seuil_15',
+            default              => 'seuil_30',
         };
 
-        $statut = $joursRestants < 0 ? 'expire' : 'expire_bientot';
+        $statut = $niveau === 'expire' ? 'expire' : 'expire_bientot';
 
         // Payload document pour le Mailable
         $docPayload = [
-            'type_document'  => $document->type_document,
-            'nom_document'   => $document->nom_document,
-            'numero_permis'  => $document->numero_permis,
+            'type_document'     => $document->type_document,
+            'nom_document'      => $document->nom_document,
+            'numero_permis'     => $document->numero_permis,
             'categories_permis' => $document->categories_permis,
-            'pays_delivrance'=> $document->pays_delivrance ?? 'Gabon',
-            'date_delivrance'=> $document->date_delivrance,
-            'date_expiration'=> $document->date_expiration,
-            'notes'          => $document->notes,
+            'pays_delivrance'   => $document->pays_delivrance ?? 'Gabon',
+            'date_delivrance'   => $document->date_delivrance,
+            'date_expiration'   => $document->date_expiration,
+            'notes'             => $document->notes,
         ];
 
         // Payload chauffeur pour le Mailable
@@ -371,13 +482,14 @@ class ChauffeurController extends Controller
 
         // 1. Le chauffeur lui-même
         $destinataires->push([
+            'id'           => $chauffeur->id,
             'email'        => $chauffeur->email,
             'nom'          => $chauffeur->nom,
             'role_libelle' => 'Chauffeur',
         ]);
 
-        // 2. Admins, Chefs de parc, TF
-        $rolesCibles = ['admin', 'chef_parc', 'tf'];
+        // 2. Admins, Chefs de parc, Chefs TF
+        $rolesCibles = ['admin', 'chef_parc', 'chef_tf'];
         $roleIds     = Role::whereIn('code', $rolesCibles)
             ->where('est_supprime', 0)
             ->pluck('id');
@@ -390,16 +502,27 @@ class ChauffeurController extends Controller
 
         foreach ($gestionnaires as $g) {
             $destinataires->push([
+                'id'           => $g->id,
                 'email'        => $g->email,
                 'nom'          => $g->nom,
                 'role_libelle' => $g->role?->libelle ?? 'Gestionnaire',
             ]);
         }
 
-        // ── Envoi — un mail personnalisé par destinataire ─────────────────────
+        // ── Notification in-app : une seule notification globale par document
+        //    (document + niveau + date d'expiration), réutilisée pour tous les
+        //    destinataires. Si elle existe déjà, on ne la recrée pas — donc pas
+        //    de doublon si dispatchAlertesMail() est rappelé plusieurs fois.
+        $notifId = $this->obtenirNotificationIdChauffeur($document, $chauffeur, $statut, $joursRestants, $niveau);
+
+        // ── Envoi — un mail personnalisé par destinataire + une notif in-app ───
         foreach ($destinataires->unique('email') as $dest) {
             if (empty($dest['email'])) {
                 continue;
+            }
+
+            if ($notifId && !empty($dest['id'])) {
+                $this->creerEnvoiInAppChauffeur($notifId, (int) $dest['id']);
             }
 
             try {
@@ -415,9 +538,212 @@ class ChauffeurController extends Controller
                 );
             } catch (\Throwable $e) {
                 // On loggue sans bloquer la réponse HTTP
-                \Log::error("MailDocumentChauffeur — Échec envoi à {$dest['email']} : " . $e->getMessage());
+                Log::error("MailDocumentChauffeur — Échec envoi à {$dest['email']} : " . $e->getMessage());
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NOTIFICATIONS IN-APP — Documents chauffeur
+    // Même mécanique que pour les documents véhicules (voir
+    // DocumentExpirationController), mais avec des catégories dédiées
+    // "..._chauffeur_..." pour ne jamais mélanger les deux types d'alertes,
+    // et vehicule_immatriculation laissé à NULL (document non lié à un véhicule).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Retourne l'id de la notification globale du document (la crée si absente).
+     * Une seule notification par (document chauffeur + niveau + date_expiration) :
+     * rappeler cette méthode plusieurs fois pour le même document ne crée rien
+     * de plus, elle retourne juste l'id existant.
+     */
+    private function obtenirNotificationIdChauffeur(
+        DocumentChauffeur $document,
+        Utilisateur $chauffeur,
+        string $statut,
+        int $joursRestants,
+        string $niveau
+    ): ?int {
+        $categorieId = $this->resolveCategorieIdChauffeur($this->getCodeCategorieChauffeur($niveau), $niveau);
+        if (!$categorieId) return null;
+
+        $existante = $this->trouverNotificationIdChauffeur($document, $categorieId);
+        if ($existante) return $existante;
+
+        [$titre, $message] = $this->buildTitreMessageChauffeur($document, $chauffeur, $joursRestants, $niveau);
+
+        try {
+            return (int) DB::table('notifications')->insertGetId([
+                'categorie_id'             => $categorieId,
+                'titre'                    => $titre,
+                'message'                  => $message,
+                'vehicule_immatriculation' => null,
+                'donnees'                  => json_encode([
+                    'type_source'      => 'chauffeur',
+                    'document_id'      => $document->id,
+                    'chauffeur_id'     => $chauffeur->id,
+                    'type_document'    => $document->type_document,
+                    'nom_document'     => $document->nom_document,
+                    'date_emission'    => $document->date_delivrance,
+                    'date_expiration'  => $document->date_expiration,
+                    'jours_restants'   => $joursRestants,
+                    'statut'           => $statut,
+                    'niveau'           => $niveau,
+                ]),
+                // Page chauffeurs du front (liste, pas de fiche par id — comme pour les véhicules)
+                'lien_url'                 => '/Admin/Navigation/Chauffeurs',
+                'date_creation'            => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("[DocumentChauffeur] ✗ création notification doc#{$document->id} | {$e->getMessage()}");
+            return null;
+        }
+    }
+
+    /**
+     * Cherche la notification existante pour (document chauffeur + catégorie + date_expiration).
+     * JSON_UNQUOTE(...) plutôt que JSON_EXTRACT(...) = valeur : en MySQL 5.7, comparer
+     * un JSON à un paramètre PHP peut donner faux (types différents) et créer des doublons.
+     */
+    private function trouverNotificationIdChauffeur(DocumentChauffeur $document, int $categorieId): ?int
+    {
+        $id = DB::table('notifications')
+            ->where('categorie_id', $categorieId)
+            ->whereNull('vehicule_immatriculation')
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(donnees, '\$.type_source')) = 'chauffeur'")
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(donnees, '\$.document_id')) = ?", [(string) $document->id])
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(donnees, '\$.date_expiration')) = ?", [(string) $document->date_expiration])
+            ->orderByDesc('id')
+            ->value('id');
+
+        return $id ? (int) $id : null;
+    }
+
+    /**
+     * Crée la ligne in_app du destinataire si elle n'existe pas déjà pour cette notification.
+     */
+    private function creerEnvoiInAppChauffeur(int $notifId, int $userId): bool
+    {
+        try {
+            $existe = DB::table('envois_notifications')
+                ->where('notification_id', $notifId)
+                ->where('user_id', $userId)
+                ->where('canal', 'in_app')
+                ->exists();
+
+            if ($existe) return false;
+
+            DB::table('envois_notifications')->insert([
+                'notification_id'   => $notifId,
+                'user_id'           => $userId,
+                'canal'             => 'in_app',
+                'statut_envoi'      => 'envoye',
+                'date_envoi'        => now(),
+                'est_lu'            => 0,
+                'date_creation'     => now(),
+                'date_modification' => now(),
+            ]);
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::error("[DocumentChauffeur] ✗ in_app user#{$userId} notif#{$notifId} | {$e->getMessage()}");
+            return false;
+        }
+    }
+
+    private function getCodeCategorieChauffeur(string $niveau): string
+    {
+        return match ($niveau) {
+            'expire'   => 'alerte_document_chauffeur_expire',
+            'seuil_5'  => 'alerte_document_chauffeur_critique',
+            'seuil_15' => 'alerte_document_chauffeur_importante',
+            'seuil_30' => 'alerte_document_chauffeur_preventive',
+            default    => 'alerte_document_chauffeur_expire_bientot',
+        };
+    }
+
+    /**
+     * Résout l'id de la catégorie de notification chauffeur, la crée si absente.
+     * niveau_priorite reprend les mêmes valeurs que les catégories véhicules
+     * (critique / important / a_surveiller) pour que NotificationsController
+     * colore ces alertes de la même façon, sans rien changer à ce fichier-là.
+     */
+    private function resolveCategorieIdChauffeur(string $code, string $niveau): ?int
+    {
+        try {
+            $cat = DB::table('categories_notifications')->where('code', $code)->first();
+
+            if ($cat) {
+                if ($cat->est_supprime || !$cat->est_actif) {
+                    DB::table('categories_notifications')->where('id', $cat->id)->update([
+                        'est_supprime'      => 0,
+                        'est_actif'         => 1,
+                        'date_suppression'  => null,
+                        'date_modification' => now(),
+                    ]);
+                }
+                return (int) $cat->id;
+            }
+
+            [$libelle, $priorite] = match ($niveau) {
+                'expire'   => ['Document chauffeur expiré — action immédiate',          'critique'],
+                'seuil_5'  => ['Document chauffeur — expiration dans 5 jours ou moins', 'critique'],
+                'seuil_15' => ['Document chauffeur — expiration dans 15 jours ou moins','important'],
+                'seuil_30' => ['Document chauffeur — expiration dans 30 jours ou moins','a_surveiller'],
+                default    => ['Alerte document chauffeur',                              'normal'],
+            };
+
+            return (int) DB::table('categories_notifications')->insertGetId([
+                'code'              => $code,
+                'libelle'           => $libelle,
+                'niveau_priorite'   => $priorite,
+                'canaux'            => json_encode(['email', 'in_app']),
+                'roles_cibles'      => json_encode(['admin', 'chef_parc', 'chef_tf', 'chauffeur']),
+                'description'       => 'Notification automatique — expiration documents chauffeur',
+                'est_actif'         => 1,
+                'est_supprime'      => 0,
+                'date_creation'     => now(),
+                'date_modification' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("[DocumentChauffeur] ✗ catégorie {$code} | {$e->getMessage()}");
+            return null;
+        }
+    }
+
+    /**
+     * Titre (≤ 200 caractères) et message de la notification.
+     */
+    private function buildTitreMessageChauffeur(
+        DocumentChauffeur $document,
+        Utilisateur $chauffeur,
+        int $joursRestants,
+        string $niveau
+    ): array {
+        $nomChauffeur = $chauffeur->nom;
+        $typeDoc      = $this->labelTypeDocument($document->type_document);
+        $jAbs         = abs($joursRestants);
+        $jWord        = $jAbs > 1 ? 'jours' : 'jour';
+
+        $titre = match ($niveau) {
+            'expire'   => "[EXPIRÉ] {$typeDoc} — {$nomChauffeur}",
+            'seuil_5'  => "[URGENT ≤ 5j] {$typeDoc} — {$nomChauffeur}",
+            'seuil_15' => "[ALERTE ≤ 15j] {$typeDoc} — {$nomChauffeur}",
+            'seuil_30' => "[INFO ≤ 30j] {$typeDoc} — {$nomChauffeur}",
+            default    => "Alerte document — {$nomChauffeur}",
+        };
+
+        $depuis = $jAbs === 0 ? "aujourd'hui" : "depuis {$jAbs} {$jWord}";
+
+        $message = match ($niveau) {
+            'expire'   => "{$typeDoc} de {$nomChauffeur} a expiré {$depuis}. Action immédiate requise.",
+            'seuil_5'  => "{$typeDoc} de {$nomChauffeur} expire dans {$joursRestants} {$jWord}. Renouvellement urgent.",
+            'seuil_15' => "{$typeDoc} de {$nomChauffeur} expire dans {$joursRestants} {$jWord}. Planifiez le renouvellement.",
+            'seuil_30' => "{$typeDoc} de {$nomChauffeur} expire dans {$joursRestants} {$jWord}. Anticipez le renouvellement.",
+            default    => "{$typeDoc} de {$nomChauffeur} nécessite votre attention.",
+        };
+
+        return [mb_substr($titre, 0, 200), $message];
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -684,10 +1010,34 @@ class ChauffeurController extends Controller
         ];
     }
 
+    /**
+     * Jours entre aujourd'hui et la date d'expiration (comparaison à la journée).
+     * Positif = jours restants, 0 = expire aujourd'hui, négatif = jours de retard.
+     */
+    private function joursAvantExpiration($dateExpiration): int
+    {
+        return (int) Carbon::today()
+            ->diffInDays(Carbon::parse($dateExpiration)->startOfDay(), false);
+    }
+
+    /** Date au format Y-m-d (ou null), pour comparer deux dates sans tenir compte de l'heure. */
+    private function dateSeule($date): ?string
+    {
+        return empty($date) ? null : Carbon::parse($date)->toDateString();
+    }
+
+    /**
+     * Statut affiché — même règle que les alertes et que les documents véhicules :
+     *   0 jour ou moins → expire | 1 à 30 jours → expire_bientot | au-delà → valide
+     */
     private function resolveStatutDocument(DocumentChauffeur $d): string
     {
-        if ($d->isExpire())           return 'expire';
-        if ($d->isExpirationProche()) return 'expire_bientot';
+        if (empty($d->date_expiration)) return 'valide';
+
+        $jours = $this->joursAvantExpiration($d->date_expiration);
+
+        if ($jours <= 0)  return 'expire';
+        if ($jours <= 30) return 'expire_bientot';
         return 'valide';
     }
 

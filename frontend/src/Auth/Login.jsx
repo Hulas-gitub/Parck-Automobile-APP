@@ -8,6 +8,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(true); // Thème sombre par défaut
 
   // Charger la préférence du mode sombre depuis localStorage au montage
@@ -148,6 +149,85 @@ const Login = () => {
     }
   };
 
+  // ────────────────────────────────────────────────────────────────
+  // 🔑 MOT DE PASSE OUBLIÉ
+  // ────────────────────────────────────────────────────────────────
+  const handleForgotPassword = async () => {
+    const { value: forgotEmail } = await Swal.fire({
+      ...getSwalConfig(),
+      title: 'Mot de passe oublié',
+      html: `<p style="font-size:14px; margin-bottom:12px; color:${darkMode ? '#cbd5e1' : '#4b5563'};">
+               Saisissez votre adresse email.
+             </p>`,
+      input: 'email',
+      inputPlaceholder: 'Votre adresse email',
+      inputValue: email, // pré-remplir si déjà saisi dans le formulaire
+      showCancelButton: true,
+      confirmButtonText: 'Envoyer',
+      cancelButtonText: 'Annuler',
+      inputAttributes: {
+        autocapitalize: 'off',
+        autocorrect: 'off',
+      },
+      inputValidator: (value) => {
+        if (!value) {
+          return 'L\'adresse email est requise';
+        }
+        // Validation simple du format email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(value)) {
+          return 'L\'adresse email n\'est pas valide';
+        }
+      },
+    });
+
+    if (!forgotEmail) return; // annulé
+
+    setForgotLoading(true);
+
+    try {
+      const response = await api.post('/forgot-password', { email: forgotEmail });
+
+      setForgotLoading(false);
+
+      if (response.data.success) {
+        Swal.fire({
+          ...getSwalConfig(),
+          icon: 'success',
+          title: 'Email envoyé !',
+          text: response.data.message || 'Un nouveau mot de passe a été envoyé à votre adresse email',
+          confirmButtonText: 'Fermer',
+          iconColor: '#22c55e',
+        });
+      }
+    } catch (error) {
+      setForgotLoading(false);
+
+      if (error.response) {
+        const { status, data } = error.response;
+
+        if (status === 404) {
+          showError(data.message || 'Aucun compte trouvé avec cet email');
+        } else if (status === 403) {
+          showError(data.message || 'Accès refusé');
+        } else if (status === 422) {
+          if (data.errors) {
+            const firstErrorKey = Object.keys(data.errors)[0];
+            showError(data.errors[firstErrorKey][0]);
+          } else {
+            showError(data.message || 'Erreur de validation');
+          }
+        } else if (status === 500) {
+          showError('Erreur serveur. Veuillez réessayer plus tard.');
+        } else {
+          showError(data.message || 'Une erreur est survenue');
+        }
+      } else {
+        showError('Impossible de contacter le serveur');
+      }
+    }
+  };
+
   return (
     <>
       {/* Styles SweetAlert2 injectés pour le thème */}
@@ -277,13 +357,23 @@ const Login = () => {
 
                 {/* Mot de passe */}
                 <div>
-                  <label
-                    htmlFor="password"
-                    className="block text-sm font-semibold mb-2 transition-colors duration-300"
-                    style={{ color: darkMode ? '#f1f5f9' : '#1f2937' }}
-                  >
-                    Mot de passe
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label
+                      htmlFor="password"
+                      className="block text-sm font-semibold transition-colors duration-300"
+                      style={{ color: darkMode ? '#f1f5f9' : '#1f2937' }}
+                    >
+                      Mot de passe
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={forgotLoading}
+                      className="text-xs font-semibold text-yellow-500 hover:text-yellow-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {forgotLoading ? 'Envoi en cours...' : 'Mot de passe oublié ?'}
+                    </button>
+                  </div>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
                       <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -5,8 +5,11 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Utilisateur;
 use App\Models\Role;
+use App\Models\HistoriqueConnexion;
+use App\Mail\MailPasswordUtilisateurs;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 
 class AuthController extends Controller
 {
@@ -83,7 +86,17 @@ class AuthController extends Controller
             $tokenExpiration = now()->addHours(self::SESSION_DURATION_HOURS);
 
             // 8. Créer le token Sanctum avec expiration de 2 heures
-            $token = $user->createToken('auth_token', ['*'], $tokenExpiration)->plainTextToken;
+            $tokenResult = $user->createToken('auth_token', ['*'], $tokenExpiration);
+            $token = $tokenResult->plainTextToken;
+
+            // 8bis. Enregistrer la connexion dans l'historique
+            HistoriqueConnexion::create([
+                'user_id'                  => $user->id,
+                'personal_access_token_id' => $tokenResult->accessToken->id,
+                'adresse_ip'               => $request->ip(),
+                'user_agent'               => $request->userAgent(),
+                'login_at'                 => now(),
+            ]);
 
             // 9. Mettre à jour la dernière connexion
             $user->derniere_connexion = now();
@@ -170,6 +183,10 @@ class AuthController extends Controller
             // Vérifier si le token a expiré (session de 2 heures dépassée)
             $currentToken = $request->user()->currentAccessToken();
             if ($currentToken && $currentToken->expires_at && now()->greaterThan($currentToken->expires_at)) {
+                HistoriqueConnexion::where('personal_access_token_id', $currentToken->id)
+                    ->whereNull('logout_at')
+                    ->update(['logout_at' => $currentToken->expires_at]);
+
                 $currentToken->delete();
 
                 return response()->json([
@@ -229,6 +246,11 @@ class AuthController extends Controller
                 'email' => $user->email,
             ]);
 
+            // Clôturer toutes les sessions ouvertes de cet utilisateur
+            HistoriqueConnexion::where('user_id', $user->id)
+                ->whereNull('logout_at')
+                ->update(['logout_at' => now()]);
+
             $user->tokens()->delete();
 
             return response()->json([
@@ -253,10 +275,17 @@ class AuthController extends Controller
         try {
             $user = $request->user()->load(['role', 'direction']);
 
+            $oldTokenId = $request->user()->currentAccessToken()->id;
             $request->user()->currentAccessToken()->delete();
 
             $tokenExpiration = now()->addHours(self::SESSION_DURATION_HOURS);
-            $token = $user->createToken('auth_token', ['*'], $tokenExpiration)->plainTextToken;
+            $tokenResult = $user->createToken('auth_token', ['*'], $tokenExpiration);
+            $token = $tokenResult->plainTextToken;
+
+            // La session continue : on rattache l'historique ouvert au nouveau token
+            HistoriqueConnexion::where('personal_access_token_id', $oldTokenId)
+                ->whereNull('logout_at')
+                ->update(['personal_access_token_id' => $tokenResult->accessToken->id]);
 
             return response()->json([
                 'success' => true,
@@ -326,6 +355,10 @@ class AuthController extends Controller
             $now = now();
 
             if ($now->greaterThan($expiresAt)) {
+                HistoriqueConnexion::where('personal_access_token_id', $currentToken->id)
+                    ->whereNull('logout_at')
+                    ->update(['logout_at' => $expiresAt]);
+
                 $currentToken->delete();
 
                 return response()->json([
@@ -356,6 +389,93 @@ class AuthController extends Controller
     }
 
     /**
+     * Mot de passe oublié
+     * Génère un nouveau mot de passe temporaire et l'envoie par email
+     * si le compte existe et est actif.
+     */
+    public function forgotPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ], [
+            'email.required' => 'L\'adresse email est requise',
+            'email.email'    => 'L\'adresse email n\'est pas valide',
+        ]);
+
+        try {
+            $user = Utilisateur::with(['role', 'direction'])
+                ->where('email', $request->email)
+                ->first();
+
+            // 1. Compte inexistant
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Aucun compte trouvé avec cet email'
+                ], 404);
+            }
+
+            // 2. Compte supprimé
+            if ($user->est_supprime) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ce compte n\'existe plus. Contactez l\'administrateur.'
+                ], 403);
+            }
+
+            // 3. Compte désactivé
+            if (!$user->est_actif) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Votre compte est désactivé. Contactez l\'administrateur.'
+                ], 403);
+            }
+
+            // 4. Générer un nouveau mot de passe temporaire
+            $newPassword = $this->generateSecurePassword();
+
+            $user->mot_de_passe = Hash::make($newPassword);
+            $user->save();
+
+            // 5. Invalider les sessions actives (sécurité)
+            HistoriqueConnexion::where('user_id', $user->id)
+                ->whereNull('logout_at')
+                ->update(['logout_at' => now()]);
+
+            $user->tokens()->delete();
+
+            // 6. Envoi de l'email (synchrone) — isReset=true, isSelfService=true
+            Mail::to($user->email)->send(
+                new MailPasswordUtilisateurs($user, $newPassword, true, true)
+            );
+
+            // 7. Log
+            \Log::info('Mot de passe oublié - nouveau mot de passe envoyé', [
+                'user_id' => $user->id,
+                'email'   => $user->email,
+                'ip'      => $request->ip(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Un nouveau mot de passe a été envoyé à votre adresse email'
+            ], 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Erreur lors de la demande de mot de passe oublié', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Une erreur est survenue lors de l\'envoi du nouveau mot de passe',
+                'error'   => config('app.debug') ? $e->getMessage() : null
+            ], 500);
+        }
+    }
+
+    /**
      * Obtenir les permissions selon le rôle
      * ⏳ À compléter progressivement rôle par rôle au fur et à mesure du développement des pages
      */
@@ -374,5 +494,37 @@ class AuthController extends Controller
         ];
 
         return $permissions[$roleCode] ?? [];
+    }
+
+    /**
+     * Génère un mot de passe temporaire sécurisé.
+     * Règles : min 8 caractères, au moins 1 majuscule, 1 chiffre, 1 caractère spécial.
+     */
+    private function generateSecurePassword(int $length = 10): string
+    {
+        // I, O, l, 1, 0 exclus pour éviter les confusions à la lecture/saisie
+        $upper   = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+        $lower   = 'abcdefghijkmnpqrstuvwxyz';
+        $digits  = '23456789';
+        $special = '!@#$%&*?';
+
+        $length = max($length, 8);
+
+        // On garantit au moins un caractère de chaque catégorie obligatoire
+        $password = [
+            $upper[random_int(0, strlen($upper) - 1)],
+            $lower[random_int(0, strlen($lower) - 1)],
+            $digits[random_int(0, strlen($digits) - 1)],
+            $special[random_int(0, strlen($special) - 1)],
+        ];
+
+        $all = $upper . $lower . $digits . $special;
+        for ($i = count($password); $i < $length; $i++) {
+            $password[] = $all[random_int(0, strlen($all) - 1)];
+        }
+
+        shuffle($password);
+
+        return implode('', $password);
     }
 }

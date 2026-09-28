@@ -6,7 +6,8 @@ import Sidebar        from '../../components/Sidebar';
 import Header         from '../../components/Header';
 import DashboardChart from '../../components/Dashboard-chart';
 
-import { getDashboardData, getKpiVehicules, BADGE_COLORS } from '../../api/Admin-Axios/Dashboard-axios';
+import { getDashboardData, getKpiVehicules, BADGE_COLORS }
+ from '../../api/Admin-Axios/Dashboard-axios';
 
 // ─────────────────────────────────────────────────────────────
 // Helpers export
@@ -1295,4 +1296,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard; 
+export default Dashboard;

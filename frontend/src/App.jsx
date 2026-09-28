@@ -17,7 +17,6 @@ import Missions from './Admin/Navigation/Missions';
 import DemandesInterventions from './Admin/Navigation/DemandesInterventions';
 import InterventionsVehicules from './Admin/Navigation/InterventionsVehicules';
 import CarnetCarburant from './Admin/Navigation/CarnetCarburant';
-import DashboardChefParc from './Chef-parc-auto/Navigation/Dashboard';
 import HistoriqueVehicule from './Admin/Navigation/HistoriqueVehicule';
 // Composant pour protéger les routes
 const ProtectedRoute = ({ children }) => {
@@ -196,14 +195,6 @@ function App() {
             } 
           />
 
-       <Route 
-  path="/Chef-parc-auto/Navigation/Dashboard"
-  element={
-    <ProtectedRoute>
-      <DashboardChefParc />
-    </ProtectedRoute>
-  } 
-/> 
           {/* Route 404 */}
           <Route 
             path="*" 

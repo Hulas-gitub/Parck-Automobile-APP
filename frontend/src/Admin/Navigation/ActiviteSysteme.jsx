@@ -1,147 +1,34 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import Sidebar from '../../components/Sidebar';
 import Header from '../../components/Header';
 
-// ============================================================================
-// DONNÉES DE RÉFÉRENCE - alignées sur la BDD fleetify_db
-// ============================================================================
-const ROLES = [
-  { code: 'admin',          libelle: 'Super Administrateur', color: '#ef4444', bg: 'bg-red-500/20 text-red-400' },
-  { code: 'chef_parc',      libelle: 'Gestionnaire du Parc', color: '#6366f1', bg: 'bg-indigo-500/20 text-indigo-400' },
-  { code: 'chef_tf',        libelle: 'Chef Transport de Fonds', color: '#f59e0b', bg: 'bg-amber-500/20 text-amber-400' },
-  { code: 'agent_pc_radio', libelle: 'Agent PC Radio',       color: '#06b6d4', bg: 'bg-cyan-500/20 text-cyan-400' },
-  { code: 'mecanicien',     libelle: 'Mécanicien / Technicien', color: '#10b981', bg: 'bg-emerald-500/20 text-emerald-400' },
-  { code: 'chauffeur',      libelle: 'Chauffeur',             color: '#8b5cf6', bg: 'bg-violet-500/20 text-violet-400' },
-];
-
-const ACTIONS = [
-  { code: 'CREATE',   libelle: 'Création',    icon: 'bi-plus-circle-fill',  color: '#10b981', bg: 'bg-emerald-500/20 text-emerald-400' },
-  { code: 'UPDATE',   libelle: 'Modification',icon: 'bi-pencil-fill',        color: '#3b82f6', bg: 'bg-blue-500/20 text-blue-400' },
-  { code: 'DELETE',   libelle: 'Suppression', icon: 'bi-trash-fill',         color: '#ef4444', bg: 'bg-red-500/20 text-red-400' },
-  { code: 'READ',     libelle: 'Consultation',icon: 'bi-eye-fill',            color: '#6366f1', bg: 'bg-indigo-500/20 text-indigo-400' },
-  { code: 'BLOQUER',  libelle: 'Blocage',     icon: 'bi-lock-fill',           color: '#f59e0b', bg: 'bg-amber-500/20 text-amber-400' },
-  { code: 'DEBLOQUER',libelle: 'Déblocage',   icon: 'bi-unlock-fill',         color: '#06b6d4', bg: 'bg-cyan-500/20 text-cyan-400' },
-  { code: 'LOGIN',    libelle: 'Connexion',   icon: 'bi-box-arrow-in-right',  color: '#8b5cf6', bg: 'bg-violet-500/20 text-violet-400' },
-  { code: 'LOGOUT',   libelle: 'Déconnexion', icon: 'bi-box-arrow-right',     color: '#94a3b8', bg: 'bg-slate-500/20 text-slate-400' },
-];
-
-const TABLES = [
-  'vehicules', 'missions', 'utilisateurs', 'interventions', 'accidents',
-  'carnets_carburant', 'documents_vehicules', 'inspections', 'planning_maintenance',
-  'pieces_detachees', 'fournisseurs', 'intervenants', 'roles',
-];
-
-const PERIODES = [
-  { code: '7j',        libelle: '7 derniers jours',  jours: 7 },
-  { code: '30j',       libelle: '30 derniers jours', jours: 30 },
-  { code: 'mensuel',   libelle: 'Mensuel',            jours: 30 },
-  { code: 'trimestriel',libelle: 'Trimestriel',       jours: 90 },
-  { code: 'semestriel',libelle: 'Semestriel',         jours: 180 },
-  { code: 'annuel',    libelle: 'Annuel',             jours: 365 },
-];
+// ⚠️ Vérifie que le nom de fichier réel correspond EXACTEMENT à cet import
+// (respect de la casse obligatoire en prod / sur Linux, même si ça passe en dev).
+import {
+  getActivitesSysteme,
+  getActivitesStats,
+  getActivitesUtilisateurs,
+  exportActivitesSysteme,
+  ROLES,
+  ACTIONS,
+  PERIODES,
+  TABLES,
+} from '../../api/Admin-Axios/Activitessysteme-axios.js';
 
 // ============================================================================
-// GÉNÉRATEUR DE DONNÉES DE DÉMO (simulant journaux_audit)
+// HELPERS
 // ============================================================================
-const generateAuditData = () => {
-  const users = [
-    { id: 1, nom: 'Hulas Djyembi',     role_code: 'admin',          direction: 'Direction Générale',   email: 'hulassanders@sgs.ga' },
-    { id: 2, nom: 'Pierre Nzong',      role_code: 'chauffeur',      direction: 'Direction Technique',  email: 'p.nzong@sgs.ga' },
-    { id: 3, nom: 'Marc Essono',       role_code: 'chef_parc',      direction: 'Direction RH',         email: 'm.essono@sgs.ga' },
-    { id: 4, nom: 'Luc Mba',           role_code: 'chauffeur',      direction: 'Direction Technique',  email: 'l.mba@sgs.ga' },
-    { id: 5, nom: 'Sophie Ondo',       role_code: 'agent_pc_radio', direction: 'Direction Générale',   email: 's.ondo@sgs.ga' },
-    { id: 6, nom: 'François Obame',    role_code: 'mecanicien',     direction: 'Direction Technique',  email: 'f.obame@sgs.ga' },
-    { id: 7, nom: 'Claire Bouanga',    role_code: 'chef_tf',        direction: 'Transport de Fonds',   email: 'c.bouanga@sgs.ga' },
-    { id: 8, nom: 'Alain Nguema',      role_code: 'chef_parc',      direction: 'Direction Logistique', email: 'a.nguema@sgs.ga' },
-  ];
+const ITEMS_PER_PAGE = 15;
 
-  const actionsByRole = {
-    admin:          ['CREATE', 'UPDATE', 'DELETE', 'READ', 'BLOQUER', 'DEBLOQUER', 'LOGIN', 'LOGOUT'],
-    chef_parc:      ['CREATE', 'UPDATE', 'READ', 'LOGIN', 'LOGOUT'],
-    chef_tf:        ['CREATE', 'UPDATE', 'READ', 'LOGIN', 'LOGOUT'],
-    agent_pc_radio: ['READ', 'UPDATE', 'LOGIN', 'LOGOUT'],
-    mecanicien:     ['CREATE', 'UPDATE', 'READ', 'LOGIN', 'LOGOUT'],
-    chauffeur:      ['READ', 'LOGIN', 'LOGOUT'],
-  };
+/** Retire les paramètres vides avant de les envoyer à l'API (équivalent de l'ancien buildQuery) */
+const cleanParams = (params = {}) =>
+  Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '' && v !== null && v !== undefined));
 
-  const tablesByRole = {
-    admin:          TABLES,
-    chef_parc:      ['vehicules', 'missions', 'interventions', 'carnets_carburant', 'documents_vehicules', 'planning_maintenance'],
-    chef_tf:        ['missions', 'vehicules', 'accidents', 'carnets_carburant'],
-    agent_pc_radio: ['vehicules', 'missions'],
-    mecanicien:     ['interventions', 'inspections', 'pieces_detachees', 'planning_maintenance'],
-    chauffeur:      ['missions', 'accidents'],
-  };
-
-  const sampleValues = {
-    vehicules:    { immatriculation: 'AB-1234-GA', statut: 'disponible', kilometrage: 45000 },
-    missions:     { destination: 'Franceville', statut: 'planifiee', type_mission: 'mission_brousse' },
-    utilisateurs: { nom: 'Nouveau User', email: 'user@sgs.ga', role_id: 6 },
-    interventions:{ type_intervention: 'Vidange', statut: 'terminee', cout_main_oeuvre: 85000 },
-    carnets_carburant: { litres: 80, montant: 72000, station: 'Total Libreville' },
-  };
-
-  const ips = ['192.168.1.10', '192.168.1.22', '10.0.0.5', '10.0.0.15', '172.16.0.3'];
-
-  const now = new Date();
-  const logs = [];
-  let id = 1;
-
-  for (let dayOffset = 365; dayOffset >= 0; dayOffset--) {
-    const day = new Date(now);
-    day.setDate(day.getDate() - dayOffset);
-
-    const nbLogs = Math.floor(Math.random() * 18) + 3;
-    for (let j = 0; j < nbLogs; j++) {
-      const user = users[Math.floor(Math.random() * users.length)];
-      const actions = actionsByRole[user.role_code];
-      const tables = tablesByRole[user.role_code];
-      const action = actions[Math.floor(Math.random() * actions.length)];
-      const table = tables[Math.floor(Math.random() * tables.length)];
-
-      const logDate = new Date(day);
-      logDate.setHours(Math.floor(Math.random() * 14) + 7);
-      logDate.setMinutes(Math.floor(Math.random() * 60));
-      logDate.setSeconds(Math.floor(Math.random() * 60));
-
-      const baseVals = sampleValues[table] || { id: Math.floor(Math.random() * 100) + 1 };
-      let anciennesValeurs = null;
-      let nouvellesValeurs = null;
-
-      if (action === 'CREATE') {
-        nouvellesValeurs = { ...baseVals, id: id };
-      } else if (action === 'UPDATE') {
-        anciennesValeurs = { ...baseVals };
-        nouvellesValeurs = { ...baseVals, statut: 'modifie', date_modification: logDate.toISOString() };
-      } else if (action === 'DELETE') {
-        anciennesValeurs = { ...baseVals, id: Math.floor(Math.random() * 100) + 1 };
-      }
-
-      logs.push({
-        id: id++,
-        user_id: user.id,
-        user_nom: user.nom,
-        user_email: user.email,
-        user_role_code: user.role_code,
-        user_direction: user.direction,
-        action,
-        nom_table: action === 'LOGIN' || action === 'LOGOUT' ? 'sessions' : table,
-        id_enregistrement: String(Math.floor(Math.random() * 200) + 1),
-        anciennes_valeurs: anciennesValeurs ? JSON.stringify(anciennesValeurs) : null,
-        nouvelles_valeurs: nouvellesValeurs ? JSON.stringify(nouvellesValeurs) : null,
-        adresse_ip: ips[Math.floor(Math.random() * ips.length)],
-        user_agent: 'Mozilla/5.0 Chrome/121.0',
-        date_creation: logDate.toISOString(),
-      });
-    }
-  }
-
-  return logs.sort((a, b) => new Date(b.date_creation) - new Date(a.date_creation));
-};
-
-const ALL_AUDIT_LOGS = generateAuditData();
+/** Extrait un message d'erreur lisible depuis une erreur axios (res.response.data.message) */
+const getErrorMessage = (err, fallback) =>
+  err?.response?.data?.message || err?.message || fallback;
 
 // ============================================================================
 // UTILITAIRES EXPORT
@@ -264,9 +151,94 @@ const DiffViewer = ({ anciennes, nouvelles, darkMode }) => {
 };
 
 // ============================================================================
+// SKELETON COMPONENTS (couvrent toute la page pendant le chargement initial)
+// ============================================================================
+const shimmer = 'animate-pulse';
+
+const SkeletonBlock = ({ className = '', darkMode }) => (
+  <div className={`${shimmer} rounded-md ${darkMode ? 'bg-gray-800' : 'bg-gray-200'} ${className}`} />
+);
+
+const SkeletonKPICard = ({ darkMode }) => (
+  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5 flex flex-col gap-3`}>
+    <div className="flex items-center justify-between">
+      <SkeletonBlock darkMode={darkMode} className="w-10 h-10 rounded-xl" />
+      <SkeletonBlock darkMode={darkMode} className="w-28 h-10" />
+    </div>
+    <div className="space-y-2">
+      <SkeletonBlock darkMode={darkMode} className="w-16 h-7" />
+      <SkeletonBlock darkMode={darkMode} className="w-24 h-4" />
+      <SkeletonBlock darkMode={darkMode} className="w-32 h-3" />
+    </div>
+  </div>
+);
+
+const SkeletonBarRow = ({ darkMode, labelWidth = 'w-28' }) => (
+  <div className="flex items-center gap-3">
+    <SkeletonBlock darkMode={darkMode} className={`${labelWidth} h-6 rounded-full`} />
+    <SkeletonBlock darkMode={darkMode} className="flex-1 h-2 rounded-full" />
+    <SkeletonBlock darkMode={darkMode} className="w-10 h-3" />
+    <SkeletonBlock darkMode={darkMode} className="w-10 h-3" />
+  </div>
+);
+
+const SkeletonTableRow = ({ darkMode, idx }) => (
+  <tr style={{ backgroundColor: idx % 2 === 0 ? (darkMode ? '#0c1929' : '#e8eef6') : (darkMode ? '#162033' : '#f1f4f9') }}>
+    {Array.from({ length: 8 }).map((_, i) => (
+      <td key={i} className="px-4 py-3.5">
+        <SkeletonBlock darkMode={darkMode} className="h-4 w-full max-w-[120px]" />
+      </td>
+    ))}
+  </tr>
+);
+
+/** Skeleton de la barre d'outils (périodes / recherche / export / filtres) */
+const SkeletonToolbar = ({ darkMode }) => (
+  <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-4 mb-4`}>
+    <div className="flex items-center gap-3 flex-wrap mb-3">
+      <SkeletonBlock darkMode={darkMode} className="w-72 h-10 rounded-xl" />
+      <SkeletonBlock darkMode={darkMode} className="flex-1 min-w-48 h-10 rounded-xl" />
+      <SkeletonBlock darkMode={darkMode} className="w-32 h-10 rounded-xl" />
+    </div>
+    <div className="flex items-center gap-3 flex-wrap">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <SkeletonBlock key={i} darkMode={darkMode} className="w-36 h-9 rounded-lg" />
+      ))}
+    </div>
+  </div>
+);
+
+/** Skeleton pleine page : KPI + graphes de répartition + toolbar + tableau */
+const SkeletonPage = ({ darkMode }) => (
+  <>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      {Array.from({ length: 4 }).map((_, i) => <SkeletonKPICard key={i} darkMode={darkMode} />)}
+    </div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      {[8, 6].map((n, gi) => (
+        <div key={gi} className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5`}>
+          <SkeletonBlock darkMode={darkMode} className="w-40 h-4 mb-4" />
+          <div className="space-y-2.5">
+            {Array.from({ length: n }).map((_, i) => <SkeletonBarRow key={i} darkMode={darkMode} />)}
+          </div>
+        </div>
+      ))}
+    </div>
+    <SkeletonToolbar darkMode={darkMode} />
+    <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm overflow-hidden`}>
+      <table className="w-full">
+        <tbody>
+          {Array.from({ length: 8 }).map((_, i) => <SkeletonTableRow key={i} darkMode={darkMode} idx={i} />)}
+        </tbody>
+      </table>
+    </div>
+  </>
+);
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
-const Activitesysteme= () => {
+const Activitesysteme = () => {
   const [darkMode, setDarkMode] = useState(() => {
     try { return localStorage.getItem('fleetify_darkMode') !== 'false'; } catch { return true; }
   });
@@ -285,6 +257,7 @@ const Activitesysteme= () => {
   const [filterTable, setFilterTable] = useState('');
   const [filterUser, setFilterUser] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedLog, setSelectedLog] = useState(null);
@@ -293,7 +266,18 @@ const Activitesysteme= () => {
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const exportRef = useRef(null);
 
-  const ITEMS_PER_PAGE = 15;
+  // ── Données serveur ──
+  const [logs, setLogs] = useState([]);
+  const [meta, setMeta] = useState({ current_page: 1, last_page: 1, per_page: ITEMS_PER_PAGE, total: 0 });
+  const [serverStats, setServerStats] = useState({
+    total: 0, par_action: {}, par_role: {}, utilisateurs_actifs: 0, tables_modifiees: 0, sparkline_7j: [0,0,0,0,0,0,0],
+  });
+  const [uniqueUsers, setUniqueUsers] = useState([]);
+  const [loading, setLoading] = useState(true);       // skeleton plein écran (1er chargement)
+  const [refreshing, setRefreshing] = useState(false); // rafraîchissement léger (changement de filtre)
+  const [exporting, setExporting] = useState(false);
+
+  const showToast = (msg, type = 'success') => setToast({ message: msg, type });
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => { const raf2 = requestAnimationFrame(() => setAnimateCards(true)); return () => cancelAnimationFrame(raf2); });
@@ -306,57 +290,79 @@ const Activitesysteme= () => {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  const showToast = (msg, type = 'success') => setToast({ message: msg, type });
+  // Debounce de la recherche (évite 1 requête par frappe)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), 400);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
-  // ── Filtrage par période ──
-  const periodeInfo = PERIODES.find(p => p.code === periode) || PERIODES[0];
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - periodeInfo.jours);
+  // Reset page à 1 dès qu'un filtre change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [periode, filterRole, filterAction, filterTable, filterUser, debouncedSearch]);
 
-  const filteredLogs = ALL_AUDIT_LOGS.filter(log => {
-    const logDate = new Date(log.date_creation);
-    if (logDate < cutoffDate) return false;
-    if (filterRole && log.user_role_code !== filterRole) return false;
-    if (filterAction && log.action !== filterAction) return false;
-    if (filterTable && log.nom_table !== filterTable) return false;
-    if (filterUser && log.user_id !== parseInt(filterUser)) return false;
-    if (searchTerm) {
-      const s = searchTerm.toLowerCase();
-      if (!log.user_nom.toLowerCase().includes(s) &&
-          !log.nom_table.toLowerCase().includes(s) &&
-          !log.action.toLowerCase().includes(s) &&
-          !log.adresse_ip.toLowerCase().includes(s)) return false;
-    }
-    return true;
-  });
+  // Liste des utilisateurs pour le filtre (chargée une seule fois, via le fichier axios)
+  useEffect(() => {
+    getActivitesUtilisateurs()
+      .then(res => setUniqueUsers(res.data || []))
+      .catch(() => {}); // non bloquant
+  }, []);
 
-  const totalPages = Math.ceil(filteredLogs.length / ITEMS_PER_PAGE);
-  const paginatedLogs = filteredLogs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
-
-  // Reset page on filter change
-  useEffect(() => setCurrentPage(1), [periode, filterRole, filterAction, filterTable, filterUser, searchTerm]);
-
-  // ── Statistiques ──
-  const stats = {
-    total: filteredLogs.length,
-    parAction: Object.fromEntries(ACTIONS.map(a => [a.code, filteredLogs.filter(l => l.action === a.code).length])),
-    parRole: Object.fromEntries(ROLES.map(r => [r.code, filteredLogs.filter(l => l.user_role_code === r.code).length])),
-    utilisateursActifs: [...new Set(filteredLogs.map(l => l.user_id))].length,
-    tablesModifiees: [...new Set(filteredLogs.filter(l => ['CREATE','UPDATE','DELETE'].includes(l.action)).map(l => l.nom_table))].length,
+  const filtresActuels = {
+    periode,
+    role: filterRole,
+    action: filterAction,
+    table: filterTable,
+    user_id: filterUser,
+    q: debouncedSearch,
   };
 
-  // Sparkline: activité des 7 derniers jours
-  const last7 = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (6 - i));
-    const ds = d.toISOString().slice(0, 10);
-    return filteredLogs.filter(l => l.date_creation.slice(0, 10) === ds).length;
-  });
+  // Chargement des logs + stats à chaque changement de filtre / page (via le fichier axios)
+  useEffect(() => {
+    let annule = false;
+    const premierChargement = loading;
+    if (!premierChargement) setRefreshing(true);
 
-  // Utilisateurs uniques pour le filtre
-  const uniqueUsers = [...new Map(ALL_AUDIT_LOGS.map(l => [l.user_id, { id: l.user_id, nom: l.user_nom, role: l.user_role_code }])).values()];
+    const filtresPropres = cleanParams(filtresActuels);
+
+    Promise.all([
+      getActivitesSysteme({ ...filtresPropres, page: currentPage, per_page: ITEMS_PER_PAGE }),
+      getActivitesStats(filtresPropres),
+    ])
+      .then(([logsRes, statsRes]) => {
+        if (annule) return;
+        setLogs(logsRes.data || []);
+        setMeta(logsRes.meta || { current_page: 1, last_page: 1, per_page: ITEMS_PER_PAGE, total: 0 });
+        setServerStats(statsRes.data || {});
+      })
+      .catch((err) => {
+        if (annule) return;
+        showToast(getErrorMessage(err, 'Erreur de chargement du journal'), 'error');
+      })
+      .finally(() => {
+        if (annule) return;
+        setLoading(false);
+        setRefreshing(false);
+      });
+
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periode, filterRole, filterAction, filterTable, filterUser, debouncedSearch, currentPage]);
+
+  const periodeInfo = PERIODES.find(p => p.code === periode) || PERIODES[0];
+
+  // ── Statistiques (fournies par le backend) ──
+  const stats = {
+    total: serverStats.total || 0,
+    parAction: { ...Object.fromEntries(ACTIONS.map(a => [a.code, 0])), ...(serverStats.par_action || {}) },
+    parRole: { ...Object.fromEntries(ROLES.map(r => [r.code, 0])), ...(serverStats.par_role || {}) },
+    utilisateursActifs: serverStats.utilisateurs_actifs || 0,
+    tablesModifiees: serverStats.tables_modifiees || 0,
+  };
+  const last7 = serverStats.sparkline_7j || [0,0,0,0,0,0,0];
 
   // ── Export ──
-  const getExportHeaders = () => ['ID', 'Date & Heure', 'Utilisateur', 'Rôle', 'Direction', 'Action', 'Table', 'Enregistrement', 'Adresse IP', 'Ancienne Valeur', 'Nouvelle Valeur'];
+  const getExportHeaders = () => ['ID', 'Date & Heure', 'Utilisateur', 'Rôle', 'Direction', 'Action', 'Description', 'Table', 'Enregistrement', 'Adresse IP', 'Ancienne Valeur', 'Nouvelle Valeur'];
   const getExportRow = (log) => [
     log.id,
     new Date(log.date_creation).toLocaleString('fr-FR'),
@@ -364,6 +370,7 @@ const Activitesysteme= () => {
     getRoleInfo(log.user_role_code).libelle,
     log.user_direction,
     getActionInfo(log.action).libelle,
+    log.libelle || '—',
     log.nom_table,
     log.id_enregistrement,
     log.adresse_ip,
@@ -371,16 +378,26 @@ const Activitesysteme= () => {
     log.nouvelles_valeurs || '—',
   ];
 
-  const handleExport = (format) => {
-    const title = `Journal_Audit_${periodeInfo.libelle.replace(/ /g, '_')}_${new Date().toISOString().slice(0,10)}`;
-    const rows = filteredLogs.map(getExportRow);
-    if (format === 'csv') { exportToCSV(rows, title, getExportHeaders()); showToast('Export Excel (CSV) effectué', 'success'); }
-    else { exportToPDF(`Journal d'Audit — ${periodeInfo.libelle}`, getExportHeaders(), rows); showToast('Export PDF généré', 'success'); }
-    setExportDropdownOpen(false);
+  const handleExport = async (format) => {
+    setExporting(true);
+    try {
+      const filtresPropres = cleanParams(filtresActuels);
+      const res = await exportActivitesSysteme(filtresPropres);
+      const rows = (res.data || []).map(getExportRow);
+      const title = `Journal_Audit_${periodeInfo.libelle.replace(/ /g, '_')}_${new Date().toISOString().slice(0,10)}`;
+      if (format === 'csv') { exportToCSV(rows, title, getExportHeaders()); showToast('Export Excel (CSV) effectué', 'success'); }
+      else { exportToPDF(`Journal d'Audit — ${periodeInfo.libelle}`, getExportHeaders(), rows); showToast('Export PDF généré', 'success'); }
+    } catch (err) {
+      showToast(getErrorMessage(err, "Échec de l'export"), 'error');
+    } finally {
+      setExporting(false);
+      setExportDropdownOpen(false);
+    }
   };
 
   const resetFilters = () => { setFilterRole(''); setFilterAction(''); setFilterTable(''); setFilterUser(''); setSearchTerm(''); };
   const hasFilters = filterRole || filterAction || filterTable || filterUser || searchTerm;
+  const totalPages = meta.last_page || 1;
 
   // ============================================================================
   // RENDER
@@ -423,13 +440,16 @@ const Activitesysteme= () => {
               </div>
             </div>
           </div>
-          {/* Live indicator */}
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full border ${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} shadow-sm`}>
-            <span className="w-2 h-2 rounded-full bg-emerald-400" style={{ animation: 'pulse-dot 2s infinite' }}></span>
-            <span className={`text-xs font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Surveillance active</span>
+            <span className={`w-2 h-2 rounded-full ${refreshing ? 'bg-amber-400' : 'bg-emerald-400'}`} style={{ animation: 'pulse-dot 2s infinite' }}></span>
+            <span className={`text-xs font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{refreshing ? 'Actualisation…' : 'Surveillance active'}</span>
           </div>
         </div>
 
+        {loading ? (
+          <SkeletonPage darkMode={darkMode} />
+        ) : (
+        <>
         {/* ── KPI CARDS ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           {[
@@ -439,7 +459,7 @@ const Activitesysteme= () => {
             { label: 'Tables concernées', value: stats.tablesModifiees, icon: 'bi-table', color: '#8b5cf6', sub: 'tables modifiées' },
           ].map((kpi, i) => (
             <div key={i}
-              className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5 flex flex-col gap-3`}
+              className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5 flex flex-col gap-3 transition-opacity ${refreshing ? 'opacity-60' : 'opacity-100'}`}
               style={{ animation: animateCards ? `fadeInUp 0.5s ease-out ${i * 0.07}s both` : 'none' }}>
               <div className="flex items-center justify-between">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${kpi.color}22` }}>
@@ -457,8 +477,7 @@ const Activitesysteme= () => {
         </div>
 
         {/* ── STATS PAR ACTION & RÔLE ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {/* Par action */}
+        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 transition-opacity ${refreshing ? 'opacity-60' : 'opacity-100'}`}>
           <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5`}
             style={{ animation: animateCards ? 'fadeInUp 0.5s ease-out 0.3s both' : 'none' }}>
             <div className="flex items-center gap-2 mb-4">
@@ -485,7 +504,6 @@ const Activitesysteme= () => {
             </div>
           </div>
 
-          {/* Par rôle */}
           <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5`}
             style={{ animation: animateCards ? 'fadeInUp 0.5s ease-out 0.4s both' : 'none' }}>
             <div className="flex items-center gap-2 mb-4">
@@ -515,9 +533,7 @@ const Activitesysteme= () => {
         <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-2xl border shadow-sm p-4 mb-4`}
           style={{ animation: animateCards ? 'fadeInUp 0.5s ease-out 0.5s both' : 'none' }}>
 
-          {/* Ligne 1: Période + Search + Export */}
           <div className="flex items-center gap-3 flex-wrap mb-3">
-            {/* Période buttons */}
             <div className={`flex rounded-xl border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
               {PERIODES.map(p => (
                 <button key={p.code} onClick={() => setPeriode(p.code)}
@@ -528,7 +544,6 @@ const Activitesysteme= () => {
               ))}
             </div>
 
-            {/* Search */}
             <div className="relative flex-1 min-w-48">
               <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
               <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
@@ -538,16 +553,15 @@ const Activitesysteme= () => {
               {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><i className="bi bi-x"></i></button>}
             </div>
 
-            {/* Export dropdown */}
             <div className="relative" ref={exportRef}>
-              <button onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
-                className={`px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <i className="bi bi-download"></i> Exporter
+              <button onClick={() => setExportDropdownOpen(!exportDropdownOpen)} disabled={exporting}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors disabled:opacity-50 ${darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                <i className={`bi ${exporting ? 'bi-arrow-repeat' : 'bi-download'}`}></i> {exporting ? 'Export...' : 'Exporter'}
                 <i className={`bi bi-chevron-${exportDropdownOpen ? 'up' : 'down'} text-xs`}></i>
               </button>
               {exportDropdownOpen && (
                 <div className={`absolute right-0 top-full mt-1 z-50 rounded-xl shadow-2xl border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} py-2 min-w-[200px]`}>
-                  <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{filteredLogs.length} entrée(s) filtrée(s)</p>
+                  <p className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{meta.total.toLocaleString()} entrée(s) filtrée(s)</p>
                   <button onClick={() => handleExport('csv')} className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'} transition-colors`}>
                     <i className="bi bi-file-earmark-spreadsheet text-emerald-500 text-base"></i>
                     <div><p className="font-medium">Exporter en Excel</p><p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Format CSV (UTF-8)</p></div>
@@ -561,7 +575,6 @@ const Activitesysteme= () => {
             </div>
           </div>
 
-          {/* Ligne 2: Filtres avancés */}
           <div className="flex items-center gap-3 flex-wrap">
             <i className={`bi bi-funnel text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
 
@@ -587,7 +600,6 @@ const Activitesysteme= () => {
               className={`px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none`}>
               <option value="">Toutes les tables</option>
               {TABLES.map(t => <option key={t} value={t}>{t}</option>)}
-              <option value="sessions">sessions</option>
             </select>
 
             {hasFilters && (
@@ -598,7 +610,7 @@ const Activitesysteme= () => {
             )}
 
             <span className={`ml-auto text-xs font-semibold px-3 py-1.5 rounded-full ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>
-              {filteredLogs.length.toLocaleString()} résultat{filteredLogs.length > 1 ? 's' : ''}
+              {meta.total.toLocaleString()} résultat{meta.total > 1 ? 's' : ''}
             </span>
           </div>
         </div>
@@ -616,12 +628,14 @@ const Activitesysteme= () => {
                 </tr>
               </thead>
               <tbody>
-                {paginatedLogs.length === 0 ? (
+                {refreshing ? (
+                  Array.from({ length: ITEMS_PER_PAGE }).map((_, i) => <SkeletonTableRow key={i} darkMode={darkMode} idx={i} />)
+                ) : logs.length === 0 ? (
                   <tr><td colSpan={8} className="text-center py-16">
                     <i className={`bi bi-inbox text-5xl ${darkMode ? 'text-gray-700' : 'text-gray-300'}`}></i>
                     <p className={`mt-3 text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Aucun journal pour les filtres sélectionnés</p>
                   </td></tr>
-                ) : paginatedLogs.map((log, rowIdx) => {
+                ) : logs.map((log, rowIdx) => {
                   const roleInfo = getRoleInfo(log.user_role_code);
                   const actionInfo = getActionInfo(log.action);
                   const logDate = new Date(log.date_creation);
@@ -636,18 +650,16 @@ const Activitesysteme= () => {
                       }}
                       onClick={() => { setSelectedLog(log); setShowDetailModal(true); }}>
 
-                      {/* Date */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <p className={`text-xs font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{logDate.toLocaleDateString('fr-FR')}</p>
                         <p className={`text-[11px] font-mono ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{logDate.toLocaleTimeString('fr-FR')}</p>
                       </td>
 
-                      {/* Utilisateur */}
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
                             style={{ background: roleInfo.color }}>
-                            {log.user_nom.charAt(0)}
+                            {(log.user_nom || '?').charAt(0)}
                           </div>
                           <div>
                             <p className={`text-xs font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'} whitespace-nowrap`}>{log.user_nom}</p>
@@ -656,12 +668,10 @@ const Activitesysteme= () => {
                         </div>
                       </td>
 
-                      {/* Rôle */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <Badge text={roleInfo.libelle} bg={roleInfo.bg} small />
                       </td>
 
-                      {/* Action */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${actionInfo.bg}`}>
                           <i className={`${actionInfo.icon} text-[10px]`}></i>
@@ -669,15 +679,17 @@ const Activitesysteme= () => {
                         </span>
                       </td>
 
-                      {/* Table */}
                       <td className="px-4 py-3.5">
                         <div>
-                          <p className={`text-xs font-mono font-semibold ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{log.nom_table}</p>
-                          <p className={`text-[10px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>#{log.id_enregistrement}</p>
+                          <p className={`text-xs font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
+                            {log.libelle || `${actionInfo.libelle} — ${log.nom_table}`}
+                          </p>
+                          <p className={`text-[10px] font-mono ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {log.nom_table} #{log.id_enregistrement}
+                          </p>
                         </div>
                       </td>
 
-                      {/* Valeurs changed indicator */}
                       <td className="px-4 py-3.5">
                         {hasChanges ? (
                           <div className="flex items-center gap-1.5">
@@ -693,12 +705,10 @@ const Activitesysteme= () => {
                         )}
                       </td>
 
-                      {/* IP */}
                       <td className="px-4 py-3.5">
                         <span className={`text-[11px] font-mono ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{log.adresse_ip}</span>
                       </td>
 
-                      {/* Detail */}
                       <td className="px-4 py-3.5 text-center" onClick={e => e.stopPropagation()}>
                         <button onClick={() => { setSelectedLog(log); setShowDetailModal(true); }}
                           className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-gray-500 hover:text-white' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-800'}`}
@@ -713,11 +723,10 @@ const Activitesysteme= () => {
             </table>
           </div>
 
-          {/* Pagination */}
           {totalPages > 1 && (
             <div className={`px-5 py-4 border-t ${darkMode ? 'border-gray-800' : 'border-gray-100'} flex items-center justify-between`}>
               <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                Affichage {((currentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredLogs.length)} sur {filteredLogs.length.toLocaleString()}
+                Affichage {((meta.current_page - 1) * meta.per_page) + 1}–{Math.min(meta.current_page * meta.per_page, meta.total)} sur {meta.total.toLocaleString()}
               </p>
               <div className="flex items-center gap-1.5">
                 <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1}
@@ -754,16 +763,14 @@ const Activitesysteme= () => {
             </div>
           )}
         </div>
+        </>
+        )}
 
-        {/* ── FOOTER ── */}
         <div className={`mt-8 py-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-center`}>
           <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>© 2026 SGS — Journal d'Audit — Toutes les activités sont enregistrées</p>
         </div>
       </main>
 
-      {/* ============================================================ */}
-      {/* MODAL DÉTAIL D'UN LOG                                        */}
-      {/* ============================================================ */}
       {showDetailModal && selectedLog && (() => {
         const log = selectedLog;
         const roleInfo = getRoleInfo(log.user_role_code);
@@ -773,7 +780,6 @@ const Activitesysteme= () => {
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className={`${darkMode ? 'bg-gray-900' : 'bg-white'} rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
 
-              {/* Header */}
               <div className={`p-6 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-start justify-between`}
                 style={{ background: `linear-gradient(135deg, ${theme.primary}22, transparent)` }}>
                 <div className="flex items-center gap-4">
@@ -781,10 +787,13 @@ const Activitesysteme= () => {
                     <i className={`${actionInfo.icon} text-white text-xl`}></i>
                   </div>
                   <div>
-                    <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Détail de l'activité #{log.id}</h2>
+                    <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Détail de l'activité</h2>
                     <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                       {logDate.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} à {logDate.toLocaleTimeString('fr-FR')}
                     </p>
+                    {log.libelle && (
+                      <p className={`text-sm font-semibold mt-1.5 ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>{log.libelle}</p>
+                    )}
                   </div>
                 </div>
                 <button onClick={() => setShowDetailModal(false)}
@@ -795,14 +804,12 @@ const Activitesysteme= () => {
 
               <div className="flex-1 overflow-y-auto p-6 space-y-5 scrollbar-thin">
 
-                {/* Info carte */}
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Utilisateur */}
                   <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-4`}>
                     <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Utilisateur</p>
                     <div className="flex items-center gap-3 mb-2">
                       <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold" style={{ background: roleInfo.color }}>
-                        {log.user_nom.charAt(0)}
+                        {(log.user_nom || '?').charAt(0)}
                       </div>
                       <div>
                         <p className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{log.user_nom}</p>
@@ -815,7 +822,6 @@ const Activitesysteme= () => {
                     <p className={`text-xs mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}><i className="bi bi-building mr-1"></i>{log.user_direction}</p>
                   </div>
 
-                  {/* Opération */}
                   <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-4`}>
                     <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Opération</p>
                     <div className="space-y-2.5">
@@ -835,13 +841,11 @@ const Activitesysteme= () => {
                   </div>
                 </div>
 
-                {/* Diff valeurs */}
                 {(log.anciennes_valeurs || log.nouvelles_valeurs) && (
                   <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-50'} rounded-xl p-4`}>
                     <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
                       <i className="bi bi-arrow-left-right mr-1.5"></i>Comparaison des valeurs
                     </p>
-                    {/* Header grid */}
                     <div className="grid grid-cols-3 gap-2 mb-2 px-3">
                       <span className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Champ</span>
                       <span className={`text-[10px] font-bold uppercase tracking-wider text-red-400`}><i className="bi bi-dash-circle mr-1"></i>Ancienne valeur</span>
@@ -859,7 +863,6 @@ const Activitesysteme= () => {
                 )}
               </div>
 
-              {/* Footer */}
               <div className={`p-5 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'} flex items-center justify-between`}>
                 <div className="flex items-center gap-2">
                   <button onClick={() => {

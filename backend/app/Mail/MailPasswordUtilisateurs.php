@@ -15,9 +15,10 @@ use Illuminate\Queue\SerializesModels;
  * Mailable SGS — Envoi / Réinitialisation du mot de passe d'un utilisateur.
  * Design identique à MailDocumentVehicule (structure, header, hero, body, footer).
  *
- * Deux modes :
- *   isReset = false → Création de compte (mot de passe initial)  → palette verte
- *   isReset = true  → Réinitialisation par un admin              → palette bleue
+ * Trois modes :
+ *   isReset = false, isSelfService = false → Création de compte (mot de passe initial) → palette verte
+ *   isReset = true,  isSelfService = false → Réinitialisation par un admin              → palette bleue
+ *   isReset = true,  isSelfService = true  → Mot de passe oublié (demande utilisateur)  → palette bleue
  *
  * IMPORTANT : ShouldQueue intentionnellement retiré → envoi synchrone immédiat.
  *
@@ -34,6 +35,7 @@ class MailPasswordUtilisateurs extends Mailable
         public readonly Utilisateur $utilisateur,
         public readonly string      $plainPassword,
         public readonly bool        $isReset = false,
+        public readonly bool        $isSelfService = false, // true = déclenché par l'utilisateur lui-même (mot de passe oublié)
     ) {}
 
     // =========================================================================
@@ -42,8 +44,10 @@ class MailPasswordUtilisateurs extends Mailable
 
     public function envelope(): Envelope
     {
-        $emoji   = $this->isReset ? '🔑' : '🎉';
-        $tag     = $this->isReset ? '[RÉINITIALISATION]' : '[BIENVENUE]';
+        $emoji = $this->isReset ? '🔑' : '🎉';
+        $tag   = $this->isReset
+            ? ($this->isSelfService ? '[MOT DE PASSE OUBLIÉ]' : '[RÉINITIALISATION]')
+            : '[BIENVENUE]';
         $subject = $this->isReset
             ? "{$emoji} {$tag} Votre nouveau mot de passe — Fleetify Management"
             : "{$emoji} {$tag} Vos identifiants de connexion — Fleetify Management";
@@ -74,12 +78,14 @@ class MailPasswordUtilisateurs extends Mailable
                 'accentBorder' => '#bfdbfe',
                 'tagBg'        => '#dbeafe',
                 'tagText'      => '#1e40af',
-                'label'        => 'RÉINITIALISATION DU MOT DE PASSE',
+                'label'        => $this->isSelfService
+                    ? 'MOT DE PASSE OUBLIÉ'
+                    : 'RÉINITIALISATION DU MOT DE PASSE',
                 'badgeBg'      => '#dbeafe',
                 'badgeBorder'  => '#93c5fd',
                 'badgeText'    => '#1e40af',
                 'dotColor'     => '#2563eb',
-                'pillLabel'    => 'SÉCURITÉ',
+                'pillLabel'    => $this->isSelfService ? 'RÉCUPÉRATION' : 'SÉCURITÉ',
                 'borderTop'    => '#2563eb',
             ]
             : [
@@ -114,7 +120,11 @@ class MailPasswordUtilisateurs extends Mailable
         $password  = e($this->plainPassword);
 
         // ── Messages selon le mode ────────────────────────────────────────────
-        if ($this->isReset) {
+        if ($this->isReset && $this->isSelfService) {
+            $heroTitle = "Votre mot de passe a été réinitialisé";
+            $heroMsg   = "Vous avez demandé la réinitialisation de votre mot de passe sur la plateforme <strong>Fleetify Management</strong>. Retrouvez ci-dessous vos nouveaux identifiants de connexion.";
+            $noteMsg   = "Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement votre administrateur système. Vos sessions précédentes ont été automatiquement fermées.";
+        } elseif ($this->isReset) {
             $heroTitle = "Votre mot de passe a été réinitialisé";
             $heroMsg   = "Un administrateur a réinitialisé votre mot de passe sur la plateforme <strong>Fleetify Management</strong>. Retrouvez ci-dessous vos nouveaux identifiants de connexion.";
             $noteMsg   = "Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement votre administrateur système. Vos sessions précédentes ont été automatiquement fermées.";

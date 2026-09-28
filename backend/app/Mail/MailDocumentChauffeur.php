@@ -7,38 +7,47 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 /**
  * MailDocumentChauffeur
  *
  * Mailable SGS — Alerte expiration document chauffeur.
  * Template HTML intégré directement dans build() via $this->html().
- * Logo chargé depuis public/logo.png en base64 (fallback SVG si absent).
+ * Logo public/logo.png intégré au mail (cid:) — fallback SVG si le fichier est absent.
  *
  * IMPORTANT : ShouldQueue intentionnellement retiré → envoi synchrone immédiat.
  *
- * Déclenchement (depuis ChauffeurController::storeDocument / updateDocument) :
- *   - À la création du document   → si date_expiration <= 30 jours
- *   - À la modification du document → si date_expiration <= 30 jours
+ * Déclenchement (depuis ChauffeurController) :
+ *   - storeDocument()             → toujours, si date_expiration <= 30 jours
+ *   - updateDocument()            → si la date d'expiration a changé et est <= 30 jours
+ *   - scanDocumentsChauffeurs()   → scan quotidien, avec anti-doublon in-app
  *
- * Destinataires : Chauffeur concerné + Admin + Chefs de parc + TF
+ * Destinataires : le chauffeur concerné + admins + chefs de parc + chefs TF.
  *
- * Niveaux :
- *   expire    → Document déjà expiré        (rouge)
- *   seuil_5   → Expire dans < 5 jours       (rouge)
- *   seuil_15  → Expire dans < 15 jours      (orange)
- *   seuil_30  → Expire dans < 30 jours      (ambre)
+ * Niveaux (jours restants) :
+ *   expire    → 0 jour ou moins           (rouge)   le jour J, le document est expiré
+ *   seuil_5   → de 1 à 5 jours            (rouge)
+ *   seuil_15  → de 6 à 15 jours           (orange)
+ *   seuil_30  → de 16 à 30 jours          (ambre)
+ *
+ * Lien du bouton : config('app.frontend_url'), sinon localhost.
+ * → Définir 'frontend_url' => env('FRONTEND_URL') dans config/app.php
+ *   et FRONTEND_URL=... dans le .env (adresse du front React, pas celle de l'API).
  */
 class MailDocumentChauffeur extends Mailable
 {
     use Queueable, SerializesModels;
 
+    /** Identifiant du logo intégré dans le mail : <img src="cid:logo-sgs"> */
+    private const LOGO_CID = 'logo-sgs';
+
     public function __construct(
         public readonly array  $document,      // données du document chauffeur
-        public readonly array  $chauffeur,     // données du chauffeur (nom, email, direction, categoriesPermis…)
+        public readonly array  $chauffeur,     // données du chauffeur (id, nom, email, direction, categoriesPermis…)
         public readonly array  $destinataire,  // { nom, role_libelle } du destinataire courant
-        public readonly string $statut,        // 'expire' | 'expire_bientot' | 'valide'
-        public readonly int    $joursRestants, // négatif si expiré
+        public readonly string $statut,        // 'expire' | 'expire_bientot'
+        public readonly int    $joursRestants, // 0 ou négatif si expiré
         public readonly string $niveau = 'seuil_30', // 'expire' | 'seuil_5' | 'seuil_15' | 'seuil_30'
     ) {}
 
@@ -57,9 +66,9 @@ class MailDocumentChauffeur extends Mailable
 
         $tag = match ($this->niveau) {
             'expire'   => '[EXPIRÉ]',
-            'seuil_5'  => '[URGENT - MOINS DE 5 JOURS]',
-            'seuil_15' => '[MOINS DE 15 JOURS]',
-            default    => '[MOINS DE 30 JOURS]',
+            'seuil_5'  => '[URGENT - 5 JOURS OU MOINS]',
+            'seuil_15' => '[15 JOURS OU MOINS]',
+            default    => '[30 JOURS OU MOINS]',
         };
 
         $type      = ucfirst(str_replace('_', ' ', $this->document['type_document']));
@@ -76,14 +85,24 @@ class MailDocumentChauffeur extends Mailable
 
     public function build(): static
     {
-        return $this->html($this->renderHtml());
+        $logoPath = $this->findLogoPath();
+
+        if ($logoPath !== null) {
+            // Le logo voyage DANS le mail (pièce intégrée) : Gmail bloque les images
+            // "data:base64", alors qu'il affiche les images "cid:".
+            $this->withSymfonyMessage(function ($message) use ($logoPath) {
+                $message->embedFromPath($logoPath, self::LOGO_CID, 'image/png');
+            });
+        }
+
+        return $this->html($this->renderHtml($logoPath !== null));
     }
 
     // =========================================================================
     // RENDU HTML
     // =========================================================================
 
-    private function renderHtml(): string
+    private function renderHtml(bool $logoIntegre): string
     {
         // ── Palette couleurs selon le niveau ─────────────────────────────────
         $c = match ($this->niveau) {
@@ -112,7 +131,7 @@ class MailDocumentChauffeur extends Mailable
                 'badgeBorder'  => '#fca5a5',
                 'badgeText'    => '#991b1b',
                 'dotColor'     => '#dc2626',
-                'pillLabel'    => '< 5 JOURS',
+                'pillLabel'    => '5 JOURS OU MOINS',
                 'borderTop'    => '#dc2626',
             ],
             'seuil_15' => [
@@ -126,7 +145,7 @@ class MailDocumentChauffeur extends Mailable
                 'badgeBorder'  => '#fdba74',
                 'badgeText'    => '#9a3412',
                 'dotColor'     => '#ea580c',
-                'pillLabel'    => '< 15 JOURS',
+                'pillLabel'    => '15 JOURS OU MOINS',
                 'borderTop'    => '#ea580c',
             ],
             default => [
@@ -140,14 +159,14 @@ class MailDocumentChauffeur extends Mailable
                 'badgeBorder'  => '#fde68a',
                 'badgeText'    => '#854d0e',
                 'dotColor'     => '#b45309',
-                'pillLabel'    => '< 30 JOURS',
+                'pillLabel'    => '30 JOURS OU MOINS',
                 'borderTop'    => '#b45309',
             ],
         };
 
         // ── Variables ────────────────────────────────────────────────────────
-        $appName          = config('app.name', 'Fleetify Management');
-        $reactUrl         = rtrim(config('app.frontend_url', 'http://localhost:5173'), '/');
+        $appName          = e(config('app.name', 'Fleetify Management'));
+        $reactUrl         = rtrim((string) (config('app.frontend_url') ?: 'http://localhost:5173'), '/');
         $annee            = date('Y');
 
         // Chauffeur
@@ -184,55 +203,67 @@ class MailDocumentChauffeur extends Mailable
         $ficheUrl         = "{$reactUrl}/Admin/Navigation/Chauffeurs";
         $dateHeure        = now()->format('d/m/Y à H:i');
 
-        // Countdown
-        $jAbs         = abs($this->joursRestants);
+        // ── Compte à rebours ─────────────────────────────────────────────────
+        //   > 0  → jours restants
+        //   = 0  → expiré aujourd'hui
+        //   < 0  → jours de retard
+        $jours        = $this->joursRestants;
+        $jAbs         = abs($jours);
         $jWord        = $jAbs > 1 ? 'jours' : 'jour';
-        $countdownNum = $this->joursRestants < 0 ? "−{$jAbs}" : (string)$this->joursRestants;
-        $countdownLbl = $this->joursRestants < 0
-                            ? "{$jAbs} {$jWord} de retard"
-                            : "{$this->joursRestants} {$jWord} restant(s)";
+        $countdownNum = $jours < 0 ? "−{$jAbs}" : (string) $jours;
 
-        // Message hero
+        if ($jours < 0) {
+            $countdownLbl = "{$jAbs} {$jWord} de retard";
+        } elseif ($jours === 0) {
+            $countdownLbl = "Expiré aujourd'hui";
+        } else {
+            $countdownLbl = $jours > 1 ? "{$jours} jours restants" : "{$jours} jour restant";
+        }
+
+        // ── Message hero ─────────────────────────────────────────────────────
         if ($this->statut === 'expire') {
+            $depuis    = $jours === 0 ? "aujourd'hui" : "il y a {$jAbs} {$jWord}";
             $heroTitle = "Ce document a expiré — action immédiate requise";
-            $heroMsg   = "Le document <strong>{$nomDoc}</strong> ({$typeDoc}) du chauffeur <strong>{$chauffeurNom}</strong> a expiré il y a <strong style=\"color:{$c['accent']};\">{$jAbs} {$jWord}</strong>. Merci de procéder au renouvellement sans délai.";
+            $heroMsg   = "Le document <strong>{$nomDoc}</strong> ({$typeDoc}) du chauffeur <strong>{$chauffeurNom}</strong> a expiré <strong style=\"color:{$c['accent']};\">{$depuis}</strong>. Merci de procéder au renouvellement sans délai.";
         } else {
             $heroTitle = "Renouvellement requis avant expiration";
-            $heroMsg   = "Le document <strong>{$nomDoc}</strong> ({$typeDoc}) du chauffeur <strong>{$chauffeurNom}</strong> expire dans <strong style=\"color:{$c['accent']};\">{$this->joursRestants} {$jWord}</strong>. Veuillez anticiper le renouvellement avant la date d'échéance.";
+            $heroMsg   = "Le document <strong>{$nomDoc}</strong> ({$typeDoc}) du chauffeur <strong>{$chauffeurNom}</strong> expire dans <strong style=\"color:{$c['accent']};\">{$jours} {$jWord}</strong>. Veuillez anticiper le renouvellement avant la date d'échéance.";
         }
 
         $expBadge = $this->statut === 'expire'
-            ? "<span style=\"display:inline-block;margin-left:6px;padding:2px 7px;background:{$c['tagBg']};color:{$c['accent']};font-size:10px;font-weight:700;border-radius:3px;\">EXPIRÉE</span>"
-            : "<span style=\"display:inline-block;margin-left:6px;padding:2px 7px;background:{$c['tagBg']};color:{$c['accent']};font-size:10px;font-weight:700;border-radius:3px;\">J−{$this->joursRestants}</span>";
+            ? "<span style=\"display:inline-block;margin-left:6px;padding:2px 7px;background:{$c['tagBg']};color:{$c['accent']};font-size:10px;font-weight:700;border-radius:3px;\">EXPIRÉ</span>"
+            : "<span style=\"display:inline-block;margin-left:6px;padding:2px 7px;background:{$c['tagBg']};color:{$c['accent']};font-size:10px;font-weight:700;border-radius:3px;\">J−{$jours}</span>";
 
-        // Logo
-        $logoB64  = $this->encodeLogoBase64();
-        $logoMain = $logoB64
-            ? "<img src=\"data:image/png;base64,{$logoB64}\" width=\"36\" height=\"43\" alt=\"SGS\" style=\"display:block;border:0;\">"
+        // ── Logo ─────────────────────────────────────────────────────────────
+        $logoMain = $logoIntegre
+            ? "<img src=\"cid:" . self::LOGO_CID . "\" width=\"36\" height=\"43\" alt=\"SGS\" style=\"display:block;border:0;\">"
             : $this->svgLogo(36, 43);
-        $logoFoot = $logoB64
-            ? "<img src=\"data:image/png;base64,{$logoB64}\" width=\"24\" height=\"29\" alt=\"SGS\" style=\"display:block;border:0;opacity:0.55;\">"
+        $logoFoot = $logoIntegre
+            ? "<img src=\"cid:" . self::LOGO_CID . "\" width=\"24\" height=\"29\" alt=\"SGS\" style=\"display:block;border:0;opacity:0.55;\">"
             : $this->svgLogo(24, 29, '#999999');
 
-        // Champs optionnels du document
+        // ── Champs optionnels du document ───────────────────────────────────
         $optFields = '';
-        if ($numeroPermis)  $optFields .= $this->field('N° de permis',      $numeroPermis);
-        if ($catPermisDoc)  $optFields .= $this->field('Catégories',        $catPermisDoc);
-        if ($dateDelivrance)$optFields .= $this->field('Date de délivrance', $dateDelivrance);
+        if ($numeroPermis)   $optFields .= $this->field('N° de permis',       $numeroPermis);
+        if ($catPermisDoc)   $optFields .= $this->field('Catégories',         $catPermisDoc);
+        if ($dateDelivrance) $optFields .= $this->field('Date de délivrance', $dateDelivrance);
 
-        // Bloc notes — préparé avant le heredoc pour éviter l'imbrication interdite
+        $fieldType = $this->field('Type de document', $typeDoc);
+        $fieldPays = $this->field('Pays de délivrance', $paysDelivrance);
+
+        // Bloc notes — préparé avant le heredoc pour éviter l'imbrication
         $notesHtml = $notes
             ? "<div style=\"background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:22px;\"><div style=\"font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;\">Notes</div><div style=\"font-size:13px;color:#4b5563;line-height:1.65;\">{$notes}</div></div>"
             : '';
 
         // Avatar initiales chauffeur (couleur déterministe)
-        $mots      = preg_split('/\s+/', trim($chauffeurNom));
+        $mots      = preg_split('/\s+/', trim($this->chauffeur['nom']));
         $initiales = strtoupper(
             implode('', array_map(fn($m) => mb_substr($m, 0, 1), array_slice($mots, 0, 2)))
         );
         $palette   = ['#f59e0b','#3b82f6','#10b981','#8b5cf6','#ef4444',
                       '#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
-        $avatarBg  = $palette[$this->chauffeur['id'] % count($palette)];
+        $avatarBg  = $palette[((int) $this->chauffeur['id']) % count($palette)];
 
         // ── HTML ─────────────────────────────────────────────────────────────
         return <<<HTML
@@ -402,8 +433,8 @@ class MailDocumentChauffeur extends Mailable
     <div style="background:#fff;border:1px solid #e5e7eb;border-left:3px solid {$c['accent']};border-radius:6px;padding:16px 18px;margin-bottom:22px;">
       <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:14px;">{$nomDoc}</div>
       <div class="grid2">
-        {$this->field('Type de document', $typeDoc)}
-        {$this->field('Pays de délivrance', $paysDelivrance)}
+        {$fieldType}
+        {$fieldPays}
         {$optFields}
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#9ca3af;margin-bottom:4px;">Date d'expiration</div>
@@ -470,17 +501,25 @@ HTML;
 HTML;
     }
 
-    private function encodeLogoBase64(): ?string
+    /**
+     * Cherche public/logo.png (chemin Laravel, puis via la racine du projet).
+     * Retourne null si le fichier est introuvable → le SVG de secours est utilisé.
+     */
+    private function findLogoPath(): ?string
     {
-        $path = public_path('logo.png');
-        if (!file_exists($path)) {
-            return null;
+        $candidats = [
+            public_path('logo.png'),
+            base_path('public' . DIRECTORY_SEPARATOR . 'logo.png'),
+        ];
+
+        foreach ($candidats as $path) {
+            if (is_file($path) && is_readable($path)) {
+                return $path;
+            }
         }
-        try {
-            return base64_encode(file_get_contents($path));
-        } catch (\Throwable) {
-            return null;
-        }
+
+        Log::warning('[MailDocumentChauffeur] logo.png introuvable (' . implode(' | ', $candidats) . ') — logo SVG de secours utilisé.');
+        return null;
     }
 
     private function svgLogo(int $w, int $h, string $iconColor = '#111111'): string

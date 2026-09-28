@@ -33,13 +33,12 @@ class NotificationsController extends Controller
                 'n.vehicule_immatriculation',
                 'n.lien_url',
                 'n.donnees',
-                // ✅ CORRECTION : la colonne s'appelle "libelle" et non "nom"
                 'cn.libelle as categorie_nom',
                 'cn.niveau_priorite as categorie_couleur',
-                DB::raw('CASE 
-                    WHEN en.id IS NULL THEN 0 
-                    WHEN en.est_lu = 0 THEN 0 
-                    ELSE 1 
+                DB::raw('CASE
+                    WHEN en.id IS NULL THEN 0
+                    WHEN en.est_lu = 0 THEN 0
+                    ELSE 1
                 END as est_lu'),
                 'en.id as envoi_id',
                 'en.date_lecture'
@@ -49,13 +48,16 @@ class NotificationsController extends Controller
         $notifications->getCollection()->transform(function ($notif) {
             $notif->time_ago = Carbon::parse($notif->date_creation)->diffForHumans();
 
-            $categorie = strtolower($notif->categorie_nom ?? '');
-            $titre     = strtolower($notif->titre ?? '');
+            // Type et icône selon le niveau de priorité de la catégorie
+            //   critique / important → rouge   (expiré, < 5 j, < 15 j)
+            //   a_surveiller         → orange  (< 30 j)
+            //   autre                → bleu
+            $niveau = strtolower($notif->categorie_couleur ?? 'normal');
 
-            if (str_contains($titre, 'alerte') || str_contains($categorie, 'important')) {
+            if (in_array($niveau, ['critique', 'important'], true)) {
                 $notif->type  = 'error';
                 $notif->icone = 'bi-exclamation-triangle-fill';
-            } elseif (str_contains($titre, 'info') || str_contains($categorie, 'surveiller')) {
+            } elseif ($niveau === 'a_surveiller') {
                 $notif->type  = 'warning';
                 $notif->icone = 'bi-exclamation-triangle-fill';
             } else {

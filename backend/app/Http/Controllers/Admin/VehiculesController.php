@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\JournalAudit;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +26,13 @@ use Illuminate\Support\Str;
  *   POST   /admin/vehicules/references/affectations          → storeAffectation
  *   PUT    /admin/vehicules/references/affectations/{id}     → updateAffectation
  *   DELETE /admin/vehicules/references/affectations/{id}     → destroyAffectation
+ *
+ * Audit : toutes les actions d'écriture (créer/modifier/supprimer un véhicule,
+ * un document, une maintenance ou une affectation) tracent une ligne dans
+ * journaux_audit via JournalAudit::tracer(), avec un libellé lisible.
+ * Ce controller utilise DB::table() (Query Builder) et non Eloquent, donc le
+ * trait Auditable (basé sur les events Eloquent) ne se déclenche jamais ici —
+ * d'où ces appels explicites.
  */
 class VehiculesController extends Controller
 {
@@ -58,6 +66,16 @@ class VehiculesController extends Controller
     // HELPERS PRIVÉS
     // =========================================================================
 
+    /** Correspondance clé technique (FK) → libellé lisible pour l'audit */
+    private const CHAMPS_AUDIT_LIBELLES = [
+        'marque_id'      => 'marque',
+        'modele_id'      => 'modele',
+        'categorie_id'   => 'categorie',
+        'annee_id'       => 'annee',
+        'direction_id'   => 'direction',
+        'affectation_id' => 'affectation',
+    ];
+
     private function getAuthUserId(): ?int
     {
         $user = auth()->user();
@@ -66,6 +84,59 @@ class VehiculesController extends Controller
             if (isset($user->{$prop})) return (int) $user->{$prop};
         }
         return null;
+    }
+
+    /**
+     * Instantané d'un véhicule pour l'audit, avec les FK déjà résolues
+     * en libellés lisibles (marque, modele... au lieu de marque_id, modele_id...).
+     */
+    private function snapshotAuditVehicule(string $immatriculation): array
+    {
+        $v = $this->baseQuery()->where('v.immatriculation', $immatriculation)->first();
+        if (!$v) return [];
+
+        return [
+            'immatriculation'                  => $v->immatriculation,
+            'numero_chassis'                   => $v->numero_chassis,
+            'marque'                           => $v->marque_nom,
+            'modele'                           => $v->modele_nom,
+            'categorie'                        => $v->categorie_nom,
+            'annee'                            => $v->annee_val,
+            'direction'                        => $v->direction_nom,
+            'ville'                            => $v->ville,
+            'affectation'                      => $v->affectation_nom ?? $v->affectation,
+            'responsable_du_vehicule'          => $v->responsable_du_vehicule,
+            'nb_places'                        => $v->nb_places,
+            'kilometrage'                      => $v->kilometrage,
+            'statut'                           => $v->statut,
+            'couleur'                          => $v->couleur,
+            'cout_acquisition'                 => $v->cout_acquisition,
+            'valeur_residuelle'                => $v->valeur_residuelle,
+            'date_acquisition'                 => $v->date_acquisition,
+            'date_expiration_assurance'        => $v->date_expiration_assurance,
+            'date_expiration_visite_technique' => $v->date_expiration_visite_technique,
+        ];
+    }
+
+    /**
+     * Libellé d'audit intelligent selon ce qui a réellement changé
+     * lors d'une modification de véhicule.
+     */
+    private function libelleAuditVehicule(string $immat, array $champs, array $avant): string
+    {
+        if (array_key_exists('statut', $champs)) {
+            return "Changement de statut du véhicule {$immat} : {$avant['statut']} → {$champs['statut']}";
+        }
+        if (array_key_exists('affectation', $champs)) {
+            return "Nouvelle affectation du véhicule {$immat} : " . ($champs['affectation'] ?? 'aucune');
+        }
+        if (array_key_exists('kilometrage', $champs)) {
+            return "Mise à jour du kilométrage du véhicule {$immat} : {$avant['kilometrage']} km → {$champs['kilometrage']} km";
+        }
+        if (array_key_exists('photo', $champs)) {
+            return "Mise à jour de la photo du véhicule {$immat}";
+        }
+        return "Modification du véhicule {$immat}";
     }
 
     /**
@@ -237,8 +308,6 @@ class VehiculesController extends Controller
         $total    = $query->count();
 
         // ── TRI ALPHABÉTIQUE (A→Z) appliqué AVANT pagination ──────────────────
-        // Marque puis Modèle puis Immatriculation, pour un ordre cohérent sur
-        // TOUTES les pages (le tri est fait par MySQL, pas juste sur la page en cours).
         $vehicles = $query
     ->orderBy('v.immatriculation')
     ->paginate($perPage);
@@ -355,6 +424,18 @@ class VehiculesController extends Controller
             ->where('v.immatriculation', strtoupper(trim($request->immatriculation)))
             ->first();
 
+        // ── AUDIT : ajout d'un véhicule ─────────────────────────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'CREATE',
+            'vehicules',
+            $vehicule->immatriculation,
+            null,
+            $this->snapshotAuditVehicule($vehicule->immatriculation),
+            "Ajout du véhicule {$vehicule->immatriculation} ({$request->marque} {$request->modele})"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json($this->formatVehicule($vehicule), 201);
     }
 
@@ -367,6 +448,11 @@ class VehiculesController extends Controller
         $exists = DB::table('vehicules')
             ->where('immatriculation', $immatriculation)->where('est_supprime', 0)->exists();
         if (!$exists) return response()->json(['message' => 'Véhicule introuvable.'], 404);
+
+        // ── AUDIT : capture de l'état "avant" (brut + snapshot avec noms résolus) ──
+        $avantComplet  = DB::table('vehicules')->where('immatriculation', $immatriculation)->first();
+        $avantSnapshot = $this->snapshotAuditVehicule($immatriculation);
+        // ─────────────────────────────────────────────────────────────────────
 
         $validator = Validator::make($request->all(), [
             'marque'                  => 'nullable|string|max:100',
@@ -449,6 +535,33 @@ class VehiculesController extends Controller
         }
 
         DB::table('vehicules')->where('immatriculation', $immatriculation)->update($updateData);
+
+        // ── AUDIT : modification d'un véhicule (noms résolus, pas les ids FK) ──
+        $apresSnapshot  = $this->snapshotAuditVehicule($immatriculation);
+        $champsModifies = collect($updateData)->except(['date_modification', 'affectation'])->keys()->all();
+
+        $champsAudit      = [];
+        $anciennesValeurs = [];
+
+        foreach ($champsModifies as $champ) {
+            $cle = self::CHAMPS_AUDIT_LIBELLES[$champ] ?? $champ;
+            $champsAudit[$cle]      = $apresSnapshot[$cle]  ?? ($updateData[$champ] ?? null);
+            $anciennesValeurs[$cle] = $avantSnapshot[$cle] ?? ($avantComplet->{$champ} ?? null);
+        }
+
+        if (!empty($champsAudit)) {
+            JournalAudit::tracer(
+                $this->getAuthUserId(),
+                'UPDATE',
+                'vehicules',
+                $immatriculation,
+                $anciennesValeurs,
+                $champsAudit,
+                $this->libelleAuditVehicule($immatriculation, $champsAudit, $anciennesValeurs)
+            );
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         $vehicule = $this->baseQuery()->where('v.immatriculation', $immatriculation)->first();
         return response()->json($this->formatVehicule($vehicule));
     }
@@ -459,11 +572,30 @@ class VehiculesController extends Controller
 
     public function destroy(string $immatriculation): JsonResponse
     {
-        $rows = DB::table('vehicules')
+        $avant = DB::table('vehicules')
+            ->where('immatriculation', $immatriculation)->where('est_supprime', 0)->first();
+        if (!$avant) return response()->json(['message' => 'Véhicule introuvable.'], 404);
+
+        // ── AUDIT : snapshot avec noms résolus avant suppression ────────────
+        $avantSnapshot = $this->snapshotAuditVehicule($immatriculation);
+        // ─────────────────────────────────────────────────────────────────────
+
+        DB::table('vehicules')
             ->where('immatriculation', $immatriculation)->where('est_supprime', 0)
             ->update(['est_supprime' => 1, 'date_suppression' => now(), 'date_modification' => now()]);
 
-        if (!$rows) return response()->json(['message' => 'Véhicule introuvable.'], 404);
+        // ── AUDIT : suppression d'un véhicule ───────────────────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'DELETE',
+            'vehicules',
+            $immatriculation,
+            $avantSnapshot,
+            null,
+            "Suppression du véhicule {$immatriculation}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json(['message' => 'Véhicule supprimé avec succès.']);
     }
 
@@ -479,11 +611,27 @@ class VehiculesController extends Controller
         $statutDB = self::STATUTS_MAP[$request->statut] ?? null;
         if (!$statutDB) return response()->json(['message' => 'Statut invalide.'], 422);
 
-        $rows = DB::table('vehicules')
+        $ancienStatut = DB::table('vehicules')
+            ->where('immatriculation', $immatriculation)->where('est_supprime', 0)
+            ->value('statut');
+        if ($ancienStatut === null) return response()->json(['message' => 'Véhicule introuvable.'], 404);
+
+        DB::table('vehicules')
             ->where('immatriculation', $immatriculation)->where('est_supprime', 0)
             ->update(['statut' => $statutDB, 'date_modification' => now()]);
 
-        if (!$rows) return response()->json(['message' => 'Véhicule introuvable.'], 404);
+        // ── AUDIT : changement de statut ────────────────────────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'UPDATE',
+            'vehicules',
+            $immatriculation,
+            ['statut' => $ancienStatut],
+            ['statut' => $statutDB],
+            "Changement de statut du véhicule {$immatriculation} : {$ancienStatut} → {$statutDB}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json(['message' => 'Statut mis à jour.', 'statut' => $request->statut]);
     }
 
@@ -572,6 +720,19 @@ class VehiculesController extends Controller
         ]);
 
         $doc = DB::table('documents_vehicules')->find($id);
+
+        // ── AUDIT : ajout d'un document véhicule ────────────────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'CREATE',
+            'documents_vehicules',
+            (string) $doc->id,
+            null,
+            (array) $doc,
+            "Ajout du document \"{$doc->nom_document}\" ({$doc->type_document}) pour le véhicule {$immatriculation}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'id'              => $doc->id,
             'nom_document'    => $doc->nom_document,
@@ -639,6 +800,18 @@ class VehiculesController extends Controller
             elseif ($diff <= 30) $statut = 'expire_bientot';
         }
 
+        // ── AUDIT : modification d'un document véhicule ─────────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'UPDATE',
+            'documents_vehicules',
+            (string) $documentId,
+            (array) $doc,
+            collect($updateData)->except(['date_modification'])->all(),
+            "Modification du document \"{$updated->nom_document}\" du véhicule {$immatriculation}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'id'                       => $updated->id,
             'vehicule_immatriculation' => $updated->vehicule_immatriculation,
@@ -671,6 +844,18 @@ class VehiculesController extends Controller
         }
         DB::table('documents_vehicules')->where('id', $documentId)
             ->update(['est_supprime' => 1, 'date_suppression' => now(), 'date_modification' => now()]);
+
+        // ── AUDIT : suppression d'un document véhicule ──────────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'DELETE',
+            'documents_vehicules',
+            (string) $documentId,
+            (array) $doc,
+            null,
+            "Suppression du document \"{$doc->nom_document}\" du véhicule {$immatriculation}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json(['message' => 'Document supprimé.']);
     }
@@ -743,7 +928,21 @@ class VehiculesController extends Controller
             'date_modification'         => now(),
         ]);
 
-        return response()->json(DB::table('interventions')->find($id), 201);
+        $intervention = DB::table('interventions')->find($id);
+
+        // ── AUDIT : ajout d'une intervention / maintenance ──────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'CREATE',
+            'interventions',
+            (string) $id,
+            null,
+            (array) $intervention,
+            "Ajout d'une intervention \"{$request->type_intervention}\" sur le véhicule {$immatriculation}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
+        return response()->json($intervention, 201);
     }
 
     // =========================================================================
@@ -912,7 +1111,21 @@ class VehiculesController extends Controller
             'updated_at'  => now(),
         ]);
 
-        return response()->json(DB::table('affectations')->find($id), 201);
+        $affectation = DB::table('affectations')->find($id);
+
+        // ── AUDIT : ajout d'une affectation (référentiel) ───────────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'CREATE',
+            'affectations',
+            (string) $id,
+            null,
+            (array) $affectation,
+            "Ajout de l'affectation \"{$affectation->nom}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
+        return response()->json($affectation, 201);
     }
 
     /** PUT /admin/vehicules/references/affectations/{id} */
@@ -926,36 +1139,53 @@ class VehiculesController extends Controller
         ]);
         if ($validator->fails()) return response()->json(['errors' => $validator->errors()], 422);
 
-        $rows = DB::table('affectations')
+        $avant = DB::table('affectations')->where('id', $id)->whereNull('deleted_at')->first();
+        if (!$avant) return response()->json(['message' => 'Affectation introuvable.'], 404);
+
+        $updatedNom = trim($request->nom);
+
+        DB::table('affectations')
             ->where('id', $id)->whereNull('deleted_at')
             ->update([
-                'nom'         => trim($request->nom),
+                'nom'         => $updatedNom,
                 'code'        => $request->filled('code') ? strtoupper(trim($request->code)) : null,
                 'description' => $request->description ?: null,
                 'est_actif'   => $request->has('est_actif') ? (int)(bool)$request->est_actif : 1,
                 'updated_at'  => now(),
             ]);
 
-        if (!$rows) return response()->json(['message' => 'Affectation introuvable.'], 404);
-
         // ── Mettre à jour le cache vehicules.affectation pour cette affectation ──
-        $updatedNom = trim($request->nom);
         DB::table('vehicules')
             ->where('affectation_id', $id)
             ->where('est_supprime', 0)
             ->update(['affectation' => $updatedNom, 'date_modification' => now()]);
 
-        return response()->json(DB::table('affectations')->find($id));
+        $affectation = DB::table('affectations')->find($id);
+
+        // ── AUDIT : modification d'une affectation (référentiel) ────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'UPDATE',
+            'affectations',
+            (string) $id,
+            (array) $avant,
+            (array) $affectation,
+            "Modification de l'affectation \"{$avant->nom}\"" . ($avant->nom !== $updatedNom ? " → \"{$updatedNom}\"" : '')
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
+        return response()->json($affectation);
     }
 
     /** DELETE /admin/vehicules/references/affectations/{id} */
     public function destroyAffectation(int $id): JsonResponse
     {
-        $rows = DB::table('affectations')
+        $avant = DB::table('affectations')->where('id', $id)->whereNull('deleted_at')->first();
+        if (!$avant) return response()->json(['message' => 'Affectation introuvable.'], 404);
+
+        DB::table('affectations')
             ->where('id', $id)->whereNull('deleted_at')
             ->update(['deleted_at' => now(), 'est_actif' => 0, 'updated_at' => now()]);
-
-        if (!$rows) return response()->json(['message' => 'Affectation introuvable.'], 404);
 
         // Détacher tous les véhicules liés
         DB::table('vehicules')
@@ -963,11 +1193,24 @@ class VehiculesController extends Controller
             ->where('est_supprime', 0)
             ->update(['affectation_id' => null, 'affectation' => null, 'date_modification' => now()]);
 
+        // ── AUDIT : suppression d'une affectation (référentiel) ─────────────
+        JournalAudit::tracer(
+            $this->getAuthUserId(),
+            'DELETE',
+            'affectations',
+            (string) $id,
+            (array) $avant,
+            null,
+            "Suppression de l'affectation \"{$avant->nom}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json(['message' => 'Affectation supprimée et véhicules détachés.']);
     }
 
     // =========================================================================
-    // 13. CRUD AUTRES RÉFÉRENCES (inchangé)
+    // 13. CRUD AUTRES RÉFÉRENCES (inchangé — non auditées volontairement,
+    //     voir note en bas de réponse)
     // =========================================================================
 
     public function storeCategorie(Request $request): JsonResponse

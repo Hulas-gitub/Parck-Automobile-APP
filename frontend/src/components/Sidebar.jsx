@@ -42,7 +42,7 @@ const buildMenuItems = (navigate) => [
 
       {
         icon: 'bi-truck-front-fill',
-        label: 'Historique des véhicules',
+        label: 'Documents des véhicules',
         path: '/Admin/Navigation/HistoriqueVehicule',
         onClick: () => navigate('/Admin/Navigation/HistoriqueVehicule'),
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
@@ -128,6 +128,15 @@ const buildMenuItems = (navigate) => [
             path: '/Admin/Navigation/HistoriqueConnexion',
             onClick: () => navigate('/Admin/Navigation/HistoriqueConnexion'),
           },
+
+          {
+            label: 'Activité du système',
+            icon: 'bi-file-earmark-bar-graph-fill',
+            path: '/Admin/Navigation/ActiviteSysteme',
+            onClick: () => navigate('/Admin/Navigation/ActiviteSysteme'),
+            roles: [ROLES.ADMIN],
+          },
+
         ],
       },
     ],
@@ -197,13 +206,6 @@ const buildMenuItems = (navigate) => [
             path: '/Admin/Navigation/EtatStock',
             onClick: () => navigate('/Admin/Navigation/EtatStock'),
             roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
-          },
-          {
-            label: 'Activité du système',
-            icon: 'bi-file-earmark-bar-graph-fill',
-            path: '/Admin/Navigation/ActiviteSysteme',
-            onClick: () => navigate('/Admin/Navigation/ActiviteSysteme'),
-            roles: [ROLES.ADMIN],
           },
         ],
       },

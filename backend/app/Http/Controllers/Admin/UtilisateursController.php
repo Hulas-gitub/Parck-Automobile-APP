@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Mail\MailPasswordUtilisateurs;
 use App\Models\Direction;
+use App\Models\JournalAudit;
 use App\Models\Role;
 use App\Models\Utilisateur;
 use Illuminate\Http\JsonResponse;
@@ -15,10 +16,65 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
+/**
+ * Audit : ce controller mélange Eloquent (Role::create, Direction::create)
+ * et Query Builder (DB::table(...)->update(), Role::where(...)->update()).
+ * Seul un `save()`/`update()` appelé sur une INSTANCE de modèle déclenche
+ * les events Eloquent — un update via ->where(...)->update() ne les
+ * déclenche jamais, même en Eloquent. Donc chaque action d'écriture
+ * appelle JournalAudit::tracer() explicitement, sans exception.
+ */
 class UtilisateursController extends Controller
 {
     /** Domaine email autorisé */
     private const DOMAINE_EMAIL = 'sgs-gabon.com';
+
+    // =========================================================================
+    // HELPERS AUDIT
+    // =========================================================================
+
+    /**
+     * Instantané d'un utilisateur pour l'audit, avec role_id/direction_id
+     * déjà résolus en libellés lisibles (pas les ids bruts).
+     */
+    private function snapshotAuditUtilisateur(int $id): array
+    {
+        $u = DB::table('utilisateurs as u')
+            ->leftJoin('roles as r', 'r.id', '=', 'u.role_id')
+            ->leftJoin('directions as d', 'd.id', '=', 'u.direction_id')
+            ->where('u.id', $id)
+            ->select(
+                'u.nom', 'u.email', 'u.role_id', 'r.libelle as role_nom',
+                'u.direction_id', 'd.nom as direction_nom', 'u.est_actif'
+            )->first();
+
+        if (!$u) return [];
+
+        return [
+            'nom'       => $u->nom,
+            'email'     => $u->email,
+            'role'      => $u->role_nom,
+            'direction' => $u->direction_nom,
+            'est_actif' => (bool) $u->est_actif,
+        ];
+    }
+
+    /** Libellé d'audit intelligent selon ce qui a changé lors d'une modification d'utilisateur. */
+    private function libelleAuditUtilisateur(array $avant, array $champs, array $anciennes): string
+    {
+        $nom = $avant['nom'] ?? '?';
+
+        if (array_key_exists('role', $champs)) {
+            return "Changement de rôle de {$nom} : " . ($anciennes['role'] ?? '—') . " → " . ($champs['role'] ?? '—');
+        }
+        if (array_key_exists('direction', $champs)) {
+            return "Changement de direction de {$nom} : " . ($anciennes['direction'] ?? '—') . " → " . ($champs['direction'] ?? '—');
+        }
+        if (array_key_exists('email', $champs)) {
+            return "Modification de l'email de {$nom}";
+        }
+        return "Modification de l'utilisateur {$nom}";
+    }
 
     // =========================================================================
     // UTILISATEURS
@@ -120,6 +176,18 @@ class UtilisateursController extends Controller
             \Log::warning("Mail création non envoyé pour {$utilisateur->email} : " . $e->getMessage());
         }
 
+        // ── AUDIT : ajout d'un utilisateur (jamais le mot de passe, même haché) ──
+        JournalAudit::tracer(
+            auth()->id(),
+            'CREATE',
+            'utilisateurs',
+            (string) $utilisateur->id,
+            null,
+            $this->snapshotAuditUtilisateur($utilisateur->id),
+            "Ajout de l'utilisateur {$utilisateur->nom} ({$utilisateur->email}) — rôle {$utilisateur->role?->libelle}"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         $message = $mailEnvoye
             ? 'Utilisateur créé avec succès. Le mot de passe a été envoyé par email.'
             : "Utilisateur créé avec succès. (Attention : le mail de bienvenue n'a pas pu être envoyé.)";
@@ -169,6 +237,10 @@ class UtilisateursController extends Controller
             ], 422);
         }
 
+        // ── AUDIT : snapshot avant modification ─────────────────────────────
+        $avantSnapshot = $this->snapshotAuditUtilisateur($id);
+        // ─────────────────────────────────────────────────────────────────────
+
         $data = [];
         if ($request->has('nom'))          $data['nom']          = trim($request->nom);
         if ($request->has('email'))        $data['email']        = strtolower(trim($request->email));
@@ -184,6 +256,31 @@ class UtilisateursController extends Controller
 
         $utilisateur->refresh()->load(['role', 'direction']);
 
+        // ── AUDIT : modification (noms résolus, pas les ids FK) ─────────────
+        if (!empty($data)) {
+            $apresSnapshot = $this->snapshotAuditUtilisateur($id);
+            $mapFk         = ['role_id' => 'role', 'direction_id' => 'direction'];
+
+            $champsAudit      = [];
+            $anciennesValeurs = [];
+            foreach (array_keys($data) as $champ) {
+                $cle = $mapFk[$champ] ?? $champ;
+                $champsAudit[$cle]      = $apresSnapshot[$cle]  ?? null;
+                $anciennesValeurs[$cle] = $avantSnapshot[$cle] ?? null;
+            }
+
+            JournalAudit::tracer(
+                auth()->id(),
+                'UPDATE',
+                'utilisateurs',
+                (string) $id,
+                $anciennesValeurs,
+                $champsAudit,
+                $this->libelleAuditUtilisateur($avantSnapshot, $champsAudit, $anciennesValeurs)
+            );
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'success' => true,
             'message' => 'Utilisateur modifié avec succès.',
@@ -193,13 +290,29 @@ class UtilisateursController extends Controller
 
     public function destroy(int $id): JsonResponse
     {
-        $this->findOrFail($id);
+        $utilisateur = $this->findOrFail($id);
+
+        // ── AUDIT : snapshot avant suppression ──────────────────────────────
+        $avantSnapshot = $this->snapshotAuditUtilisateur($id);
+        // ─────────────────────────────────────────────────────────────────────
 
         DB::table('utilisateurs')->where('id', $id)->update([
             'est_supprime'     => 1,
             'date_suppression' => now(),
             'date_modification' => now(),
         ]);
+
+        // ── AUDIT : suppression d'un utilisateur ────────────────────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            'DELETE',
+            'utilisateurs',
+            (string) $id,
+            $avantSnapshot,
+            null,
+            "Suppression de l'utilisateur {$utilisateur->nom} ({$utilisateur->email})"
+        );
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json([
             'success' => true,
@@ -211,7 +324,8 @@ class UtilisateursController extends Controller
     {
         $utilisateur = $this->findOrFail($id);
 
-        $newStatut = $utilisateur->est_actif ? 0 : 1;
+        $ancienStatut = (bool) $utilisateur->est_actif;
+        $newStatut    = $utilisateur->est_actif ? 0 : 1;
 
         DB::table('utilisateurs')->where('id', $id)->update([
             'est_actif'         => $newStatut,
@@ -226,6 +340,18 @@ class UtilisateursController extends Controller
 
         $label = $newStatut ? 'débloqué' : 'bloqué';
 
+        // ── AUDIT : blocage / déblocage (action dédiée, pas un UPDATE générique) ──
+        JournalAudit::tracer(
+            auth()->id(),
+            $newStatut ? 'DEBLOQUER' : 'BLOQUER',
+            'utilisateurs',
+            (string) $id,
+            ['est_actif' => $ancienStatut],
+            ['est_actif' => (bool) $newStatut],
+            ($newStatut ? 'Déblocage' : 'Blocage') . " de l'utilisateur {$utilisateur->nom} ({$utilisateur->email})"
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'success' => true,
             'message' => "Utilisateur {$label} avec succès.",
@@ -238,7 +364,7 @@ class UtilisateursController extends Controller
         $utilisateur = $this->findOrFail($id);
 
         // ✅ ÉTAPE 1 — Générer le mot de passe en CLAIR
-        //    Cette variable ne sera JAMAIS passée à Eloquent
+        //    Cette variable ne sera JAMAIS passée à Eloquent ni à l'audit
         $plainPassword = self::generateSecurePassword($utilisateur->nom);
 
         // ✅ ÉTAPE 2 — Sauvegarder via DB::table (bypass mutateur Eloquent)
@@ -256,6 +382,19 @@ class UtilisateursController extends Controller
         } catch (\Throwable $e) {
             \Log::warning("Impossible de révoquer les tokens #{$id} : " . $e->getMessage());
         }
+
+        // ── AUDIT : réinitialisation du mot de passe — JAMAIS le mot de passe,
+        //    même haché, dans anciennes_valeurs / nouvelles_valeurs (null, null) ──
+        JournalAudit::tracer(
+            auth()->id(),
+            'UPDATE',
+            'utilisateurs',
+            (string) $id,
+            null,
+            null,
+            "Réinitialisation du mot de passe de l'utilisateur {$utilisateur->nom} ({$utilisateur->email}) par un administrateur"
+        );
+        // ─────────────────────────────────────────────────────────────────────
 
         // ✅ ÉTAPE 4 — Recharger le modèle avec les relations (role, direction)
         //    pour que le mail affiche correctement le rôle et la direction
@@ -300,6 +439,12 @@ class UtilisateursController extends Controller
         ]);
     }
 
+    /**
+     * Désactivation automatique des mots de passe temporaires expirés (24h).
+     * Exécuté par le scheduler, pas par un utilisateur → volontairement
+     * non tracé dans journaux_audit (même logique que la clôture automatique
+     * des sessions expirées : pas d'action humaine à attribuer).
+     */
     public function expirePasswordsExpires(): void
     {
         $expires = Utilisateur::where('est_supprime', 0)
@@ -367,6 +512,18 @@ class UtilisateursController extends Controller
             'est_supprime' => 0,
         ]);
 
+        // ── AUDIT : ajout d'un rôle ──────────────────────────────────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            'CREATE',
+            'roles',
+            (string) $role->id,
+            null,
+            ['code' => $role->code, 'libelle' => $role->libelle, 'description' => $role->description],
+            "Ajout du rôle \"{$role->libelle}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'success' => true,
             'message' => 'Rôle créé avec succès.',
@@ -388,6 +545,8 @@ class UtilisateursController extends Controller
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
+        $avant = ['code' => $role->code, 'libelle' => $role->libelle, 'description' => $role->description];
+
         $data = [];
         if ($request->has('code') && $request->code !== null) {
             $data['code'] = Str::slug($request->code, '_');
@@ -398,6 +557,21 @@ class UtilisateursController extends Controller
         if (!empty($data)) {
             Role::where('id', $id)->update($data);
         }
+
+        // ── AUDIT : modification d'un rôle ──────────────────────────────────
+        if (!empty($data)) {
+            JournalAudit::tracer(
+                auth()->id(),
+                'UPDATE',
+                'roles',
+                (string) $id,
+                $avant,
+                $data,
+                "Modification du rôle \"{$avant['libelle']}\""
+                    . (isset($data['libelle']) && $data['libelle'] !== $avant['libelle'] ? " → \"{$data['libelle']}\"" : '')
+            );
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json([
             'success' => true,
@@ -423,6 +597,18 @@ class UtilisateursController extends Controller
             'date_suppression' => now(),
         ]);
 
+        // ── AUDIT : suppression d'un rôle ───────────────────────────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            'DELETE',
+            'roles',
+            (string) $id,
+            ['code' => $role->code, 'libelle' => $role->libelle, 'description' => $role->description],
+            null,
+            "Suppression du rôle \"{$role->libelle}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json(['success' => true, 'message' => 'Rôle supprimé avec succès.']);
     }
 
@@ -440,10 +626,23 @@ class UtilisateursController extends Controller
             }
         }
 
-        $newSupprime = $role->est_supprime ? 0 : 1;
+        $ancienSupprime = (bool) $role->est_supprime;
+        $newSupprime    = $role->est_supprime ? 0 : 1;
         Role::where('id', $id)->update(['est_supprime' => $newSupprime]);
 
         $label = $newSupprime ? 'désactivé' : 'activé';
+
+        // ── AUDIT : activation / désactivation d'un rôle ────────────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            $newSupprime ? 'BLOQUER' : 'DEBLOQUER',
+            'roles',
+            (string) $id,
+            ['est_supprime' => $ancienSupprime],
+            ['est_supprime' => (bool) $newSupprime],
+            ($newSupprime ? 'Désactivation' : 'Activation') . " du rôle \"{$role->libelle}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json([
             'success' => true,
@@ -493,6 +692,18 @@ class UtilisateursController extends Controller
             'est_supprime' => 0,
         ]);
 
+        // ── AUDIT : ajout d'une direction ────────────────────────────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            'CREATE',
+            'directions',
+            (string) $direction->id,
+            null,
+            ['nom' => $direction->nom, 'reference' => $direction->reference],
+            "Ajout de la direction \"{$direction->nom}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'success' => true,
             'message' => 'Direction créée avec succès.',
@@ -513,6 +724,8 @@ class UtilisateursController extends Controller
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
+        $avant = ['nom' => $direction->nom, 'reference' => $direction->reference];
+
         $data = [];
         if ($request->has('nom')) {
             $data['nom'] = trim($request->nom);
@@ -527,6 +740,21 @@ class UtilisateursController extends Controller
             Direction::where('id', $id)->update($data);
         }
 
+        // ── AUDIT : modification d'une direction ─────────────────────────────
+        if (!empty($data)) {
+            JournalAudit::tracer(
+                auth()->id(),
+                'UPDATE',
+                'directions',
+                (string) $id,
+                $avant,
+                $data,
+                "Modification de la direction \"{$avant['nom']}\""
+                    . (isset($data['nom']) && $data['nom'] !== $avant['nom'] ? " → \"{$data['nom']}\"" : '')
+            );
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'success' => true,
             'message' => 'Direction modifiée avec succès.',
@@ -536,7 +764,7 @@ class UtilisateursController extends Controller
 
     public function destroyDirection(int $id): JsonResponse
     {
-        Direction::where('est_supprime', 0)->findOrFail($id);
+        $direction = Direction::where('est_supprime', 0)->findOrFail($id);
 
         $nbUsers = Utilisateur::where('direction_id', $id)->where('est_supprime', 0)->count();
         if ($nbUsers > 0) {
@@ -561,6 +789,18 @@ class UtilisateursController extends Controller
             'est_supprime'     => 1,
             'date_suppression' => now(),
         ]);
+
+        // ── AUDIT : suppression d'une direction ──────────────────────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            'DELETE',
+            'directions',
+            (string) $id,
+            ['nom' => $direction->nom, 'reference' => $direction->reference],
+            null,
+            "Suppression de la direction \"{$direction->nom}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json(['success' => true, 'message' => 'Direction supprimée avec succès.']);
     }
@@ -590,10 +830,23 @@ class UtilisateursController extends Controller
             }
         }
 
-        $newSupprime = $direction->est_supprime ? 0 : 1;
+        $ancienSupprime = (bool) $direction->est_supprime;
+        $newSupprime    = $direction->est_supprime ? 0 : 1;
         Direction::where('id', $id)->update(['est_supprime' => $newSupprime]);
 
         $label = $newSupprime ? 'désactivée' : 'activée';
+
+        // ── AUDIT : activation / désactivation d'une direction ──────────────
+        JournalAudit::tracer(
+            auth()->id(),
+            $newSupprime ? 'BLOQUER' : 'DEBLOQUER',
+            'directions',
+            (string) $id,
+            ['est_supprime' => $ancienSupprime],
+            ['est_supprime' => (bool) $newSupprime],
+            ($newSupprime ? 'Désactivation' : 'Activation') . " de la direction \"{$direction->nom}\""
+        );
+        // ─────────────────────────────────────────────────────────────────────
 
         return response()->json([
             'success' => true,
