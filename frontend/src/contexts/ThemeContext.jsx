@@ -146,9 +146,12 @@ export const ThemeProvider = ({ children }) => {
     await appliquerTheme(themeId); // PUT /admin/parametres/theme/{id}/appliquer
 
     // Mettre à jour l'état local : est_applique=1 sur lui, 0 sur les autres
-    setThemes(prev => prev.map(t => ({ ...t, est_applique: t.id === themeId })));
-    const nouvelActif = themes.find(t => t.id === themeId);
-    if (nouvelActif) setThemeActif({ ...nouvelActif, est_applique: true });
+    setThemes(prev => {
+      const nouvelleListe = prev.map(t => ({ ...t, est_applique: t.id === themeId }));
+      const nouvelActif = nouvelleListe.find(t => t.id === themeId);
+      if (nouvelActif) setThemeActif({ ...nouvelActif, est_applique: true });
+      return nouvelleListe;
+    });
   };
 
   // ── Créer un thème custom + l'ajouter à la liste ─────────────────────────

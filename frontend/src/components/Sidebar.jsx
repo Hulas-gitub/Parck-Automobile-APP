@@ -5,6 +5,10 @@ import Swal from 'sweetalert2';
 import api from '../api/Auth/axios-login';
 import logoUrl from '../assets/logo.png';
 
+// Rayons des courbes concaves de l'onglet actif
+const TAB_RADIUS = 12; // items principaux
+const SUB_RADIUS = 10; // items de sous-menu
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes des rôles
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,6 +19,7 @@ const ROLES = {
   MECANICIEN: 'mecanicien',
   AGENT_PC:   'agent_pc_radio',
   CHAUFFEUR:  'chauffeur',
+  DALL:       'daal',
 };
 
 const ALL_ROLES = Object.values(ROLES);
@@ -23,79 +28,70 @@ const ALL_ROLES = Object.values(ROLES);
 // Menu
 // ─────────────────────────────────────────────────────────────────────────────
 const buildMenuItems = (navigate) => [
-
   {
     items: [
       {
         icon: 'bi-speedometer2',
         label: 'Tableau de bord',
-        path: '/Admin/Navigation/Dashboard',
-        onClick: () => navigate('/Admin/Navigation/Dashboard'),
-        roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
-     
+        path: '/Navigation/Dashboard',
+        onClick: () => navigate('/Navigation/Dashboard'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC,ROLES.DALL],
       },
     ],
   },
 
+  
   {
     items: [
       {
         icon: 'bi-car-front-fill',
         label: 'Gestion des véhicules',
-        path: '/Admin/Navigation/Vehicules',
-        onClick: () => navigate('/Admin/Navigation/Vehicules'),
-        roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
+        path: '/Navigation/Vehicules',
+        onClick: () => navigate('/Navigation/Vehicules'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC, ROLES.DALL],
       },
     ],
   },
-
   {
     items: [
       {
         icon: 'bi-truck-front-fill',
         label: 'Documents de véhicules',
-        path: '/Admin/Navigation/HistoriqueVehicule',
-        onClick: () => navigate('/Admin/Navigation/HistoriqueVehicule'),
-        roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
+        path: '/Navigation/HistoriqueVehicule',
+        onClick: () => navigate('/Navigation/HistoriqueVehicule'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC, ROLES.DALL],
       },
     ],
   },
-
   {
     items: [
       {
         icon: 'bi-fuel-pump-fill',
         label: 'Carnet de carburant',
-        path: '/Admin/Navigation/CarnetCarburant',
-        onClick: () => navigate('/Admin/Navigation/CarnetCarburant'),
-        roles: [ROLES.ADMIN],
+        path: '/Navigation/CarnetCarburant',
+        onClick: () => navigate('/Navigation/CarnetCarburant'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
       },
     ],
   },
-
-
-
-
   {
     items: [
       {
         icon: 'bi-people-fill',
         label: 'Gestion des utilisateurs',
-        path: '/Admin/Navigation/Utilisateurs',
-        onClick: () => navigate('/Admin/Navigation/Utilisateurs'),
+        path: '/Navigation/Utilisateurs',
+        onClick: () => navigate('/Navigation/Utilisateurs'),
         roles: [ROLES.ADMIN],
       },
     ],
   },
-
-
   {
     items: [
       {
         icon: 'bi-person-badge-fill',
         label: 'Gestion des chauffeurs',
-        path: '/Admin/Navigation/Chauffeurs',
-        onClick: () => navigate('/Admin/Navigation/Chauffeurs'),
+        path: '/Navigation/Chauffeurs',
+        onClick: () => navigate('/Navigation/Chauffeurs'),
         roles: [ROLES.ADMIN],
       },
     ],
@@ -105,9 +101,9 @@ const buildMenuItems = (navigate) => [
       {
         icon: 'bi-clipboard-check-fill',
         label: 'Interventions',
-        path: '/Admin/Navigation/Interventions',
-        onClick: () => navigate('/Admin/Navigation/Interventions'),
-        roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
+        path: '/Navigation/Interventions',
+        onClick: () => navigate('/Navigation/Interventions'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC, ROLES.DALL],
       },
     ],
   },
@@ -116,8 +112,8 @@ const buildMenuItems = (navigate) => [
       {
         icon: 'bi-wrench-adjustable-circle-fill',
         label: 'Inspection de véhicules',
-        path: '/Admin/Navigation/InspectionVehicules',
-        onClick: () => navigate('/Admin/Navigation/InspectionVehicules'),
+        path: '/Navigation/InspectionVehicules',
+        onClick: () => navigate('/Navigation/InspectionVehicules'),
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
       },
     ],
@@ -127,8 +123,8 @@ const buildMenuItems = (navigate) => [
       {
         icon: 'bi-box-seam-fill',
         label: 'Fournisseurs & Outils',
-        path: '/Admin/Navigation/FournisseursOutils',
-        onClick: () => navigate('/Admin/Navigation/FournisseursOutils'),
+        path: '/Navigation/FournisseursOutils',
+        onClick: () => navigate('/Navigation/FournisseursOutils'),
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
       },
     ],
@@ -146,18 +142,16 @@ const buildMenuItems = (navigate) => [
           {
             label: 'Historique de connexion',
             icon: 'bi-clock-fill',
-            path: '/Admin/Navigation/HistoriqueConnexion',
-            onClick: () => navigate('/Admin/Navigation/HistoriqueConnexion'),
+            path: '/Navigation/HistoriqueConnexion',
+            onClick: () => navigate('/Navigation/HistoriqueConnexion'),
           },
-
           {
             label: 'Activité du système',
             icon: 'bi-file-earmark-bar-graph-fill',
-            path: '/Admin/Navigation/ActiviteSysteme',
-            onClick: () => navigate('/Admin/Navigation/ActiviteSysteme'),
+            path: '/Navigation/ActiviteSysteme',
+            onClick: () => navigate('/Navigation/ActiviteSysteme'),
             roles: [ROLES.ADMIN],
           },
-
         ],
       },
     ],
@@ -173,37 +167,60 @@ const buildMenuItems = (navigate) => [
         roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
         submenu: [
           {
-            label: 'Missions',
+            label: 'Missions brousses',
             icon: 'bi-briefcase-fill',
-            path: '/Admin/Navigation/Missions',
-            onClick: () => navigate('/Admin/Navigation/Missions'),
+            path: '/Navigation/Missions',
+            onClick: () => navigate('/Navigation/Missions'),
             roles: [ROLES.ADMIN],
           },
           {
-            label: 'Accidents',
-            icon: 'bi-cone-striped',
-            path: '/Admin/Navigation/Accidents',
-            onClick: () => navigate('/Admin/Navigation/Accidents'),
-            roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
+            label: 'Transports de Fonds',
+            icon: 'bi-con-striped',
+            path: '/Navigation/TransportsFonds',
+            onClick: () => navigate('/Navigation/TransportsFonds'),
+            roles: [ROLES.ADMIN, ROLES.CHEF_TF],
           },
-          {
-            label: "Demande d'Intervention",
-            icon: 'bi-file-earmark-bar-graph-fill',
-            path: '/Admin/Navigation/DemandesInterventions',
-            onClick: () => navigate('/Admin/Navigation/DemandesInterventions'),
-            roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
-          },
-          {
-            label: 'Intervention de Vehicules',
-            icon: 'bi-file-earmark-bar-graph-fill',
-            path: '/Admin/Navigation/InterventionsVehicules',
-            onClick: () => navigate('/Admin/Navigation/InterventionsVehicules'),
-            roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
-          },
-        ],
+        ]
       },
     ],
   },
+
+{
+  items: [
+    {
+      label:' Accidents',
+      icon: 'bi-cone-striped',
+      path: '/Navigation/Accidents',
+      onClick: () => navigate('/Navigation/Accidents'),
+      roles: [ROLES.ADMIN, ROLES.CHEF_PARC,],
+    }
+  ]
+},  
+
+{
+  items: [
+    {
+      label: 'Damandes d\'interventions',
+      icon: 'bi-file-earmark-bar-graph-fill',
+      path: '/Navigation/DemandesInterventions',
+      onClick: () => navigate('/Navigation/DemandesInterventions'),
+      roles: [ROLES.ADMIN, ROLES.CHEF_PARC,ROLES.DALL],
+    }
+  ]
+},
+
+{
+  items: [
+    {
+      label: 'Interventions enrégistrées',
+      icon: 'bi-fuel-pump-fill',
+      path: '/Navigation/InterventionsVehicules',
+      onClick: () => navigate('/Navigation/InterventionsVehicules'),
+      roles: [ROLES.ADMIN, ROLES.CHEF_PARC,ROLES.DALL],
+    }
+  ]
+},
+
   {
     section: 'ANALYSES & STATISTIQUES',
     items: [
@@ -217,24 +234,33 @@ const buildMenuItems = (navigate) => [
           {
             label: 'Inventaire véhicules',
             icon: 'bi-briefcase-fill',
-            path: '/Admin/Navigation/InventaireVehicules',
-            onClick: () => navigate('/Admin/Navigation/InventaireVehicules'),
+            path: '/Navigation/InventaireVehicules',
+            onClick: () => navigate('/Navigation/InventaireVehicules'),
             roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
           },
           {
             label: "État stock d'outil",
             icon: 'bi-cone-striped',
-            path: '/Admin/Navigation/EtatStock',
-            onClick: () => navigate('/Admin/Navigation/EtatStock'),
+            path: '/Navigation/EtatStock',
+            onClick: () => navigate('/Navigation/EtatStock'),
             roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
           },
         ],
       },
     ],
   },
-
-
 {
+   items: [
+      {
+        icon: 'bi-file-earmark-bar-graph-fill',
+        label: "Rapport d'activités",
+        path: '/Navigation/RapportActivites',
+        onClick: () => navigate('/Navigation/RapportActivites'),
+        roles: [ROLES.ADMIN, ROLES.DALL],
+      },
+    ],
+  },
+  {
     items: [
       {
         icon: 'bi-bell-fill',
@@ -245,23 +271,30 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
-  
-
-
-  
-{
+  {
     items: [
       {
         icon: 'bi-palette-fill',
         label: 'Thème',
-        path: '/Admin/Navigation/Theme',
-        onClick: () => navigate('/Admin/Navigation/Theme'),
+        path: '/Navigation/Theme',
+        onClick: () => navigate('/Navigation/Theme'),
         roles: [ROLES.ADMIN],
       },
     ],
   },
-  
 
+/*{
+  items:[
+    {
+      icon:'bi-gearbox-fill',
+      label:'Configuration', 
+      path:'Navigation/Configuration',
+      onClick:() => navigate('Navigation/Configuration'),
+      roles:[ROLES.ADMIN],
+    } 
+  ]
+},
+*/
   {
     items: [
       {
@@ -273,10 +306,35 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
-
-
-
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Courbes concaves de l'onglet actif (haut + bas, collées au bord droit)
+// ─────────────────────────────────────────────────────────────────────────────
+const TabCorners = ({ radius, color }) => (
+  <>
+    <span
+      aria-hidden="true"
+      style={{
+        position: 'absolute', right: 0, top: `-${radius}px`,
+        width: radius, height: radius,
+        borderBottomRightRadius: radius,
+        boxShadow: `${radius / 2}px ${radius / 2}px 0 ${radius / 2}px ${color}`,
+        pointerEvents: 'none',
+      }}
+    />
+    <span
+      aria-hidden="true"
+      style={{
+        position: 'absolute', right: 0, bottom: `-${radius}px`,
+        width: radius, height: radius,
+        borderTopRightRadius: radius,
+        boxShadow: `${radius / 2}px -${radius / 2}px 0 ${radius / 2}px ${color}`,
+        pointerEvents: 'none',
+      }}
+    />
+  </>
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Skeleton Loader
@@ -287,7 +345,7 @@ const SkeletonItem = ({ darkMode, delay }) => (
       width: '18px', height: '18px', borderRadius: '6px', flexShrink: 0,
       background: darkMode
         ? 'linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%)'
-        : 'linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%)',
+        : 'linear-gradient(90deg, #dfe2e7 25%, #eef0f3 50%, #dfe2e7 75%)',
       backgroundSize: '200% 100%',
       animation: `skeletonShimmer 1.6s ease-in-out infinite`,
       animationDelay: `${delay}ms`,
@@ -296,7 +354,7 @@ const SkeletonItem = ({ darkMode, delay }) => (
       height: '11px', borderRadius: '4px', flex: 1, maxWidth: `${50 + (delay % 35)}%`,
       background: darkMode
         ? 'linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%)'
-        : 'linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%)',
+        : 'linear-gradient(90deg, #dfe2e7 25%, #eef0f3 50%, #dfe2e7 75%)',
       backgroundSize: '200% 100%',
       animation: `skeletonShimmer 1.6s ease-in-out infinite`,
       animationDelay: `${delay + 120}ms`,
@@ -306,7 +364,7 @@ const SkeletonItem = ({ darkMode, delay }) => (
 
 const SidebarSkeleton = ({ darkMode }) => (
   <div style={{ padding: '4px 0' }}>
-    {[0,1,2,3,4,5,6,7,8].map((i) => (
+    {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
       <SkeletonItem key={i} darkMode={darkMode} delay={i * 90} />
     ))}
   </div>
@@ -324,30 +382,43 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
   const [userRole,  setUserRole]  = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [menuReady, setMenuReady] = useState(false);
+  const [openMenus, setOpenMenus] = useState({ configuration: false, audit: false, analyses: false, statistiques: false });
 
   useEffect(() => {
+    let cancelled = false;
+    const MAX_SKELETON_MS = 1200; // durée max d'affichage du skeleton (< 3s)
+
+    let hasCachedUser = false;
     const stored = localStorage.getItem('user');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
         setUser(parsed);
         setUserRole(parsed?.role?.code ?? null);
+        hasCachedUser = !!parsed?.role?.code;
       } catch {
         setUser(null);
         setUserRole(null);
       }
     }
 
-    const finish = () => {
-      setTimeout(() => {
-        setIsLoading(false);
-        requestAnimationFrame(() => setMenuReady(true));
-      }, 550);
+    const showMenu = () => {
+      if (cancelled) return;
+      setIsLoading(false);
+      requestAnimationFrame(() => !cancelled && setMenuReady(true));
     };
 
+    // Utilisateur déjà en cache : on affiche le menu immédiatement, sans skeleton
+    if (hasCachedUser) showMenu();
+
+    // Sinon : skeleton, avec une limite de temps stricte
+    const capTimer = hasCachedUser ? null : setTimeout(showMenu, MAX_SKELETON_MS);
+
     if (localStorage.getItem('token')) {
-      api.get('/user')
+      // Rafraîchissement en arrière-plan (n'attend plus 550ms supplémentaires)
+      api.get('/user', { timeout: 5000 })
         .then(res => {
+          if (cancelled) return;
           if (res.data.success) {
             setUser(res.data.user);
             setUserRole(res.data.user?.role?.code ?? null);
@@ -355,18 +426,36 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
           }
         })
         .catch(() => {})
-        .finally(finish);
-    } else {
-      finish();
+        .finally(() => {
+          if (!hasCachedUser) showMenu();
+        });
+    } else if (!hasCachedUser) {
+      showMenu();
     }
+
+    return () => {
+      cancelled = true;
+      if (capTimer) clearTimeout(capTimer);
+    };
   }, []);
 
-  const isVisible    = (item) => {
+  // Ouvre automatiquement le sous-menu qui contient la page courante
+  useEffect(() => {
+    const toOpen = {};
+    buildMenuItems(() => {})
+      .flatMap(s => s.items)
+      .forEach(it => {
+        if (it.submenu?.some(s => s.path === location.pathname)) toOpen[it.key] = true;
+      });
+    if (Object.keys(toOpen).length) setOpenMenus(prev => ({ ...prev, ...toOpen }));
+  }, [location.pathname]);
+
+  const isVisible = (item) => {
     if (!item.roles) return true;
     if (!userRole)   return false;
     return item.roles.includes(userRole);
   };
-  const filterSubmenu = (submenu) => submenu ? submenu.filter(isVisible) : [];
+  const filterSubmenu = (submenu) => (submenu ? submenu.filter(isVisible) : []);
   const getInitials   = (nom) => {
     if (!nom) return '?';
     return nom.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2);
@@ -390,7 +479,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
     }).then((result) => {
       if (result.isConfirmed) {
         api.post('/logout').catch(() => {}).finally(() => {
-          ['token','user','remember_me','expires_at'].forEach(k => localStorage.removeItem(k));
+          ['token', 'user', 'remember_me', 'expires_at'].forEach(k => localStorage.removeItem(k));
           Swal.fire({
             background: darkMode ? '#111827' : '#ffffff',
             color: darkMode ? '#f1f5f9' : '#111827',
@@ -404,51 +493,70 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
     });
   };
 
-  const [openMenus, setOpenMenus] = useState({ configuration: false, audit: false, analyses: false, statistiques: false });
   const toggleMenu = (key) => setOpenMenus(prev => ({ ...prev, [key]: !prev[key] }));
-  const isActive   = (path) => path && location.pathname === path;
   const menuItems  = buildMenuItems(navigate);
+
+  // Page sélectionnée par défaut quand l'URL ne correspond à aucun élément du menu
+  const DEFAULT_PATH = '/Navigation/Dashboard';
+  const currentPath  = location.pathname.replace(/\/+$/, '') || '/';
+  const allPaths     = menuItems
+    .flatMap(sec => sec.items)
+    .flatMap(it => [it.path, ...(it.submenu || []).map(sub => sub.path)])
+    .filter(Boolean);
+  const hasMatch     = allPaths.includes(currentPath);
+  const isActive     = (path) =>
+    !!path && (currentPath === path || (!hasMatch && path === DEFAULT_PATH));
+
+  const lineColor = darkMode ? '#1e293b' : '#f1f5f9';
+  // Couleur du bord droit de l'onglet : les courbes s'y raccordent
+  const tabColor  = theme.primaryDark;
 
   // Index global pour décaler les animations item par item
   let gi = 0;
 
-  // Styles partagés
-  const cardBase = (active) => ({
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: sidebarCollapsed ? '10px' : '9px 12px',
-    borderRadius: '10px',
-    marginBottom: '3px',
-    cursor: 'pointer',
-    border: 'none',
-    position: 'relative',
-    justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-    transition: 'all 0.22s cubic-bezier(0.22, 1, 0.36, 1)',
-    ...(active ? {
-      background: `linear-gradient(135deg, ${theme.primary}f0, ${theme.primaryDark}e0)`,
-      color: '#ffffff',
-      boxShadow: `0 4px 16px ${theme.primary}45`,
-    } : {
-      background: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
-      color: darkMode ? '#94a3b8' : '#64748b',
-      boxShadow: darkMode
-        ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 3px rgba(0,0,0,0.25)'
-        : 'inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.07)',
-      border: `1px solid ${darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.07)'}`,
-    }),
-  });
+  // ── Style bouton principal ──
+  const cardBase = (active) => {
+    const padV = sidebarCollapsed ? 10 : 9;
+    const padH = sidebarCollapsed ? 10 : 12;
+    return {
+      width: active ? '100%' : `calc(100% - ${TAB_RADIUS}px)`,
+      boxSizing: 'border-box',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      // le padding droit compense l'extension de l'onglet : le contenu ne bouge pas
+      padding: `${padV}px ${padH + (active ? TAB_RADIUS : 0)}px ${padV}px ${padH}px`,
+      marginBottom: '3px',
+      cursor: 'pointer',
+      border: 'none',
+      position: 'relative',
+      justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+      transition: 'all 0.22s cubic-bezier(0.22, 1, 0.36, 1)',
+      ...(active ? {
+        background: `linear-gradient(90deg, ${theme.primary}, ${theme.primaryDark})`,
+        color: '#ffffff',
+        borderRadius: `${TAB_RADIUS}px 0 0 ${TAB_RADIUS}px`,
+        boxShadow: 'none',
+      } : {
+        borderRadius: '10px',
+        background: darkMode ? 'rgba(255,255,255,0.04)' : 'transparent',
+        color: darkMode ? '#94a3b8' : '#4b5563',
+        boxShadow: darkMode
+          ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 3px rgba(0,0,0,0.25)'
+          : 'none',
+        border: `1px solid ${darkMode ? 'rgba(255,255,255,0.06)' : 'transparent'}`,
+      }),
+    };
+  };
 
   return (
     <aside
       style={{
-        width: sidebarCollapsed ? '80px' : '288px',
+        width: sidebarCollapsed ? '72px' : '240px',
         transition: 'width 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
         background: darkMode
           ? 'linear-gradient(175deg, #0f172a 0%, #111827 55%, #0d1520 100%)'
-          : 'linear-gradient(175deg, #ffffff 0%, #f8fafc 55%, #f1f5f9 100%)',
-        borderRight: `1px solid ${darkMode ? '#1e293b' : '#e2e8f0'}`,
+          : '#ffffff',
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -456,8 +564,17 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
         left: 0,
         top: 0,
         zIndex: 40,
+        boxShadow: darkMode ? 'none' : '2px 0 12px rgba(15,23,42,0.06)',
       }}
     >
+      {/* Bordure droite (passe derrière l'onglet actif) */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute', top: 0, right: 0, bottom: 0, width: '1px',
+          background: lineColor, zIndex: 0, pointerEvents: 'none',
+        }}
+      />
 
       {/* ══ Styles globaux ══ */}
       <style>{`
@@ -477,20 +594,24 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
           from { opacity: 0; transform: translateY(-6px) scaleY(0.94); }
           to   { opacity: 1; transform: translateY(0) scaleY(1); }
         }
-        @keyframes popIn {
-          0%   { opacity: 0; transform: scale(0.93) translateX(-6px); }
-          65%  { transform: scale(1.015) translateX(1px); }
-          100% { opacity: 1; transform: scale(1) translateX(0); }
+        @keyframes tabIn {
+          from { opacity: 0.6; }
+          to   { opacity: 1; }
         }
-        .sb-item-enter { animation: slideInLeft 0.32s cubic-bezier(0.22,1,0.36,1) both; }
-        .sb-item-active { animation: popIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
+        .sb-item-enter  { animation: slideInLeft 0.32s cubic-bezier(0.22,1,0.36,1) both; }
+        .sb-item-active { animation: tabIn 0.25s ease both; }
         .sb-submenu     { animation: submenuOpen 0.22s cubic-bezier(0.22,1,0.36,1) both; transform-origin: top; }
         .sb-section     { animation: fadeInDown 0.35s ease both; }
         .sb-logo-area   { animation: fadeInDown 0.4s ease both; }
-        .sb-nav-btn:hover { transform: translateX(3px) !important; }
+        .sb-nav-btn:hover  { transform: translateX(3px) !important; }
         .sb-nav-btn:active { transform: translateX(3px) scale(0.97) !important; }
         .sb-sub-btn:hover  { transform: translateX(4px) !important; }
         .sb-sub-btn:active { transform: translateX(4px) scale(0.97) !important; }
+        /* L'onglet actif ne bouge pas : il reste collé au bord */
+        .sb-nav-btn.sb-item-active:hover,
+        .sb-nav-btn.sb-item-active:active,
+        .sb-sub-btn.sb-sub-active:hover,
+        .sb-sub-btn.sb-sub-active:active { transform: none !important; }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .swal-logout-popup   { border-radius: 16px !important; }
         .swal-logout-confirm { border-radius: 10px !important; font-weight: 600 !important; padding: 10px 24px !important; }
@@ -501,7 +622,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
       {/* ══ HEADER logo + toggle ══ */}
       <div style={{
         padding: '14px 12px',
-        borderBottom: `1px solid ${darkMode ? '#1e293b' : '#e2e8f0'}`,
+        borderBottom: `1px solid ${lineColor}`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: sidebarCollapsed ? 'center' : 'space-between',
@@ -509,7 +630,6 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
         gap: '8px',
       }}>
         <div className="sb-logo-area" style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-          {/* Contenant logo */}
           <div style={{
             padding: '7px',
             borderRadius: '10px',
@@ -521,25 +641,24 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
           </div>
           {!sidebarCollapsed && (
             <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: darkMode ? '#f1f5f9' : '#0f172a', whiteSpace: 'nowrap', letterSpacing: '0.01em' }}>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: darkMode ? '#f1f5f9' : '#0f172a', whiteSpace: 'nowrap', letterSpacing: '0.01em' }}>
                 Fleetify Management
               </div>
-              <div style={{ fontSize: '9.5px', color: darkMode ? '#475569' : '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: '1px' }}>
+              <div style={{ fontSize: '10.5px', color: darkMode ? '#475569' : '#6b7280', letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: '1px' }}>
                 Gestion de parc auto
               </div>
             </div>
           )}
         </div>
 
-        {/* Toggle button */}
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           style={{
             padding: '6px 7px',
             borderRadius: '8px',
-            border: `1px solid ${darkMode ? '#1e293b' : '#e2e8f0'}`,
+            border: `1px solid ${lineColor}`,
             background: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.03)',
-            color: darkMode ? '#475569' : '#94a3b8',
+            color: darkMode ? '#475569' : '#6b7280',
             cursor: 'pointer',
             flexShrink: 0,
             display: 'flex',
@@ -549,7 +668,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
             marginLeft: sidebarCollapsed ? 'auto' : '0',
           }}
           onMouseEnter={e => { e.currentTarget.style.background = darkMode ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.08)'; e.currentTarget.style.color = darkMode ? '#94a3b8' : '#475569'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.03)'; e.currentTarget.style.color = darkMode ? '#475569' : '#94a3b8'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.03)'; e.currentTarget.style.color = darkMode ? '#475569' : '#6b7280'; }}
         >
           <i className={sidebarCollapsed ? 'bi bi-list' : 'bi bi-x-lg'} style={{ fontSize: sidebarCollapsed ? '16px' : '13px' }} />
         </button>
@@ -558,10 +677,20 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
       {/* ══ NAVIGATION ══ */}
       <nav
         className="scrollbar-hide"
-        style={{ flex: 1, overflowY: 'auto', padding: '10px 8px', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: `${TAB_RADIUS + 2}px 0 ${TAB_RADIUS + 2}px 8px`,
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+          position: 'relative',
+          zIndex: 1,
+        }}
       >
         {isLoading ? (
-          <SidebarSkeleton darkMode={darkMode} />
+          <div style={{ paddingRight: '8px' }}>
+            <SidebarSkeleton darkMode={darkMode} />
+          </div>
         ) : (
           menuItems.map((section, sIdx) => {
             const visibleItems = section.items.filter(isVisible);
@@ -575,11 +704,11 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                   <div
                     className="sb-section"
                     style={{
-                      fontSize: '9px',
+                      fontSize: '10.5px',
                       fontWeight: 700,
                       letterSpacing: '0.14em',
                       textTransform: 'uppercase',
-                      color: darkMode ? '#2d3f55' : '#c8d5e3',
+                      color: darkMode ? '#2d3f55' : '#8b929e',
                       padding: '0 10px',
                       marginBottom: '5px',
                       animationDelay: `${sIdx * 35}ms`,
@@ -590,66 +719,59 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                 )}
 
                 {visibleItems.map((item, iIdx) => {
-                  const delay       = menuReady ? gi++ * 42 : 0;
-                  const itemActive  = isActive(item.path);
-                  const visibleSub  = filterSubmenu(item.submenu);
+                  const delay      = menuReady ? gi++ * 42 : 0;
+                  const itemActive = isActive(item.path);
+                  const visibleSub = filterSubmenu(item.submenu);
+                  const isOpen     = !!openMenus[item.key];
 
                   return (
                     <div
                       key={iIdx}
                       className="sb-item-enter"
-                      style={{ animationDelay: `${delay}ms` }}
+                      style={{
+                        animationDelay: `${delay}ms`,
+                        position: 'relative',
+                        zIndex: itemActive ? 2 : 1,
+                      }}
                     >
                       {/* ── Bouton principal ── */}
                       <button
                         className={`sb-nav-btn ${itemActive ? 'sb-item-active' : ''}`}
-                        onClick={() => item.hasSubmenu ? toggleMenu(item.key) : item.onClick?.()}
+                        onClick={() => (item.hasSubmenu ? toggleMenu(item.key) : item.onClick?.())}
                         style={cardBase(itemActive)}
                         onMouseEnter={e => {
                           if (!itemActive) {
                             Object.assign(e.currentTarget.style, {
-                              background: darkMode ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.07)',
-                              color: darkMode ? '#e2e8f0' : '#1e293b',
-                              borderColor: darkMode ? 'rgba(255,255,255,0.11)' : 'rgba(15,23,42,0.11)',
-                              boxShadow: darkMode
-                                ? 'inset 0 1px 0 rgba(255,255,255,0.07), 0 2px 10px rgba(0,0,0,0.35)'
-                                : 'inset 0 1px 0 rgba(255,255,255,1), 0 2px 10px rgba(0,0,0,0.1)',
+                              background: darkMode ? 'rgba(255,255,255,0.09)' : '#f8fafc',
+                              color: darkMode ? '#e2e8f0' : '#111827',
+                              borderColor: darkMode ? 'rgba(255,255,255,0.11)' : '#f1f5f9',
+                              boxShadow: 'none',
                             });
                           }
                         }}
                         onMouseLeave={e => {
                           if (!itemActive) {
                             Object.assign(e.currentTarget.style, {
-                              background: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
-                              color: darkMode ? '#94a3b8' : '#64748b',
-                              borderColor: darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.07)',
-                              boxShadow: darkMode
-                                ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 3px rgba(0,0,0,0.25)'
-                                : 'inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.07)',
+                              background: darkMode ? 'rgba(255,255,255,0.04)' : 'transparent',
+                              color: darkMode ? '#94a3b8' : '#4b5563',
+                              borderColor: darkMode ? 'rgba(255,255,255,0.06)' : 'transparent',
+                              boxShadow: 'none',
                             });
                           }
                         }}
                       >
-                        {/* Barre indicateur active */}
-                        {itemActive && (
-                          <span style={{
-                            position: 'absolute', left: 0, top: '50%',
-                            transform: 'translateY(-50%)',
-                            width: '3px', height: '55%',
-                            background: 'rgba(255,255,255,0.55)',
-                            borderRadius: '0 3px 3px 0',
-                          }} />
-                        )}
+                        {/* Courbes concaves de l'onglet actif */}
+                        {itemActive && <TabCorners radius={TAB_RADIUS} color={tabColor} />}
 
                         <i
                           className={item.icon}
-                          style={{ fontSize: '1.1rem', flexShrink: 0, opacity: itemActive ? 1 : 0.75, transition: 'opacity 0.2s' }}
+                          style={{ fontSize: '1.25rem', flexShrink: 0, opacity: itemActive ? 1 : 0.75, transition: 'opacity 0.2s' }}
                         />
 
                         {!sidebarCollapsed && (
                           <>
                             <span style={{
-                              flex: 1, textAlign: 'left', fontSize: '13px',
+                              flex: 1, textAlign: 'left', fontSize: '14.5px',
                               fontWeight: itemActive ? 600 : 500,
                               letterSpacing: '0.01em',
                               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -660,9 +782,9 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                               <i
                                 className="bi bi-chevron-down"
                                 style={{
-                                  fontSize: '10px', flexShrink: 0, opacity: 0.5,
+                                  fontSize: '12px', flexShrink: 0, opacity: 0.5,
                                   transition: 'transform 0.25s cubic-bezier(0.22,1,0.36,1)',
-                                  transform: openMenus[item.key] ? 'rotate(-180deg)' : 'rotate(0deg)',
+                                  transform: isOpen ? 'rotate(-180deg)' : 'rotate(0deg)',
                                 }}
                               />
                             )}
@@ -671,7 +793,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                       </button>
 
                       {/* ── Sous-menu ── */}
-                      {!sidebarCollapsed && item.hasSubmenu && openMenus[item.key] && visibleSub.length > 0 && (
+                      {!sidebarCollapsed && item.hasSubmenu && isOpen && visibleSub.length > 0 && (
                         <div
                           className="sb-submenu"
                           style={{
@@ -679,66 +801,74 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                             marginTop: '2px',
                             marginBottom: '4px',
                             paddingLeft: '12px',
+                            paddingRight: 0,
                             borderLeft: `1px solid ${darkMode ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.08)'}`,
                           }}
                         >
                           {visibleSub.map((sub, subIdx) => {
-                            const subActive = isActive(sub.path);
+                            const sActive = isActive(sub.path);
                             return (
                               <button
                                 key={subIdx}
-                                className="sb-sub-btn"
+                                className={`sb-sub-btn ${sActive ? 'sb-sub-active' : ''}`}
                                 onClick={() => sub.onClick?.()}
                                 style={{
-                                  width: '100%',
+                                  width: sActive ? '100%' : `calc(100% - ${SUB_RADIUS}px)`,
+                                  boxSizing: 'border-box',
                                   display: 'flex', alignItems: 'center', gap: '8px',
-                                  padding: '7px 10px',
-                                  borderRadius: '8px',
+                                  padding: `7px ${10 + (sActive ? SUB_RADIUS : 0)}px 7px 10px`,
                                   marginBottom: '2px',
                                   cursor: 'pointer',
                                   border: 'none',
-                                  fontSize: '12.5px',
-                                  fontWeight: subActive ? 600 : 400,
+                                  position: 'relative',
+                                  fontSize: '14px',
+                                  fontWeight: sActive ? 600 : 400,
                                   letterSpacing: '0.01em',
                                   transition: 'all 0.18s cubic-bezier(0.22,1,0.36,1)',
                                   animation: `slideInLeft 0.25s cubic-bezier(0.22,1,0.36,1) ${subIdx * 35}ms both`,
-                                  ...(subActive ? {
-                                    background: `linear-gradient(135deg, ${theme.primary}cc, ${theme.primaryDark}bb)`,
+                                  zIndex: sActive ? 2 : 1,
+                                  ...(sActive ? {
+                                    background: `linear-gradient(90deg, ${theme.primary}, ${theme.primaryDark})`,
                                     color: '#ffffff',
-                                    boxShadow: `0 2px 10px ${theme.primary}35`,
+                                    borderRadius: `${SUB_RADIUS}px 0 0 ${SUB_RADIUS}px`,
+                                    boxShadow: 'none',
                                   } : {
-                                    background: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.025)',
-                                    color: darkMode ? '#64748b' : '#94a3b8',
-                                    border: `1px solid ${darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.05)'}`,
+                                    borderRadius: '8px',
+                                    background: darkMode ? 'rgba(255,255,255,0.03)' : 'transparent',
+                                    color: darkMode ? '#64748b' : '#6b7280',
+                                    border: `1px solid ${darkMode ? 'rgba(255,255,255,0.04)' : 'transparent'}`,
                                   }),
                                 }}
                                 onMouseEnter={e => {
-                                  if (!subActive) {
+                                  if (!sActive) {
                                     Object.assign(e.currentTarget.style, {
-                                      background: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.07)',
-                                      color: darkMode ? '#cbd5e1' : '#334155',
-                                      borderColor: darkMode ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.1)',
+                                      background: darkMode ? 'rgba(255,255,255,0.08)' : '#f8fafc',
+                                      color: darkMode ? '#cbd5e1' : '#111827',
+                                      borderColor: darkMode ? 'rgba(255,255,255,0.09)' : '#f1f5f9',
                                     });
                                   }
                                 }}
                                 onMouseLeave={e => {
-                                  if (!subActive) {
+                                  if (!sActive) {
                                     Object.assign(e.currentTarget.style, {
-                                      background: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.025)',
-                                      color: darkMode ? '#64748b' : '#94a3b8',
-                                      borderColor: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.05)',
+                                      background: darkMode ? 'rgba(255,255,255,0.03)' : 'transparent',
+                                      color: darkMode ? '#64748b' : '#6b7280',
+                                      borderColor: darkMode ? 'rgba(255,255,255,0.04)' : 'transparent',
                                     });
                                   }
                                 }}
                               >
+                                {/* Courbes concaves du sous-onglet actif */}
+                                {sActive && <TabCorners radius={SUB_RADIUS} color={tabColor} />}
+
                                 {/* Dot */}
                                 <span style={{
                                   width: '5px', height: '5px',
                                   borderRadius: '50%', flexShrink: 0,
                                   transition: 'transform 0.2s ease, background 0.2s ease',
-                                  background: subActive ? 'rgba(255,255,255,0.8)' : (darkMode ? '#2d3f55' : '#cbd5e1'),
+                                  background: sActive ? 'rgba(255,255,255,0.8)' : (darkMode ? '#2d3f55' : '#b6bcc6'),
                                 }} />
-                                {sub.icon && <i className={sub.icon} style={{ fontSize: '0.85rem', opacity: 0.8 }} />}
+                                {sub.icon && <i className={sub.icon} style={{ fontSize: '1rem', opacity: 0.8 }} />}
                                 {sub.label}
                               </button>
                             );
@@ -757,23 +887,22 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
       {/* ══ FOOTER utilisateur ══ */}
       <div style={{
         padding: '10px',
-        borderTop: `1px solid ${darkMode ? '#1e293b' : '#e2e8f0'}`,
+        borderTop: `1px solid ${lineColor}`,
         flexShrink: 0,
       }}>
-        {/* Carte utilisateur */}
         <div style={{
           display: 'flex', alignItems: 'center',
           gap: '10px', padding: '9px 10px',
           borderRadius: '10px', marginBottom: '8px',
           justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-          background: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
-          border: `1px solid ${darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.07)'}`,
+          background: darkMode ? 'rgba(255,255,255,0.04)' : '#f8fafc',
+          border: `1px solid ${darkMode ? 'rgba(255,255,255,0.06)' : '#f1f5f9'}`,
         }}>
           <div style={{
             width: '32px', height: '32px',
             borderRadius: '8px',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#ffffff', fontWeight: 700, fontSize: '12px',
+            color: '#ffffff', fontWeight: 700, fontSize: '13.5px',
             flexShrink: 0,
             background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})`,
             boxShadow: `0 2px 8px ${theme.primary}45`,
@@ -782,17 +911,16 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
           </div>
           {!sidebarCollapsed && (
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '12.5px', fontWeight: 600, color: darkMode ? '#e2e8f0' : '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: darkMode ? '#e2e8f0' : '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {user?.nom || '—'}
               </div>
-              <div style={{ fontSize: '10.5px', color: darkMode ? '#475569' : '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
+              <div style={{ fontSize: '12px', color: darkMode ? '#475569' : '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
                 {user?.role?.libelle || '—'}
               </div>
             </div>
           )}
         </div>
 
-        {/* Bouton déconnexion */}
         <button
           onClick={handleLogout}
           title={sidebarCollapsed ? 'Déconnexion' : ''}
@@ -804,8 +932,8 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
             borderRadius: '10px',
             border: 'none',
             cursor: 'pointer',
-            fontSize: '13px', fontWeight: 600,
-            color: '#ffffff',    
+            fontSize: '14.5px', fontWeight: 600,
+            color: '#ffffff',
             background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})`,
             boxShadow: `0 2px 12px ${theme.primary}45`,
             transition: 'all 0.2s ease',
@@ -821,7 +949,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
             e.currentTarget.style.boxShadow = `0 2px 12px ${theme.primary}45`;
           }}
         >
-          <i className="bi bi-box-arrow-right" style={{ fontSize: '1rem' }} />
+          <i className="bi bi-box-arrow-right" style={{ fontSize: '1.1rem' }} />
           {!sidebarCollapsed && <span>Déconnexion</span>}
         </button>
       </div>

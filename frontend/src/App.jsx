@@ -1,29 +1,45 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Login from './Auth/Login';
-import Dashboard from './Admin/Navigation/Dashboard';
-import Theme from './Admin/Navigation/Theme';
-import Utilisateurs from './Admin/Navigation/Utilisateurs';
-import Vehicules from './Admin/Navigation/Vehicules';
-import Interventions from './Admin/Navigation/Interventions';
-import FournisseursOutils from './Admin/Navigation/FournisseursOutils';
-import InspectionVehicules from './Admin/Navigation/InspectionVehicules';
-import Chauffeurs from './Admin/Navigation/Chauffeurs';
+import Dashboard from './Navigation/Dashboard';
+import Theme from './Navigation/Theme';
+import Utilisateurs from './Navigation/Utilisateurs';
+import Vehicules from './Navigation/Vehicules';
+import Interventions from './Navigation/Interventions';
+import FournisseursOutils from './Navigation/FournisseursOutils';
+import InspectionVehicules from './Navigation/InspectionVehicules';
+import Chauffeurs from './Navigation/Chauffeurs';
 import MonProfil from './Profils/MonProfil';
-import Activitesysteme from './Admin/Navigation/ActiviteSysteme';
-import HistoriqueConnexion from './Admin/Navigation/HistoriqueConnexion';
-import Accidents from './Admin/Navigation/Accidents';
-import Missions from './Admin/Navigation/Missions';
-import DemandesInterventions from './Admin/Navigation/DemandesInterventions';
-import InterventionsVehicules from './Admin/Navigation/InterventionsVehicules';
-import CarnetCarburant from './Admin/Navigation/CarnetCarburant';
-import HistoriqueVehicule from './Admin/Navigation/HistoriqueVehicule';
-// Composant pour protéger les routes
-const ProtectedRoute = ({ children }) => {
+import Activitesysteme from './Navigation/ActiviteSysteme';
+import HistoriqueConnexion from './Navigation/HistoriqueConnexion';
+import Accidents from './Navigation/Accidents';
+import Missions from './Navigation/Missions';
+import DemandesInterventions from './Navigation/DemandesInterventions';
+import InterventionsVehicules from './Navigation/InterventionsVehicules';
+import CarnetCarburant from './Navigation/CarnetCarburant';
+import HistoriqueVehicule from './Navigation/HistoriqueVehicule';
+
+// Composant pour protéger les routes avec contrôle d'accès basé sur les rôles (RBAC)
+const ProtectedRoute = ({ children, allowedRoles }) => {
   const token = localStorage.getItem('token');
   
   if (!token) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/Login" replace />;
+  }
+
+  if (allowedRoles && allowedRoles.length > 0) {
+    try {
+      const stored = localStorage.getItem('user');
+      const user = stored ? JSON.parse(stored) : null;
+      const roleCode = user?.role?.code;
+
+      // L'administrateur a accès à tout par défaut
+      if (roleCode && roleCode !== 'admin' && !allowedRoles.includes(roleCode)) {
+        return <Navigate to="/Navigation/Dashboard" replace />;
+      }
+    } catch {
+      return <Navigate to="/Login" replace />;
+    }
   }
   
   return children;
@@ -39,161 +55,196 @@ function App() {
           
           {/* Route publique */}
           <Route path="/Login" element={<Login />} />
-          
-          {/* Routes protégées - Dashboard Admin */}
+          <Route path="/login" element={<Navigate to="/Login" replace />} />
+
+          {/* Profil utilisateur (tous les utilisateurs connectés) */}
           <Route 
-            path="/admin/Navigation/Dashboard" 
+            path="/Profils/Monprofil" 
             element={
               <ProtectedRoute>
+                <MonProfil />
+              </ProtectedRoute>
+            } 
+          />
+
+          {/* Tableau de bord (Admin, Chef Parc, DAAL) */}
+          <Route 
+            path="/Navigation/Dashboard" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'daal']}>
                 <Dashboard />
               </ProtectedRoute>
             } 
           />
-              {/* Route protégée - Gestion des Thèmes */}
-          <Route 
-            path="/Admin/Navigation/Missions"
-            element={
-              <ProtectedRoute>
-                <Missions />
-              </ProtectedRoute>
-            } 
-          />
-          {/* Route protégée - Gestion des Thèmes */}
-          <Route 
-            path="/Admin/Navigation/InterventionsVehicules"
-            element={
-              <ProtectedRoute>
-                <InterventionsVehicules />
-              </ProtectedRoute>
-            } 
-          />
-    <Route 
-            path="/Admin/Navigation/CarnetCarburant"
-            element={
-              <ProtectedRoute>
-                <CarnetCarburant />
-              </ProtectedRoute>
-            } 
-          />
+          <Route path="/admin/Navigation/Dashboard" element={<Navigate to="/Navigation/Dashboard" replace />} />
+          <Route path="/Admin/Navigation/Dashboard" element={<Navigate to="/Navigation/Dashboard" replace />} />
 
-             <Route 
-            path="/Admin/Navigation/DemandesInterventions"
-            element={
-              <ProtectedRoute>
-                <DemandesInterventions />
-              </ProtectedRoute>
-            } 
-          />
-          {/* Routes protégées - Dashboard Admin */}
+          {/* Gestion des Véhicules */}
           <Route 
-            path="/admin/Navigation/Accidents" 
+            path="/Navigation/Vehicules" 
             element={
-              <ProtectedRoute>
-                <Accidents/>
-              </ProtectedRoute>
-            } 
-          />
-            <Route 
-            path="/admin/Navigation/Activitesysteme" 
-            element={
-              <ProtectedRoute>
-                <Activitesysteme/>
-              </ProtectedRoute>
-            } 
-          />
-          {/* Routes protégées - Navigation */}
-            <Route  path="/Profils/Monprofil"
-            element={
-              <ProtectedRoute>
-                <MonProfil/>
-              </ProtectedRoute>
-            } 
-          />
-
-          {/* Route protégée - Gestion des Utilisateurs */}
-          <Route 
-            path="/Admin/Navigation/Utilisateurs"
-            element={
-              <ProtectedRoute>
-                <Utilisateurs />
-              </ProtectedRoute>
-            } 
-          />
-          
-               {/* Route protégée - Gestion des Utilisateurs */}
-          <Route 
-            path="/Admin/Navigation/HistoriqueConnexion"
-            element={
-              <ProtectedRoute>
-                <HistoriqueConnexion/>
-              </ProtectedRoute>
-            } 
-          />
-              {/* Route protégée - Gestion des Vehicules */}
-          <Route 
-            path="/Admin/Navigation/Vehicules"
-            element={
-              <ProtectedRoute>
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'daal']}>
                 <Vehicules />
               </ProtectedRoute>
             } 
           />
+          <Route path="/Admin/Navigation/Vehicules" element={<Navigate to="/Navigation/Vehicules" replace />} />
 
-         {/* Route protégée - Gestion des Interventions*/}
+          {/* Documents Véhicules */}
           <Route 
-            path="/Admin/Navigation/Interventions"
+            path="/Navigation/HistoriqueVehicule" 
             element={
-              <ProtectedRoute>
-                <Interventions/>
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'daal']}>
+                <HistoriqueVehicule />
               </ProtectedRoute>
             } 
           />
-   {/* Route protégée - Gestion des InspectionVehicules*/}
-          <Route 
-            path="/Admin/Navigation/InspectionVehicules"
-            element={
-              <ProtectedRoute>
-                <InspectionVehicules/>
-              </ProtectedRoute>
-            } 
-          />
-   {/* Route protégée - Gestion des Fournisseurs-Outils */}
-          <Route 
-            path="/Admin/Navigation/FournisseursOutils"
-            element={
-              <ProtectedRoute>
-                <FournisseursOutils/>
-              </ProtectedRoute>
-            } 
-          />
+          <Route path="/Admin/Navigation/HistoriqueVehicule" element={<Navigate to="/Navigation/HistoriqueVehicule" replace />} />
 
-           <Route 
-  path="/Admin/Navigation/HistoriqueVehicule"
-  element={
-    <ProtectedRoute>
-      <HistoriqueVehicule />
-    </ProtectedRoute>
-  } 
-/> 
-  {/* Route protégée - Gestion des Fournisseurs-Outils */}
+          {/* Carnet Carburant */}
           <Route 
-            path="/Admin/Navigation/Chauffeurs"
+            path="/Navigation/CarnetCarburant" 
             element={
-              <ProtectedRoute>
-                <Chauffeurs/>
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc']}>
+                <CarnetCarburant />
               </ProtectedRoute>
             } 
           />
+          <Route path="/Admin/Navigation/CarnetCarburant" element={<Navigate to="/Navigation/CarnetCarburant" replace />} />
 
-          {/* Route protégée - Gestion des Thèmes */}
+          {/* Gestion des Utilisateurs (Admin uniquement) */}
           <Route 
-            path="/Admin/Navigation/Theme"
+            path="/Navigation/Utilisateurs" 
             element={
-              <ProtectedRoute>
+              <ProtectedRoute allowedRoles={['admin']}>
+                <Utilisateurs />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/Utilisateurs" element={<Navigate to="/Navigation/Utilisateurs" replace />} />
+
+          {/* Gestion des Chauffeurs */}
+          <Route 
+            path="/Navigation/Chauffeurs" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc']}>
+                <Chauffeurs />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/Chauffeurs" element={<Navigate to="/Navigation/Chauffeurs" replace />} />
+
+          {/* Missions */}
+          <Route 
+            path="/Navigation/Missions" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'chef_tf', 'chauffeur']}>
+                <Missions />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/Missions" element={<Navigate to="/Navigation/Missions" replace />} />
+
+          {/* Demandes d'Intervention */}
+          <Route 
+            path="/Navigation/DemandesInterventions" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'daal', 'mecanicien', 'chauffeur']}>
+                <DemandesInterventions />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/DemandesInterventions" element={<Navigate to="/Navigation/DemandesInterventions" replace />} />
+
+          {/* Interventions Véhicules */}
+          <Route 
+            path="/Navigation/InterventionsVehicules" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'mecanicien', 'daal']}>
+                <InterventionsVehicules />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/InterventionsVehicules" element={<Navigate to="/Navigation/InterventionsVehicules" replace />} />
+
+          {/* Référentiels Interventions */}
+          <Route 
+            path="/Navigation/Interventions" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'mecanicien', 'daal']}>
+                <Interventions />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/Interventions" element={<Navigate to="/Navigation/Interventions" replace />} />
+
+          {/* Inspections Véhicules */}
+          <Route 
+            path="/Navigation/InspectionVehicules" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'mecanicien', 'chauffeur']}>
+                <InspectionVehicules />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/InspectionVehicules" element={<Navigate to="/Navigation/InspectionVehicules" replace />} />
+
+          {/* Fournisseurs & Outils */}
+          <Route 
+            path="/Navigation/FournisseursOutils" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'mecanicien']}>
+                <FournisseursOutils />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/FournisseursOutils" element={<Navigate to="/Navigation/FournisseursOutils" replace />} />
+
+          {/* Accidents & Sinistres */}
+          <Route 
+            path="/Navigation/Accidents" 
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'chef_parc', 'chef_tf']}>
+                <Accidents />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/admin/Navigation/Accidents" element={<Navigate to="/Navigation/Accidents" replace />} />
+          <Route path="/Admin/Navigation/Accidents" element={<Navigate to="/Navigation/Accidents" replace />} />
+
+          {/* Activités Système / Journal d'audit (Admin uniquement) */}
+          <Route 
+            path="/Navigation/ActiviteSysteme" 
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <Activitesysteme />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/admin/Navigation/Activitesysteme" element={<Navigate to="/Navigation/ActiviteSysteme" replace />} />
+          <Route path="/Admin/Navigation/ActiviteSysteme" element={<Navigate to="/Navigation/ActiviteSysteme" replace />} />
+
+          {/* Historique des Connexions (Admin uniquement) */}
+          <Route 
+            path="/Navigation/HistoriqueConnexion" 
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <HistoriqueConnexion />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/HistoriqueConnexion" element={<Navigate to="/Navigation/HistoriqueConnexion" replace />} />
+
+          {/* Paramètres de Thème (Admin uniquement) */}
+          <Route 
+            path="/Navigation/Theme" 
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
                 <Theme />
               </ProtectedRoute>
             } 
           />
+          <Route path="/Admin/Navigation/Theme" element={<Navigate to="/Navigation/Theme" replace />} />
 
           {/* Route 404 */}
           <Route 

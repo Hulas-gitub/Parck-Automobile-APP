@@ -5,29 +5,37 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
+    private const MOIS = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+
+    /** Valeur exacte stockée en base dans vehicules.statut pour un véhicule en réparation */
+    private const STATUT_EN_REPARATION = 'En reparation';
+
     public function index(): JsonResponse
     {
-        return response()->json([
-            'stats_cards'                 => $this->getStatsCards(),
-            'donut_data'                  => $this->getDonutData(),
-            'bar_chart_data'              => $this->getBarChartData(),
-            'line_chart_data'             => $this->getLineChartData(),
-            'interventions_data'          => $this->getInterventionsData(),
-            'interventions_jour_data'     => $this->getInterventionsJourData(),
-            'users_role_data'             => $this->getUsersRoleData(),
-            'vehicules_marque_data'       => $this->getVehiculesMarqueData(),
-            'vehicules_categorie_data'    => $this->getVehiculesCategorieData(),
-            'documents_vehicules_data'    => $this->getDocumentsVehiculesData(),
-            'documents_chauffeurs_data'   => $this->getDocumentsChaufffeursData(),
-            'missions'                    => $this->getMissionsJour(),
-            'alerts'                      => $this->getAlertes(),
-            'performances_chauffeurs_data'=> $this->getPerformancesChauffeurs(),
+        // Cache 60 s : évite de recalculer tout le dashboard à chaque chargement
+        $payload = Cache::remember('admin_dashboard_v2', 60, fn () => [
+            'stats_cards'                  => $this->getStatsCards(),
+            'donut_data'                   => $this->getDonutData(),
+            'bar_chart_data'               => $this->getBarChartData(),
+            'line_chart_data'              => $this->getLineChartData(),
+            'interventions_data'           => $this->getInterventionsData(),
+            'interventions_jour_data'      => $this->getInterventionsJourData(),
+            'users_role_data'              => $this->getUsersRoleData(),
+            'vehicules_marque_data'        => $this->getVehiculesMarqueData(),
+            'vehicules_categorie_data'     => $this->getVehiculesCategorieData(),
+            'documents_vehicules_data'     => $this->getDocumentsVehiculesData(),
+            'documents_chauffeurs_data'    => $this->getDocumentsChaufffeursData(),
+            'missions'                     => $this->getMissionsJour(),
+            'performances_chauffeurs_data' => $this->getPerformancesChauffeurs(),
         ]);
+
+        return response()->json($payload);
     }
 
     // =========================================================
@@ -38,17 +46,17 @@ class DashboardController extends Controller
     //   - search          : filtre texte libre
     //   - immatriculation : filtre sur UN seul véhicule (export individuel)
     //   - page            : numéro de page (défaut : 1)
-    //   - per_page        : lignes par page (défaut : 15, max : 100)
+    //   - per_page        : lignes par page (défaut : 15, max : 1000)
     // =========================================================
     public function getKpiVehiculesDetail(Request $request): JsonResponse
     {
         $periode         = $request->input('periode', '3m');
         $search          = trim($request->input('search', ''));
-        $immatriculation = trim($request->input('immatriculation', ''));   // ← NOUVEAU
+        $immatriculation = trim($request->input('immatriculation', ''));
         $page            = max(1, (int) $request->input('page', 1));
-        $perPage         = min(100, max(5, (int) $request->input('per_page', 15)));
+        // NB : le front demande per_page=999 pour les exports → on autorise jusqu'à 1000
+        $perPage         = min(1000, max(5, (int) $request->input('per_page', 15)));
 
-        // ── Calcul des bornes ─────────────────────────────────
         $now   = Carbon::now();
         $debut = match ($periode) {
             '1m'  => $now->copy()->startOfMonth(),
@@ -60,7 +68,6 @@ class DashboardController extends Controller
         $debutInt = (int) $debut->format('Y') * 100 + (int) $debut->format('n');
         $finInt   = (int) $now->format('Y')   * 100 + (int) $now->format('n');
 
-        // ── Requête ───────────────────────────────────────────
         $query = DB::table('kpi_vehicules as kv')
             ->join('vehicules as v',      'kv.vehicule_immatriculation', '=', 'v.immatriculation')
             ->join('marques as m',        'v.marque_id',                 '=', 'm.id')
@@ -70,12 +77,10 @@ class DashboardController extends Controller
             ->whereRaw('(kv.annee_periode * 100 + kv.mois_periode) >= ?', [$debutInt])
             ->whereRaw('(kv.annee_periode * 100 + kv.mois_periode) <= ?', [$finInt]);
 
-        // ── Filtre : un seul véhicule (export individuel) ─────
         if ($immatriculation !== '') {
             $query->where('kv.vehicule_immatriculation', $immatriculation);
         }
 
-        // ── Filtre recherche texte libre ──────────────────────
         if ($search !== '') {
             $like = '%' . $search . '%';
             $query->where(function ($q) use ($like) {
@@ -86,7 +91,6 @@ class DashboardController extends Controller
             });
         }
 
-        // ── SELECT ────────────────────────────────────────────
         $query->select(
             'kv.vehicule_immatriculation as immatriculation',
             'm.nom  as marque',
@@ -108,10 +112,8 @@ class DashboardController extends Controller
             DB::raw('SUM(kv.nb_anomalies)                     as nb_anomalies'),
             DB::raw('SUM(kv.nb_accidents)                     as nb_accidents'),
 
-            // Recalcul cout_total (colonne virtuelle MariaDB → pas de SUM direct)
             DB::raw('SUM(kv.cout_missions + kv.cout_interventions + kv.cout_pieces) as cout_total'),
 
-            // Recalcul taux_disponibilite
             DB::raw('
                 CASE
                     WHEN SUM(kv.jours_disponible + kv.jours_mission + kv.jours_maintenance + kv.jours_immobilise) > 0
@@ -124,7 +126,6 @@ class DashboardController extends Controller
                 END as taux_disponibilite
             '),
 
-            // Recalcul cout_par_km
             DB::raw('
                 CASE
                     WHEN SUM(kv.total_km_missions) > 0
@@ -146,12 +147,10 @@ class DashboardController extends Controller
         )
         ->orderByRaw('SUM(kv.cout_missions + kv.cout_interventions + kv.cout_pieces) DESC');
 
-        // ── Pagination manuelle ───────────────────────────────
         $allRows = $query->get();
         $total   = $allRows->count();
         $rows    = $allRows->forPage($page, $perPage)->values();
 
-        // ── Totaux globaux ────────────────────────────────────
         $totaux = [
             'total_missions'           => (int)   $allRows->sum('total_missions'),
             'total_km'                 => (int)   $allRows->sum('total_km'),
@@ -167,7 +166,6 @@ class DashboardController extends Controller
                 : 0.0,
         ];
 
-        // ── Formatage ─────────────────────────────────────────
         $data = $rows->map(fn($row) => [
             'immatriculation'             => $row->immatriculation,
             'marque'                      => $row->marque,
@@ -206,93 +204,155 @@ class DashboardController extends Controller
                 'debut_int'       => $debutInt,
                 'fin_int'         => $finInt,
                 'nb_vehicules'    => $total,
-                'immatriculation' => $immatriculation ?: null,   // ← info pour le front
+                'immatriculation' => $immatriculation ?: null,
             ],
         ]);
     }
 
     // =========================================================
-    // 1. STATS CARDS
+    // 1. STATS CARDS  (11 cartes — « Alertes » retirée,
+    //    « En Maintenance » remplacée par « En Réparation »)
+    //    Requêtes regroupées pour limiter les allers-retours SQL.
     // =========================================================
     private function getStatsCards(): array
     {
-        $now        = Carbon::now();
-        $debut      = $now->copy()->startOfMonth();
-        $fin        = $now->copy()->endOfMonth();
-        $debutPrec  = $now->copy()->subMonth()->startOfMonth();
-        $finPrec    = $now->copy()->subMonth()->endOfMonth();
+        $now       = Carbon::now();
+        $debut     = $now->copy()->startOfMonth();
+        $fin       = $now->copy()->endOfMonth();
+        $debutPrec = $now->copy()->subMonth()->startOfMonth();
+        $finPrec   = $now->copy()->subMonth()->endOfMonth();
 
-        $totalVehicules  = DB::table('vehicules')->where('est_supprime', 0)->count();
-        $disponibles     = DB::table('vehicules')->where('est_supprime', 0)->where('statut', 'disponible')->count();
-        $enMaintenance   = DB::table('vehicules')->where('est_supprime', 0)->where('statut', 'en_maintenance')->count();
-        $totalVehPrec    = DB::table('vehicules')->where('est_supprime', 0)->where('date_creation', '<', $debut)->count();
-        $trendVehicules  = $totalVehPrec > 0 ? round((($totalVehicules - $totalVehPrec) / $totalVehPrec) * 100, 1) : 0;
-        $missionsActives = DB::table('missions')->where('est_supprime', 0)->where('statut', 'en_cours')->whereDate('date_depart_prevue', $now->toDateString())->count();
+        $dtDebut     = $debut->toDateTimeString();
+        $dtFin       = $fin->toDateTimeString();
+        $dtDebutPrec = $debutPrec->toDateTimeString();
+        $dtFinPrec   = $finPrec->toDateTimeString();
+        $dtJourDebut = $now->copy()->startOfDay()->toDateTimeString();
+        $dtJourFin   = $now->copy()->endOfDay()->toDateTimeString();
 
-        $kmTotal = DB::table('missions')->where('est_supprime', 0)->where('statut', 'terminee')
-            ->whereBetween('date_retour_reelle', [Carbon::now()->startOfMonth(), Carbon::now()->endOfMonth()])
-            ->whereNotNull('km_retour')->whereNotNull('km_depart')->whereRaw('km_retour > km_depart')
-            ->selectRaw('SUM(km_retour - km_depart) as total')->value('total') ?? 0;
+        $pct = fn ($cur, $prec) => $prec > 0 ? round((($cur - $prec) / $prec) * 100, 1) : 0;
 
-        $kmPrec = DB::table('missions')->where('est_supprime', 0)->where('statut', 'terminee')
-            ->whereBetween('date_retour_reelle', [Carbon::now()->subMonth()->startOfMonth(), Carbon::now()->subMonth()->endOfMonth()])
-            ->whereNotNull('km_retour')->whereNotNull('km_depart')->whereRaw('km_retour > km_depart')
-            ->selectRaw('SUM(km_retour - km_depart) as total')->value('total') ?? 0;
+        // ── Véhicules : 1 seule requête ──
+        // NB : l'ordre des bindings suit l'ordre des « ? » dans la requête
+        $veh = DB::table('vehicules')
+            ->where('est_supprime', 0)
+            ->selectRaw("
+                COUNT(*) as total,
+                COALESCE(SUM(statut = 'disponible'), 0) as disponibles,
+                COALESCE(SUM(statut = ?), 0)            as en_reparation,
+                COALESCE(SUM(date_creation < ?), 0)     as total_prec
+            ", [self::STATUT_EN_REPARATION, $dtDebut])
+            ->first();
 
-        $trendKm      = $kmPrec > 0 ? round((($kmTotal - $kmPrec) / $kmPrec) * 100, 1) : 0;
-        $consommation = DB::table('carnets_carburant')->where('est_supprime', 0)->whereBetween('date_plein', [$debut->toDateString(), $fin->toDateString()])->sum('litres') ?? 0;
+        $totalVehicules = (int) $veh->total;
+        $disponibles    = (int) $veh->disponibles;
+        $enReparation   = (int) $veh->en_reparation;
+        $trendVehicules = $pct($totalVehicules, (int) $veh->total_prec);
 
-        $debutTrimestre  = $now->copy()->startOfQuarter();
-        $coutMaintenance = DB::table('interventions')->where('est_supprime', 0)
-            ->whereBetween('date_creation', [$debutTrimestre->toDateTimeString(), $now->toDateTimeString()])
-            ->selectRaw('COALESCE(SUM(cout_main_oeuvre + cout_pieces), 0) as total')->value('total') ?? 0;
+        // ── Missions : mois courant + précédent + actives aujourd'hui ──
+        $mis = DB::table('missions')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_depart_prevue', [$dtDebutPrec, $dtFin])
+            ->selectRaw("
+                COALESCE(SUM(date_depart_prevue BETWEEN ? AND ?), 0) as cur,
+                COALESCE(SUM(date_depart_prevue BETWEEN ? AND ?), 0) as prec,
+                COALESCE(SUM(statut = 'en_cours' AND date_depart_prevue BETWEEN ? AND ?), 0) as actives
+            ", [$dtDebut, $dtFin, $dtDebutPrec, $dtFinPrec, $dtJourDebut, $dtJourFin])
+            ->first();
 
-        $alertes = DB::table('notifications')
-            ->join('categories_notifications', 'notifications.categorie_id', '=', 'categories_notifications.id')
-            ->where('categories_notifications.niveau_priorite', 'critique')
-            ->where('categories_notifications.est_supprime', 0)
-            ->whereDate('notifications.date_creation', '>=', $now->copy()->subDays(7)->toDateString())->count();
+        $totalMissions     = (int) $mis->cur;
+        $totalMissionsPrec = (int) $mis->prec;
+        $missionsActives   = (int) $mis->actives;
+        $trendMissions     = $pct($totalMissions, $totalMissionsPrec);
 
-        $tempsMoyenRep      = DB::table('interventions')->where('est_supprime', 0)->where('statut', 'terminee')->whereNotNull('duree_minutes')->whereBetween('date_fin', [$debut->toDateTimeString(), $fin->toDateTimeString()])->avg('duree_minutes') ?? 0;
-        $tempsMoyenRepPrec  = DB::table('interventions')->where('est_supprime', 0)->where('statut', 'terminee')->whereNotNull('duree_minutes')->whereBetween('date_fin', [$debutPrec->toDateTimeString(), $finPrec->toDateTimeString()])->avg('duree_minutes') ?? 0;
-        $tempsMoyenRepH     = $tempsMoyenRep > 0 ? round($tempsMoyenRep / 60, 1) : 0;
-        $trendTmpRep        = $tempsMoyenRepPrec > 0 ? round((($tempsMoyenRep - $tempsMoyenRepPrec) / $tempsMoyenRepPrec) * 100, 1) : 0;
+        // ── Kilométrage : mois courant + précédent ──
+        $kmRow = DB::table('missions')
+            ->where('est_supprime', 0)
+            ->where('statut', 'terminee')
+            ->whereBetween('date_retour_reelle', [$dtDebutPrec, $dtFin])
+            ->whereNotNull('km_retour')->whereNotNull('km_depart')
+            ->whereRaw('km_retour > km_depart')
+            ->selectRaw("
+                COALESCE(SUM(CASE WHEN date_retour_reelle BETWEEN ? AND ? THEN km_retour - km_depart ELSE 0 END), 0) as cur,
+                COALESCE(SUM(CASE WHEN date_retour_reelle BETWEEN ? AND ? THEN km_retour - km_depart ELSE 0 END), 0) as prec
+            ", [$dtDebut, $dtFin, $dtDebutPrec, $dtFinPrec])
+            ->first();
 
-        $tempsMoyenRes      = DB::table('interventions')->where('est_supprime', 0)->where('statut', 'terminee')->whereNotNull('date_debut')->whereNotNull('date_fin')->whereBetween('date_fin', [$debut->toDateTimeString(), $fin->toDateTimeString()])->selectRaw('AVG(TIMESTAMPDIFF(MINUTE, date_debut, date_fin)) as moy')->value('moy') ?? 0;
-        $tempsMoyenResPrec  = DB::table('interventions')->where('est_supprime', 0)->where('statut', 'terminee')->whereNotNull('date_debut')->whereNotNull('date_fin')->whereBetween('date_fin', [$debutPrec->toDateTimeString(), $finPrec->toDateTimeString()])->selectRaw('AVG(TIMESTAMPDIFF(MINUTE, date_debut, date_fin)) as moy')->value('moy') ?? 0;
-        $tempsMoyenResH     = $tempsMoyenRes > 0 ? round($tempsMoyenRes / 60, 1) : 0;
-        $trendTmpRes        = $tempsMoyenResPrec > 0 ? round((($tempsMoyenRes - $tempsMoyenResPrec) / $tempsMoyenResPrec) * 100, 1) : 0;
+        $kmTotal = (float) $kmRow->cur;
+        $kmPrec  = (float) $kmRow->prec;
+        $trendKm = $pct($kmTotal, $kmPrec);
 
-        $totalMissions      = DB::table('missions')->where('est_supprime', 0)->whereBetween('date_depart_prevue', [$debut->toDateTimeString(), $fin->toDateTimeString()])->count();
-        $totalMissionsPrec  = DB::table('missions')->where('est_supprime', 0)->whereBetween('date_depart_prevue', [$debutPrec->toDateTimeString(), $finPrec->toDateTimeString()])->count();
-        $trendMissions      = $totalMissionsPrec > 0 ? round((($totalMissions - $totalMissionsPrec) / $totalMissionsPrec) * 100, 1) : 0;
+        // ── Consommation carburant du mois ──
+        $consommation = (float) DB::table('carnets_carburant')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_plein', [$debut->toDateString(), $fin->toDateString()])
+            ->sum('litres');
 
-        $totalInterventions      = DB::table('interventions')->where('est_supprime', 0)->whereBetween('date_creation', [$debut->toDateTimeString(), $fin->toDateTimeString()])->count();
-        $totalInterventionsPrec  = DB::table('interventions')->where('est_supprime', 0)->whereBetween('date_creation', [$debutPrec->toDateTimeString(), $finPrec->toDateTimeString()])->count();
-        $trendInterventions      = $totalInterventionsPrec > 0 ? round((($totalInterventions - $totalInterventionsPrec) / $totalInterventionsPrec) * 100, 1) : 0;
+        // ── Interventions : créées (mois courant + précédent) ──
+        $intCrees = DB::table('interventions')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_creation', [$dtDebutPrec, $dtFin])
+            ->selectRaw("
+                COALESCE(SUM(date_creation BETWEEN ? AND ?), 0) as cur,
+                COALESCE(SUM(date_creation BETWEEN ? AND ?), 0) as prec
+            ", [$dtDebut, $dtFin, $dtDebutPrec, $dtFinPrec])
+            ->first();
+
+        $totalInterventions     = (int) $intCrees->cur;
+        $totalInterventionsPrec = (int) $intCrees->prec;
+        $trendInterventions     = $pct($totalInterventions, $totalInterventionsPrec);
+
+        // ── Coût maintenance du trimestre ──
+        $coutMaintenance = (float) (DB::table('interventions')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_creation', [$now->copy()->startOfQuarter()->toDateTimeString(), $now->toDateTimeString()])
+            ->selectRaw('COALESCE(SUM(cout_main_oeuvre + cout_pieces), 0) as total')
+            ->value('total') ?? 0);
+
+        // ── Interventions terminées : temps de réparation + résolution (mois courant + précédent) ──
+        $tm = DB::table('interventions')
+            ->where('est_supprime', 0)
+            ->where('statut', 'terminee')
+            ->whereBetween('date_fin', [$dtDebutPrec, $dtFin])
+            ->selectRaw("
+                AVG(CASE WHEN date_fin BETWEEN ? AND ? AND duree_minutes IS NOT NULL THEN duree_minutes END) as rep_cur,
+                AVG(CASE WHEN date_fin BETWEEN ? AND ? AND duree_minutes IS NOT NULL THEN duree_minutes END) as rep_prec,
+                AVG(CASE WHEN date_fin BETWEEN ? AND ? AND date_debut IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, date_debut, date_fin) END) as res_cur,
+                AVG(CASE WHEN date_fin BETWEEN ? AND ? AND date_debut IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, date_debut, date_fin) END) as res_prec
+            ", [$dtDebut, $dtFin, $dtDebutPrec, $dtFinPrec, $dtDebut, $dtFin, $dtDebutPrec, $dtFinPrec])
+            ->first();
+
+        $tempsMoyenRep     = (float) ($tm->rep_cur  ?? 0);
+        $tempsMoyenRepPrec = (float) ($tm->rep_prec ?? 0);
+        $tempsMoyenRes     = (float) ($tm->res_cur  ?? 0);
+        $tempsMoyenResPrec = (float) ($tm->res_prec ?? 0);
+
+        $tempsMoyenRepH = $tempsMoyenRep > 0 ? round($tempsMoyenRep / 60, 1) : 0;
+        $tempsMoyenResH = $tempsMoyenRes > 0 ? round($tempsMoyenRes / 60, 1) : 0;
+        $trendTmpRep    = $pct($tempsMoyenRep, $tempsMoyenRepPrec);
+        $trendTmpRes    = $pct($tempsMoyenRes, $tempsMoyenResPrec);
 
         $kmFormate   = $kmTotal >= 1_000_000 ? round($kmTotal / 1_000_000, 1) . 'M km' : number_format((int) $kmTotal, 0, ',', ' ') . ' km';
         $coutFormate = $coutMaintenance >= 1_000_000 ? round($coutMaintenance / 1_000_000, 1) . 'M CFA' : number_format((int) $coutMaintenance, 0, ',', ' ') . ' CFA';
         $trend       = fn($v) => $v != 0 ? ($v > 0 ? '+' : '') . $v . '% vs mois dernier' : null;
 
         return [
-            ['title' => 'Total Véhicules',     'value' => (string) $totalVehicules,   'subtitle' => 'dans le parc',                  'trend' => $trend($trendVehicules),   'icon' => 'bi-car-front-fill',          'iconBg' => 'bg-blue-100 dark:bg-blue-800',    'textColor' => 'text-blue-600 dark:text-blue-400'],
-            ['title' => 'Disponibles',          'value' => (string) $disponibles,      'subtitle' => 'prêts à partir',                'trend' => null,                      'icon' => 'bi-check-circle-fill',       'iconBg' => 'bg-green-100 dark:bg-green-800',  'textColor' => 'text-green-600 dark:text-green-400'],
-            ['title' => 'En Maintenance',       'value' => (string) $enMaintenance,    'subtitle' => "à l'atelier",                  'trend' => null,                      'icon' => 'bi-tools',                   'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
-            ['title' => 'Missions Actives',     'value' => (string) $missionsActives,  'subtitle' => "en cours aujourd'hui",          'trend' => null,                      'icon' => 'bi-geo-alt-fill',            'iconBg' => 'bg-blue-100 dark:bg-blue-800',    'textColor' => 'text-blue-600 dark:text-blue-400'],
-            ['title' => 'Kilométrage Total',    'value' => $kmFormate,                 'subtitle' => 'missions terminées ce mois',    'trend' => $trend($trendKm),          'icon' => 'bi-speedometer2',            'iconBg' => 'bg-purple-100 dark:bg-purple-800','textColor' => 'text-purple-600 dark:text-purple-400'],
-            ['title' => 'Consommation',         'value' => number_format((float) $consommation, 0, ',', ' ') . ' L', 'subtitle' => 'carburant ce mois', 'trend' => null, 'icon' => 'bi-fuel-pump-fill', 'iconBg' => 'bg-yellow-100 dark:bg-yellow-800', 'textColor' => 'text-yellow-600 dark:text-yellow-400'],
-            ['title' => 'Coût Maintenance',     'value' => $coutFormate,               'subtitle' => "main-d'œuvre + pièces (trim.)", 'trend' => null,                      'icon' => 'bi-currency-dollar',         'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
-            ['title' => 'Alertes',              'value' => (string) $alertes,          'subtitle' => 'critiques 7 derniers jours',    'trend' => null,                      'icon' => 'bi-exclamation-triangle-fill','iconBg' => 'bg-red-100 dark:bg-red-800',      'textColor' => 'text-red-600 dark:text-red-400'],
-            ['title' => 'Tps Moyen Réparation', 'value' => $tempsMoyenRepH . 'h',      'subtitle' => 'durée saisie par intervention', 'trend' => $trend($trendTmpRep),      'icon' => 'bi-clock-history',           'iconBg' => 'bg-blue-100 dark:bg-blue-800',    'textColor' => 'text-blue-600 dark:text-blue-400'],
-            ['title' => 'Tps Moyen Résolution', 'value' => $tempsMoyenResH . 'h',      'subtitle' => 'de date_debut à date_fin',      'trend' => $trend($trendTmpRes),      'icon' => 'bi-hourglass-split',         'iconBg' => 'bg-green-100 dark:bg-green-800',  'textColor' => 'text-green-600 dark:text-green-400'],
-            ['title' => 'Total Missions',       'value' => (string) $totalMissions,    'subtitle' => 'planifiées ce mois',            'trend' => $trend($trendMissions),    'icon' => 'bi-flag-fill',               'iconBg' => 'bg-purple-100 dark:bg-purple-800','textColor' => 'text-purple-600 dark:text-purple-400'],
-            ['title' => 'Interventions',        'value' => (string) $totalInterventions,'subtitle' => 'créées ce mois',               'trend' => $trend($trendInterventions),'icon' => 'bi-wrench',                  'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
+            ['title' => 'Total Véhicules',     'value' => (string) $totalVehicules,   'subtitle' => 'dans le parc',                  'trend' => $trend($trendVehicules),   'icon' => 'bi-car-front-fill',    'iconBg' => 'bg-blue-100 dark:bg-blue-800',    'textColor' => 'text-blue-600 dark:text-blue-400'],
+            ['title' => 'Disponibles',          'value' => (string) $disponibles,      'subtitle' => 'prêts à partir',                'trend' => null,                      'icon' => 'bi-check-circle-fill', 'iconBg' => 'bg-green-100 dark:bg-green-800',  'textColor' => 'text-green-600 dark:text-green-400'],
+            ['title' => 'En reparation',        'value' => (string) $enReparation,     'subtitle' => "Au garage",                     'trend' => null,                      'icon' => 'bi-tools',             'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
+            ['title' => 'Interventions',        'value' => (string) $totalInterventions,'subtitle' => 'créées ce mois',               'trend' => $trend($trendInterventions),'icon' => 'bi-wrench',            'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
+            ['title' => 'Missions Actives',     'value' => (string) $missionsActives,  'subtitle' => "en cours aujourd'hui",          'trend' => null,                      'icon' => 'bi-geo-alt-fill',      'iconBg' => 'bg-blue-100 dark:bg-blue-800',    'textColor' => 'text-blue-600 dark:text-blue-400'],
+            ['title' => 'Kilométrage Total',    'value' => $kmFormate,                 'subtitle' => 'missions terminées ce mois',    'trend' => $trend($trendKm),          'icon' => 'bi-speedometer2',      'iconBg' => 'bg-purple-100 dark:bg-purple-800','textColor' => 'text-purple-600 dark:text-purple-400'],
+            ['title' => 'Consommation',         'value' => number_format($consommation, 0, ',', ' ') . ' L', 'subtitle' => 'carburant ce mois', 'trend' => null, 'icon' => 'bi-fuel-pump-fill', 'iconBg' => 'bg-yellow-100 dark:bg-yellow-800', 'textColor' => 'text-yellow-600 dark:text-yellow-400'],
+            ['title' => 'Coût Maintenance',     'value' => $coutFormate,               'subtitle' => "main-d'œuvre + pièces (trim.)", 'trend' => null,                      'icon' => 'bi-currency-dollar',   'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
+            ['title' => 'Tps Moyen Réparation', 'value' => $tempsMoyenRepH . 'h',      'subtitle' => 'durée saisie par intervention', 'trend' => $trend($trendTmpRep),      'icon' => 'bi-clock-history',     'iconBg' => 'bg-blue-100 dark:bg-blue-800',    'textColor' => 'text-blue-600 dark:text-blue-400'],
+            ['title' => 'Tps Moyen Résolution', 'value' => $tempsMoyenResH . 'h',      'subtitle' => 'de date_debut à date_fin',      'trend' => $trend($trendTmpRes),      'icon' => 'bi-hourglass-split',   'iconBg' => 'bg-green-100 dark:bg-green-800',  'textColor' => 'text-green-600 dark:text-green-400'],
+            ['title' => 'Total Missions',       'value' => (string) $totalMissions,    'subtitle' => 'planifiées ce mois',            'trend' => $trend($trendMissions),    'icon' => 'bi-flag-fill',         'iconBg' => 'bg-purple-100 dark:bg-purple-800','textColor' => 'text-purple-600 dark:text-purple-400'],
+            ['title' => 'Interventions',        'value' => (string) $totalInterventions,'subtitle' => 'créées ce mois',               'trend' => $trend($trendInterventions),'icon' => 'bi-wrench',            'iconBg' => 'bg-orange-100 dark:bg-orange-800','textColor' => 'text-orange-600 dark:text-orange-400'],
         ];
     }
 
     // =========================================================
-    // Autres méthodes (inchangées)
+    // Graphiques
     // =========================================================
 
     private function getDonutData(): array
@@ -313,71 +373,123 @@ class DashboardController extends Controller
         return $result;
     }
 
+    /** 1 requête groupée par mois (au lieu de 48) */
     private function getBarChartData(): array
     {
-        $moisLabels = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
         $annee = Carbon::now()->year;
+
+        $rows = DB::table('inspections_vehicules as iv')
+            ->join('inspections as i', 'iv.inspection_id', '=', 'i.id')
+            ->where('i.est_supprime', 0)
+            ->whereBetween('i.date_inspection', ["$annee-01-01 00:00:00", "$annee-12-31 23:59:59"])
+            ->selectRaw("
+                MONTH(i.date_inspection) as m,
+                COUNT(DISTINCT iv.vehicule_immatriculation) as total,
+                COALESCE(SUM(iv.statut_global = 'conforme'), 0)        as conforme,
+                COALESCE(SUM(iv.statut_global = 'non_conforme'), 0)    as non_conforme,
+                COALESCE(SUM(iv.statut_global = 'danger_immediat'), 0) as danger
+            ")
+            ->groupByRaw('MONTH(i.date_inspection)')
+            ->get()->keyBy('m');
+
         $result = [];
-        for ($mois = 1; $mois <= 12; $mois++) {
-            $debut = Carbon::create($annee,$mois,1)->startOfMonth();
-            $fin   = Carbon::create($annee,$mois,1)->endOfMonth();
-            $base  = fn($statut) => DB::table('inspections_vehicules')
-                ->join('inspections','inspections_vehicules.inspection_id','=','inspections.id')
-                ->where('inspections.est_supprime',0)->whereBetween('inspections.date_inspection',[$debut,$fin])
-                ->where('inspections_vehicules.statut_global',$statut)->count();
+        for ($m = 1; $m <= 12; $m++) {
+            $r = $rows->get($m);
             $result[] = [
-                'month'       => $moisLabels[$mois-1],
-                'total'       => DB::table('inspections_vehicules')->join('inspections','inspections_vehicules.inspection_id','=','inspections.id')->where('inspections.est_supprime',0)->whereBetween('inspections.date_inspection',[$debut,$fin])->distinct()->count('inspections_vehicules.vehicule_immatriculation'),
-                'conforme'    => $base('conforme'),
-                'nonConforme' => $base('non_conforme'),
-                'danger'      => $base('danger_immediat'),
+                'month'       => self::MOIS[$m - 1],
+                'total'       => (int) ($r->total ?? 0),
+                'conforme'    => (int) ($r->conforme ?? 0),
+                'nonConforme' => (int) ($r->non_conforme ?? 0),
+                'danger'      => (int) ($r->danger ?? 0),
             ];
         }
         return $result;
     }
 
+    /** 2 requêtes groupées (au lieu de 24) */
     private function getLineChartData(): array
     {
-        $moisLabels = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
         $annee = Carbon::now()->year;
+
+        $conso = DB::table('carnets_carburant')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_plein', ["$annee-01-01", "$annee-12-31"])
+            ->selectRaw('MONTH(date_plein) as m, COALESCE(SUM(litres), 0) as total')
+            ->groupByRaw('MONTH(date_plein)')
+            ->pluck('total', 'm');
+
+        $eco = DB::table('missions')
+            ->where('est_supprime', 0)
+            ->where('statut', 'terminee')
+            ->whereNotNull('cout_carburant')
+            ->whereBetween('date_retour_reelle', ["$annee-01-01 00:00:00", "$annee-12-31 23:59:59"])
+            ->selectRaw('MONTH(date_retour_reelle) as m, COALESCE(SUM(cout_carburant), 0) as total')
+            ->groupByRaw('MONTH(date_retour_reelle)')
+            ->pluck('total', 'm');
+
         $result = [];
-        for ($mois = 1; $mois <= 12; $mois++) {
-            $debut = Carbon::create($annee,$mois,1)->startOfMonth()->toDateString();
-            $fin   = Carbon::create($annee,$mois,1)->endOfMonth()->toDateString();
+        for ($m = 1; $m <= 12; $m++) {
             $result[] = [
-                'month'        => $moisLabels[$mois-1],
-                'consommation' => (int) round(DB::table('carnets_carburant')->where('est_supprime',0)->whereBetween('date_plein',[$debut,$fin])->sum('litres') ?? 0),
-                'economies'    => (int) round(DB::table('missions')->where('est_supprime',0)->where('statut','terminee')->whereBetween(DB::raw('DATE(date_retour_reelle)'),[$debut,$fin])->whereNotNull('cout_carburant')->sum('cout_carburant') ?? 0),
+                'month'        => self::MOIS[$m - 1],
+                'consommation' => (int) round((float) ($conso[$m] ?? 0)),
+                'economies'    => (int) round((float) ($eco[$m] ?? 0)),
             ];
         }
         return $result;
     }
 
+    /** 2 requêtes groupées (au lieu de 24) */
     private function getInterventionsData(): array
     {
-        $moisLabels = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
         $annee = Carbon::now()->year;
+        $d1 = "$annee-01-01 00:00:00";
+        $d2 = "$annee-12-31 23:59:59";
+
+        $creees = DB::table('interventions')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_creation', [$d1, $d2])
+            ->selectRaw('MONTH(date_creation) as m, COUNT(*) as total')
+            ->groupByRaw('MONTH(date_creation)')
+            ->pluck('total', 'm');
+
+        $resolues = DB::table('interventions')
+            ->where('est_supprime', 0)
+            ->where('statut', 'terminee')
+            ->whereNotNull('date_fin')
+            ->whereBetween('date_fin', [$d1, $d2])
+            ->selectRaw('MONTH(date_fin) as m, COUNT(*) as total')
+            ->groupByRaw('MONTH(date_fin)')
+            ->pluck('total', 'm');
+
         $result = [];
-        for ($mois = 1; $mois <= 12; $mois++) {
-            $debut = Carbon::create($annee,$mois,1)->startOfMonth();
-            $fin   = Carbon::create($annee,$mois,1)->endOfMonth();
+        for ($m = 1; $m <= 12; $m++) {
             $result[] = [
-                'month'   => $moisLabels[$mois-1],
-                'creees'  => DB::table('interventions')->where('est_supprime',0)->whereBetween('date_creation',[$debut->toDateTimeString(),$fin->toDateTimeString()])->count(),
-                'resolues'=> DB::table('interventions')->where('est_supprime',0)->where('statut','terminee')->whereNotNull('date_fin')->whereBetween('date_fin',[$debut->toDateTimeString(),$fin->toDateTimeString()])->count(),
+                'month'    => self::MOIS[$m - 1],
+                'creees'   => (int) ($creees[$m] ?? 0),
+                'resolues' => (int) ($resolues[$m] ?? 0),
             ];
         }
         return $result;
     }
 
+    /** 1 requête groupée par jour (au lieu de 7) */
     private function getInterventionsJourData(): array
     {
         $joursFr = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
         $lundi   = Carbon::now()->startOfWeek(Carbon::MONDAY);
-        $result  = [];
+        $dimanche = $lundi->copy()->addDays(6)->endOfDay();
+
+        $counts = DB::table('interventions')
+            ->where('est_supprime', 0)
+            ->whereBetween('date_creation', [$lundi->toDateTimeString(), $dimanche->toDateTimeString()])
+            ->selectRaw('DATE(date_creation) as d, COUNT(*) as total')
+            ->groupByRaw('DATE(date_creation)')
+            ->pluck('total', 'd');
+
+        $result = [];
         for ($i = 0; $i < 7; $i++) {
-            $jour     = $lundi->copy()->addDays($i);
-            $result[] = ['day'=>$joursFr[$i],'count'=>DB::table('interventions')->where('est_supprime',0)->whereDate('date_creation',$jour->toDateString())->count()];
+            $jour     = $lundi->copy()->addDays($i)->toDateString();
+            $result[] = ['day' => $joursFr[$i], 'count' => (int) ($counts[$jour] ?? 0)];
         }
         return $result;
     }
@@ -414,39 +526,49 @@ class DashboardController extends Controller
 
     private function getDocumentsVehiculesData(): array
     {
-        $today=$today=Carbon::today(); $dans30=Carbon::today()->addDays(30);
-        $docs = DB::table('documents_vehicules')->where('est_supprime',0)->whereNotNull('date_expiration')
-            ->select('vehicule_immatriculation',DB::raw('MAX(date_expiration) as date_exp'))->groupBy('vehicule_immatriculation')->get();
-        $v=$eb=$e=0;
-        foreach ($docs as $d) { $exp=Carbon::parse($d->date_exp); if ($exp->isPast()) $e++; elseif ($exp->lte($dans30)) $eb++; else $v++; }
-        $t=$v+$eb+$e;
-        return [
-            ['label'=>'Assurance Valide','value'=>$v, 'color'=>'#10b981','percentage'=>$t>0?(int)round(($v/$t)*100):0],
-            ['label'=>'Expire < 30j',   'value'=>$eb,'color'=>'#f59e0b','percentage'=>$t>0?(int)round(($eb/$t)*100):0],
-            ['label'=>'Expirés',        'value'=>$e, 'color'=>'#ef4444','percentage'=>$t>0?(int)round(($e/$t)*100):0],
-        ];
+        return $this->buildDocsStatus(
+            DB::table('documents_vehicules')->where('est_supprime', 0)->whereNotNull('date_expiration')
+                ->select('vehicule_immatriculation', DB::raw('MAX(date_expiration) as date_exp'))
+                ->groupBy('vehicule_immatriculation')->get(),
+            'Assurance Valide'
+        );
     }
 
     private function getDocumentsChaufffeursData(): array
     {
-        $today=Carbon::today(); $dans30=Carbon::today()->addDays(30);
-        $docs = DB::table('documents_chauffeurs')->where('est_supprime',0)->whereNotNull('date_expiration')
-            ->select('chauffeur_user_id',DB::raw('MAX(date_expiration) as date_exp'))->groupBy('chauffeur_user_id')->get();
-        $v=$eb=$e=0;
-        foreach ($docs as $d) { $exp=Carbon::parse($d->date_exp); if ($exp->isPast()) $e++; elseif ($exp->lte($dans30)) $eb++; else $v++; }
-        $t=$v+$eb+$e;
+        return $this->buildDocsStatus(
+            DB::table('documents_chauffeurs')->where('est_supprime', 0)->whereNotNull('date_expiration')
+                ->select('chauffeur_user_id', DB::raw('MAX(date_expiration) as date_exp'))
+                ->groupBy('chauffeur_user_id')->get(),
+            'Permis Valide'
+        );
+    }
+
+    private function buildDocsStatus($docs, string $labelValide): array
+    {
+        $dans30 = Carbon::today()->addDays(30);
+        $v = $eb = $e = 0;
+        foreach ($docs as $d) {
+            $exp = Carbon::parse($d->date_exp);
+            if ($exp->isPast()) $e++;
+            elseif ($exp->lte($dans30)) $eb++;
+            else $v++;
+        }
+        $t = $v + $eb + $e;
         return [
-            ['label'=>'Permis Valide','value'=>$v, 'color'=>'#10b981','percentage'=>$t>0?(int)round(($v/$t)*100):0],
-            ['label'=>'Expire < 30j', 'value'=>$eb,'color'=>'#f59e0b','percentage'=>$t>0?(int)round(($eb/$t)*100):0],
-            ['label'=>'Expirés',      'value'=>$e, 'color'=>'#ef4444','percentage'=>$t>0?(int)round(($e/$t)*100):0],
+            ['label'=>$labelValide,  'value'=>$v,  'color'=>'#10b981','percentage'=>$t>0?(int)round(($v/$t)*100):0],
+            ['label'=>'Expire < 30j','value'=>$eb, 'color'=>'#f59e0b','percentage'=>$t>0?(int)round(($eb/$t)*100):0],
+            ['label'=>'Expirés',     'value'=>$e,  'color'=>'#ef4444','percentage'=>$t>0?(int)round(($e/$t)*100):0],
         ];
     }
 
     private function getMissionsJour(): array
     {
-        $today = Carbon::today()->toDateString();
+        $debut = Carbon::today()->startOfDay()->toDateTimeString();
+        $fin   = Carbon::today()->endOfDay()->toDateTimeString();
         $rows  = DB::table('missions')->join('utilisateurs','missions.chauffeur_user_id','=','utilisateurs.id')
-            ->where('missions.est_supprime',0)->whereDate('missions.date_depart_prevue',$today)
+            ->where('missions.est_supprime',0)
+            ->whereBetween('missions.date_depart_prevue', [$debut, $fin])
             ->whereIn('missions.statut',['planifiee','en_cours'])
             ->select('missions.vehicule_immatriculation as id','missions.destination as route',
                 DB::raw("DATE_FORMAT(missions.date_depart_prevue,'%H:%i') as time"),
@@ -459,50 +581,76 @@ class DashboardController extends Controller
         })->toArray();
     }
 
-    private function getAlertes(): array
-    {
-        $alertes=[]; $today=Carbon::today(); $dans30=Carbon::today()->addDays(30);
-        $docsVeh = DB::table('documents_vehicules')->where('est_supprime',0)->whereNotNull('date_expiration')
-            ->where('date_expiration','<=',$dans30->toDateString())
-            ->select('vehicule_immatriculation','date_expiration','type_document')->orderBy('date_expiration')->limit(5)->get();
-        foreach ($docsVeh as $doc) {
-            $exp=$exp=Carbon::parse($doc->date_expiration); $j=(int)$today->diffInDays($exp,false);
-            $alertes[]=['type'=>$j<0?'error':'warning','title'=>$j<0?ucfirst(strtolower($doc->type_document)).' expiré':ucfirst(strtolower($doc->type_document)).' expire bientôt','vehicle'=>$doc->vehicule_immatriculation,'status'=>$j<0?'Jours dépassés':'Jj restants','days'=>(string)abs($j),'date'=>$exp->translatedFormat('M Y'),'icon'=>$j<0?'bi-exclamation-circle-fill':'bi-exclamation-triangle-fill'];
-        }
-        $docsChauf = DB::table('documents_chauffeurs')->join('utilisateurs','documents_chauffeurs.chauffeur_user_id','=','utilisateurs.id')
-            ->where('documents_chauffeurs.est_supprime',0)->whereNotNull('documents_chauffeurs.date_expiration')
-            ->where('documents_chauffeurs.date_expiration','<=',$dans30->toDateString())
-            ->select('documents_chauffeurs.date_expiration','documents_chauffeurs.type_document','utilisateurs.nom as chauffeur')
-            ->orderBy('documents_chauffeurs.date_expiration')->limit(3)->get();
-        foreach ($docsChauf as $doc) {
-            $exp=Carbon::parse($doc->date_expiration); $j=(int)$today->diffInDays($exp,false);
-            $alertes[]=['type'=>$j<0?'error':'warning','title'=>$j<0?'Permis expiré':'Permis à renouveler','vehicle'=>$doc->chauffeur,'status'=>$j<0?'Jours dépassés':'Jj restants','days'=>(string)abs($j),'date'=>$exp->translatedFormat('d M Y'),'icon'=>'bi-person-badge-fill'];
-        }
-        $alertsKm = DB::table('alertes_kilometrage')->where('est_resolue',0)->select('vehicule_immatriculation','type_alerte','km_restants')->orderBy('km_restants')->limit(3)->get();
-        foreach ($alertsKm as $a) {
-            $km=(int)($a->km_restants??0);
-            $alertes[]=['type'=>$km<=0?'error':'info','title'=>ucfirst(str_replace('_',' ',$a->type_alerte)),'vehicle'=>$a->vehicule_immatriculation,'status'=>'Km restants','days'=>'—','date'=>($km<=0?'Dépassé de ':'Dans ').number_format(abs($km),0,',',' ').' km','icon'=>$km<=0?'bi-exclamation-circle-fill':'bi-info-circle-fill'];
-        }
-        usort($alertes, fn($a,$b) => (['error'=>0,'warning'=>1,'info'=>2][$a['type']]??3)<=>(['error'=>0,'warning'=>1,'info'=>2][$b['type']]??3));
-        return array_slice($alertes, 0, 10);
-    }
-
+    /** Évolution du score : 1 requête + calcul PHP (au lieu d'une requête par mois) */
     private function getPerformancesChauffeurs(): array
     {
-        $debut=Carbon::now()->startOfMonth()->toDateString(); $fin=Carbon::now()->endOfMonth()->toDateString();
+        $now   = Carbon::now();
+        $debut = $now->copy()->startOfMonth()->toDateString();
+        $fin   = $now->copy()->endOfMonth()->toDateString();
+
         $rows = DB::table('performances_chauffeurs')->join('utilisateurs','performances_chauffeurs.chauffeur_user_id','=','utilisateurs.id')
             ->where('utilisateurs.est_supprime',0)->where('utilisateurs.est_actif',1)
             ->where('performances_chauffeurs.date_debut_periode','<=',$fin)->where('performances_chauffeurs.date_fin_periode','>=',$debut)
-            ->select('utilisateurs.nom as chauffeur',DB::raw('SUM(performances_chauffeurs.total_missions) as total_missions'),DB::raw('SUM(performances_chauffeurs.total_km) as total_km'),DB::raw('SUM(performances_chauffeurs.nb_accidents) as nb_accidents'),DB::raw('SUM(performances_chauffeurs.nb_anomalies_signalees) as nb_anomalies'),DB::raw('AVG(performances_chauffeurs.consommation_moyenne) as consommation_moyenne'),DB::raw('AVG(performances_chauffeurs.score_performance) as score'))
-            ->groupBy('performances_chauffeurs.chauffeur_user_id','utilisateurs.nom')->orderByDesc('score')->limit(10)->get();
-        $gs = DB::table('performances_chauffeurs')->where('date_debut_periode','<=',$fin)->where('date_fin_periode','>=',$debut)
-            ->selectRaw('SUM(total_missions) as total_missions,SUM(total_km) as total_km,SUM(nb_accidents) as total_accidents,SUM(nb_anomalies_signalees) as total_anomalies,AVG(score_performance) as score_moyen')->first();
-        $moisLabels=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc']; $mc=Carbon::now()->month; $annee=Carbon::now()->year; $evolution=[];
-        for ($mois=1;$mois<=$mc;$mois++) {
-            $dD=Carbon::create($annee,$mois,1)->startOfMonth()->toDateString(); $dF=Carbon::create($annee,$mois,1)->endOfMonth()->toDateString();
-            $s=DB::table('performances_chauffeurs')->where('date_debut_periode','<=',$dF)->where('date_fin_periode','>=',$dD)->avg('score_performance');
-            $evolution[]=['month'=>$moisLabels[$mois-1],'score'=>$s!==null?round((float)$s,1):0];
+            ->select('utilisateurs.nom as chauffeur',
+                DB::raw('SUM(performances_chauffeurs.total_missions) as total_missions'),
+                DB::raw('SUM(performances_chauffeurs.total_km) as total_km'),
+                DB::raw('SUM(performances_chauffeurs.nb_accidents) as nb_accidents'),
+                DB::raw('SUM(performances_chauffeurs.nb_anomalies_signalees) as nb_anomalies'),
+                DB::raw('AVG(performances_chauffeurs.consommation_moyenne) as consommation_moyenne'),
+                DB::raw('AVG(performances_chauffeurs.score_performance) as score'))
+            ->groupBy('performances_chauffeurs.chauffeur_user_id','utilisateurs.nom')
+            ->orderByDesc('score')->limit(10)->get();
+
+        $gs = DB::table('performances_chauffeurs')
+            ->where('date_debut_periode','<=',$fin)->where('date_fin_periode','>=',$debut)
+            ->selectRaw('SUM(total_missions) as total_missions,SUM(total_km) as total_km,SUM(nb_accidents) as total_accidents,SUM(nb_anomalies_signalees) as total_anomalies,AVG(score_performance) as score_moyen')
+            ->first();
+
+        // Évolution annuelle : 1 seule requête, regroupement par mois en PHP
+        $annee = $now->year;
+        $perfRows = DB::table('performances_chauffeurs')
+            ->where('date_debut_periode', '<=', "$annee-12-31")
+            ->where('date_fin_periode',   '>=', "$annee-01-01")
+            ->whereNotNull('score_performance')
+            ->get(['date_debut_periode', 'date_fin_periode', 'score_performance']);
+
+        $evolution = [];
+        for ($m = 1; $m <= $now->month; $m++) {
+            $dD = Carbon::create($annee, $m, 1)->startOfMonth()->toDateString();
+            $dF = Carbon::create($annee, $m, 1)->endOfMonth()->toDateString();
+            $scores = $perfRows->filter(fn ($r) => $r->date_debut_periode <= $dF && $r->date_fin_periode >= $dD)
+                               ->pluck('score_performance');
+            $evolution[] = [
+                'month' => self::MOIS[$m - 1],
+                'score' => $scores->isNotEmpty() ? round((float) $scores->avg(), 1) : 0,
+            ];
         }
-        return ['summary'=>['total_missions'=>(int)($gs->total_missions??0),'total_km'=>(int)($gs->total_km??0),'total_accidents'=>(int)($gs->total_accidents??0),'total_anomalies'=>(int)($gs->total_anomalies??0),'score_moyen'=>round((float)($gs->score_moyen??0),1)],'classement'=>$rows->map(fn($row,$idx)=>['rang'=>$idx+1,'chauffeur'=>$row->chauffeur,'total_missions'=>(int)$row->total_missions,'total_km'=>(int)$row->total_km,'nb_accidents'=>(int)$row->nb_accidents,'nb_anomalies'=>(int)$row->nb_anomalies,'consommation_moyenne'=>$row->consommation_moyenne!==null?round((float)$row->consommation_moyenne,2):null,'score'=>$row->score!==null?round((float)$row->score,1):null,'badge'=>match(true){($row->score??0)>=80=>'excellent',($row->score??0)>=60=>'bon',($row->score??0)>=40=>'moyen',default=>'faible'}])->toArray(),'evolution'=>$evolution];
+
+        return [
+            'summary' => [
+                'total_missions'  => (int) ($gs->total_missions ?? 0),
+                'total_km'        => (int) ($gs->total_km ?? 0),
+                'total_accidents' => (int) ($gs->total_accidents ?? 0),
+                'total_anomalies' => (int) ($gs->total_anomalies ?? 0),
+                'score_moyen'     => round((float) ($gs->score_moyen ?? 0), 1),
+            ],
+            'classement' => $rows->map(fn($row, $idx) => [
+                'rang'                 => $idx + 1,
+                'chauffeur'            => $row->chauffeur,
+                'total_missions'       => (int) $row->total_missions,
+                'total_km'             => (int) $row->total_km,
+                'nb_accidents'         => (int) $row->nb_accidents,
+                'nb_anomalies'         => (int) $row->nb_anomalies,
+                'consommation_moyenne' => $row->consommation_moyenne !== null ? round((float) $row->consommation_moyenne, 2) : null,
+                'score'                => $row->score !== null ? round((float) $row->score, 1) : null,
+                'badge'                => match (true) {
+                    ($row->score ?? 0) >= 80 => 'excellent',
+                    ($row->score ?? 0) >= 60 => 'bon',
+                    ($row->score ?? 0) >= 40 => 'moyen',
+                    default                  => 'faible',
+                },
+            ])->toArray(),
+            'evolution' => $evolution,
+        ];
     }
 }

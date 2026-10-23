@@ -87,11 +87,20 @@ class Utilisateur extends Authenticatable
     }
 
     /**
-     * Indique à Laravel quel champ utiliser comme identifiant de connexion.
+     * Nom de la colonne qui identifie l'utilisateur authentifié.
+     *
+     * IMPORTANT : doit rester 'id' (clé primaire).
+     * auth()->id() renvoie la valeur de cette colonne. Avec 'email',
+     * auth()->id() renvoyait l'adresse email au lieu de l'id numérique,
+     * ce qui cassait l'écriture dans journaux_audit (user_id = 0 →
+     * violation de la clé étrangère fk_audit_user).
+     *
+     * Le champ utilisé pour se connecter (email) est défini dans le
+     * contrôleur de login via les credentials, pas ici.
      */
     public function getAuthIdentifierName(): string
     {
-        return 'email';
+        return 'id';
     }
 
     // ══════════════════════════════════════════════════════════════════

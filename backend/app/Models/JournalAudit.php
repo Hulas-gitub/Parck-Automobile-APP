@@ -119,28 +119,35 @@ class JournalAudit extends Model
     // ────────────────────────────────────────────────────────────
     // Point d'entrée unique utilisé partout (trait + controllers)
     // ────────────────────────────────────────────────────────────
-    public static function tracer(
-        ?int $userId,
-        string $action,
-        string $table,
-        ?string $idEnregistrement = null,
-        ?array $anciennes = null,
-        ?array $nouvelles = null,
-        ?string $libelle = null
-    ): self {
-        return self::create([
-            'user_id'            => $userId ?? auth()->id(),
-            'action'             => $action,
-            'libelle'            => $libelle,
-            'nom_table'          => $table,
-            'id_enregistrement'  => $idEnregistrement,
-            'anciennes_valeurs'  => $anciennes,
-            'nouvelles_valeurs'  => $nouvelles,
-            'adresse_ip'         => request()->ip(),
-            'user_agent'         => request()->userAgent(),
-        ]);
-    }
 
+public static function tracer(
+    int|string|null $userId,
+    string $action,
+    string $table,
+    int|string|null $idEnregistrement = null,
+    ?array $anciennes = null,
+    ?array $nouvelles = null,
+    ?string $libelle = null
+): self {
+    // On n'accepte qu'un id numérique valide. Sinon (email, 0, null...),
+    // on prend la clé primaire de l'utilisateur connecté.
+    $auteurId = (is_numeric($userId) && (int) $userId > 0)
+        ? (int) $userId
+        : auth()->user()?->getKey();
+
+    return self::create([
+        'user_id'            => (is_numeric($auteurId) && (int) $auteurId > 0) ? (int) $auteurId : null,
+        'action'             => $action,
+        'libelle'            => $libelle,
+        'nom_table'          => $table,
+        'id_enregistrement'  => $idEnregistrement !== null ? (string) $idEnregistrement : null,
+        'anciennes_valeurs'  => $anciennes,
+        'nouvelles_valeurs'  => $nouvelles,
+        'adresse_ip'         => request()->ip(),
+        'user_agent'         => request()->userAgent(),
+    ]);
+}
+    
     public static function getHistorique(string $table, string $id, int $limite = 50)
     {
         return self::where('nom_table', $table)->where('id_enregistrement', $id)

@@ -98,25 +98,21 @@ const Login = () => {
 
           switch (roleCode) {
             case 'admin':
-              window.location.href = '/admin/navigation/dashboard';
-              break;
             case 'chef_parc':
-              window.location.href = '/admin/navigation/dashboard';
+            case 'daal':
+              window.location.href = '/Navigation/Dashboard';
               break;
             case 'chef_tf':
-              window.location.href = '/dashboard-chef-tf';
+              window.location.href = '/Navigation/Missions';
               break;
             case 'mecanicien':
-              window.location.href = '/dashboard-mecanicien';
-              break;
-            case 'agent_pc_radio':
-              window.location.href = '/dashboard-pc-radio';
+              window.location.href = '/Navigation/InterventionsVehicules';
               break;
             case 'chauffeur':
-              window.location.href = '/dashboard-chauffeur';
+              window.location.href = '/Navigation/Missions';
               break;
             default:
-              window.location.href = '/dashboard';
+              window.location.href = '/Navigation/Dashboard';
           }
         });
       }

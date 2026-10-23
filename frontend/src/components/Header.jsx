@@ -11,6 +11,20 @@ import {
   syncNotifications
 } from '../api/Admin-Axios/Notifications-axios';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Couches (z-index) — IMPORTANT
+//   Les pages affichent un calque plein écran « clic ailleurs = fermer »
+//   (<div className="fixed inset-0 z-30" onClick=...>) rendu APRÈS le Header.
+//   À z-index égal, c'est l'ordre du DOM qui décide : le calque recouvrait donc
+//   le panneau de notifications et avalait les clics (selon le navigateur).
+//   Le Header doit donc être AU-DESSUS du calque (30) mais SOUS la sidebar (40).
+// ─────────────────────────────────────────────────────────────────────────────
+const Z_HEADER = 35;
+
+// Une notification est « non lue » tant que est_lu n'est pas explicitement à 1
+// (l'API peut renvoyer 0, "0", false ou null selon le cas)
+const isNotifUnread = (n) => Number(n?.est_lu) !== 1;
+
 const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, setShowNotifications, showProfile, setShowProfile }) => {
   const { theme } = useTheme();
   const navigate  = useNavigate();
@@ -27,6 +41,29 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
   const [hasMoreNotifications, setHasMoreNotifications] = useState(true);
   const [loadingMore,          setLoadingMore]          = useState(false);
   const notificationsContainerRef = useRef(null);
+  const notificationMenuRef       = useRef(null);
+  const profileMenuRef            = useRef(null);
+
+  // ── Fermer les menus au clic en dehors ──
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showNotifications && notificationMenuRef.current && !notificationMenuRef.current.contains(event.target)) {
+        setShowNotifications(false);
+      }
+      if (showProfile && profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setShowProfile(false);
+      }
+    };
+
+    if (showNotifications || showProfile) {
+      document.addEventListener('mousedown', handleClickOutside, true);
+      document.addEventListener('touchstart', handleClickOutside, true);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside, true);
+      document.removeEventListener('touchstart', handleClickOutside, true);
+    };
+  }, [showNotifications, showProfile, setShowNotifications, setShowProfile]);
 
   // ── Charger l'utilisateur ──
   useEffect(() => {
@@ -51,18 +88,23 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
     }
   }, []);
 
-  // ── Compteur non lu ──
-  useEffect(() => {
-    const loadUnreadCount = async () => {
-      try {
-        const response = await getUnreadCount();
-        setUnreadCount(response.data?.unread_count ?? 0);
-      } catch {
-        setUnreadCount(0);
-      }
-    };
-    loadUnreadCount();
+  // ── Compteur non lu (au chargement, puis toutes les 60 s quand l'onglet est visible) ──
+  const loadUnreadCount = useCallback(async () => {
+    try {
+      const response = await getUnreadCount();
+      setUnreadCount(response.data?.unread_count ?? 0);
+    } catch {
+      /* on garde la valeur actuelle : une erreur réseau ponctuelle ne doit pas la remettre à 0 */
+    }
   }, []);
+
+  useEffect(() => {
+    loadUnreadCount();
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') loadUnreadCount();
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [loadUnreadCount]);
 
   // ── Charger les notifications ──
   const loadNotifications = useCallback(async (page = 1, append = false) => {
@@ -102,18 +144,27 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
 
   // ── Marquer une notification comme lue ──
   const handleMarkAsRead = async (notificationId, event) => {
-    event.stopPropagation();
+    event?.stopPropagation();
     try {
       await readNotification(notificationId);
       setNotifications(prev => prev.filter(n => n.id !== notificationId));
       setUnreadCount(prev => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Erreur marquage lecture:', error);
+      Swal.fire({
+        icon: 'error', title: 'Erreur',
+        text: 'Impossible de marquer la notification comme lue',
+        confirmButtonText: "D'accord",
+        background: darkMode ? '#111827' : '#ffffff',
+        color: darkMode ? '#f1f5f9' : '#111827',
+        confirmButtonColor: theme.primary,
+      });
     }
   };
 
   // ── Tout marquer comme lu ──
-  const handleMarkAllAsRead = async () => {
+  const handleMarkAllAsRead = async (event) => {
+    event?.stopPropagation();
     try {
       await readAllNotifications();
       setNotifications([]);
@@ -139,7 +190,8 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
   };
 
   // ── Synchroniser ──
-  const handleSyncNotifications = async () => {
+  const handleSyncNotifications = async (event) => {
+    event?.stopPropagation();
     try {
       const response = await syncNotifications();
       Swal.fire({
@@ -158,6 +210,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
         confirmButtonText: "D'accord",
         background: darkMode ? '#111827' : '#ffffff',
         color: darkMode ? '#f1f5f9' : '#111827',
+        confirmButtonColor: theme.primary,
       });
     }
   };
@@ -293,11 +346,15 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
         .notification-panel { width: 560px; max-width: 95vw; }
         .notification-list  { max-height: 520px; }
         .notif-item         { transition: background 0.15s ease; }
+
+        /* Boutons du panneau : toujours cliquables, même pendant les animations */
+        .notif-panel button { cursor: pointer; pointer-events: auto; }
       `}</style>
 
+      {/* z-index : au-dessus du calque « clic ailleurs » des pages (z-30), sous la sidebar (z-40) */}
       <header
-        className={`hdr-root ${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} border-b px-6 py-4 flex items-center justify-between fixed top-0 right-0 z-30 transition-all duration-300`}
-        style={{ left: sidebarCollapsed ? '5rem' : '18rem' }}
+        className={`hdr-root ${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} border-b px-6 py-4 flex items-center justify-between fixed top-0 right-0 transition-all duration-300`}
+        style={{ left: sidebarCollapsed ? '4.5rem' : '15rem', zIndex: Z_HEADER }}
       >
 
         {/* ── Espace gauche ── */}
@@ -366,6 +423,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
             <div style={skeletonBase('36px', '36px', '10px', 0)} />
           ) : (
             <button
+              type="button"
               onClick={() => setDarkMode(!darkMode)}
               className={`hdr-icon-btn p-2 rounded-lg ${darkMode ? 'bg-gray-800 text-yellow-400' : 'bg-gray-100 text-gray-700'}`}
             >
@@ -377,12 +435,13 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
           )}
 
           {/* ── Notifications ── */}
-          <div className="relative">
+          <div className="relative" ref={notificationMenuRef}>
             {!userReady ? (
               <div style={skeletonBase('36px', '36px', '10px', 60)} />
             ) : (
               <>
                 <button
+                  type="button"
                   onClick={() => { setShowNotifications(!showNotifications); setShowProfile(false); }}
                   className={`hdr-icon-btn p-2 rounded-lg ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'} relative`}
                 >
@@ -391,7 +450,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
 
                 {unreadCount > 0 && (
                   <span
-                    className="hdr-badge absolute -top-1 -right-1 min-w-[20px] h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold px-1"
+                    className="hdr-badge absolute -top-1 -right-1 min-w-[20px] h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold px-1 pointer-events-none"
                   >
                     {unreadCount > 99 ? '99+' : unreadCount}
                   </span>
@@ -402,7 +461,9 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
             {/* ── Panneau notifications ── */}
             {showNotifications && (
               <div
-                className={`notif-panel notification-panel absolute right-0 mt-2 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-xl shadow-2xl z-50 overflow-hidden`}
+                className={`notif-panel notification-panel absolute right-0 mt-2 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-xl shadow-2xl overflow-hidden`}
+                style={{ zIndex: 50 }}
+                onClick={(e) => e.stopPropagation()}
               >
                 {/* En-tête */}
                 <div className={`px-5 py-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex items-center justify-between`}>
@@ -418,6 +479,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
                   <div className="flex items-center gap-3">
                     {unreadCount > 0 && (
                       <button
+                        type="button"
                         onClick={handleMarkAllAsRead}
                         className={`text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors ${darkMode ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
                       >
@@ -425,6 +487,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
                       </button>
                     )}
                     <button
+                      type="button"
                       onClick={handleSyncNotifications}
                       className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-500 hover:bg-gray-100'}`}
                       title="Synchroniser"
@@ -469,15 +532,15 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
                   ) : (
                     <>
                       {notifications.map((notif, idx) => {
-                        const style   = getNotificationStyle(notif);
-                        const isUnread = notif.est_lu === 0;
+                        const style    = getNotificationStyle(notif);
+                        const isUnread = isNotifUnread(notif);
                         return (
                           <div
                             key={notif.id}
                             className={`notif-item notif-item-enter px-5 py-4 border-b ${darkMode ? 'border-gray-700/60' : 'border-gray-100'} ${
                               isUnread
                                 ? (darkMode ? 'bg-blue-900/15' : 'bg-blue-50/70')
-                                : (darkMode ? 'hover:bg-gray-750' : 'hover:bg-gray-50')
+                                : (darkMode ? 'hover:bg-gray-700/40' : 'hover:bg-gray-50')
                             }`}
                             style={{ animationDelay: `${idx * 35}ms` }}
                           >
@@ -492,6 +555,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
                                   </p>
                                   {isUnread && (
                                     <button
+                                      type="button"
                                       onClick={(e) => handleMarkAsRead(notif.id, e)}
                                       className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${
                                         darkMode
@@ -536,6 +600,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
                 {/* Pied */}
                 <div className={`px-5 py-3.5 border-t ${darkMode ? 'border-gray-700 bg-gray-800/80' : 'border-gray-200 bg-gray-50'} text-center`}>
                   <button
+                    type="button"
                     onClick={handleViewAllNotifications}
                     className={`text-sm font-bold transition-colors ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}
                   >
@@ -547,7 +612,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
           </div>
 
           {/* ── Avatar profil ── */}
-          <div className="relative">
+          <div className="relative" ref={profileMenuRef}>
             {!userReady ? (
               <div style={skeletonBase('40px', '40px', '50%', 120)} />
             ) : (
@@ -562,7 +627,9 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
 
                 {showProfile && (
                   <div
-                    className={`profile-panel absolute right-0 mt-2 w-72 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-xl shadow-2xl z-50 overflow-hidden`}
+                    className={`profile-panel absolute right-0 mt-2 w-72 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border rounded-xl shadow-2xl overflow-hidden`}
+                    style={{ zIndex: 50 }}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     {/* Avatar + infos */}
                     <div className={`p-5 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>

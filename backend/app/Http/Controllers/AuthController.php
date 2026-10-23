@@ -498,15 +498,51 @@ class AuthController extends Controller
     private function getPermissionsByRole(string $roleCode): array
     {
         $permissions = [
-            // ✅ En cours de développement — à remplir une fois toutes les pages admin terminées
-            'admin' => [],
-
-            // 🔜 À faire après admin
-            'chef_parc' => [],
-            'chef_tf' => [],
-            'mecanicien' => [],
-            'agent_pc_radio' => [],
-            'chauffeur' => [],
+            'admin' => ['*'],
+            'chef_parc' => [
+                'dashboard.view',
+                'vehicules.view',
+                'vehicules.manage',
+                'carburant.manage',
+                'interventions.manage',
+                'inspections.view',
+                'missions.manage',
+                'accidents.manage',
+                'stock.manage',
+                'documents.view',
+            ],
+            'chef_tf' => [
+                'dashboard.view',
+                'missions.tf',
+                'chauffeurs.tf',
+                'accidents.manage',
+            ],
+            'mecanicien' => [
+                'interventions.execute',
+                'inspections.manage',
+                'stock.view',
+                'outils.manage',
+                'demandes.view',
+            ],
+            'agent_pc_radio' => [
+                'cles.manage',
+                'vehicules.view',
+                'inspections.view',
+            ],
+            'chauffeur' => [
+                'missions.view',
+                'anomalies.create',
+                'inspections.create',
+                'carburant.create',
+                'demandes.create',
+            ],
+            'daal' => [
+                'dashboard.view',
+                'vehicules.view',
+                'demandes.valider',
+                'demandes.view',
+                'documents.view',
+            ],
         ];
 
         return $permissions[$roleCode] ?? [];

@@ -20,6 +20,18 @@ use Carbon\Carbon;
  *     n'a aucun document enregistré (statut "sans_document") ;
  *   - la recherche par période ne filtre que sur les documents qui ont
  *     une date_expiration renseignée.
+ *
+ * DOCUMENTS PERMANENTS (ex. Carte grise) :
+ *   Certains types de documents (typiquement la Carte grise) n'expirent
+ *   jamais. Dans ce cas, l'utilisateur ne renseigne volontairement AUCUNE
+ *   date_expiration lors de la saisie : l'absence de date est le signal
+ *   métier que ce document n'a pas de validité limitée dans le temps — ce
+ *   n'est PAS une donnée manquante.
+ *
+ *   On ne doit donc JAMAIS exclure ces documents de la jointure (sinon le
+ *   véhicule apparaît à tort comme "sans_document"), et on ne doit pas non
+ *   plus essayer de calculer des jours_restants dessus. On les identifie
+ *   avec un statut dédié : 'permanent'.
  */
 class HistoriqueVehiculeController extends Controller
 {
@@ -34,7 +46,10 @@ class HistoriqueVehiculeController extends Controller
      *  - immatriculation : recherche par matricule (partielle, tolère espaces/tirets)
      *  - date_debut, date_fin : période de recherche sur la date d'expiration
      *  - type_document : filtre optionnel
-     *  - statut : valide | expire_bientot | expire | sans_document
+     *  - statut : une ou plusieurs valeurs séparées par virgule parmi
+     *             valide | expire_bientot | expire | sans_document | permanent
+     *             Ex : "valide,permanent" → documents en règle (valides +
+     *             documents permanents genre carte grise) affichés ensemble.
      *  - page, per_page
      */
     public function index(Request $request): JsonResponse
@@ -44,7 +59,7 @@ class HistoriqueVehiculeController extends Controller
             'date_fin'        => 'nullable|date|after_or_equal:date_debut',
             'immatriculation' => 'nullable|string|max:30',
             'type_document'   => 'nullable|string|max:100',
-            'statut'          => 'nullable|string|in:valide,expire_bientot,expire,sans_document',
+            'statut'          => 'nullable|string|max:255',
             'page'            => 'nullable|integer|min:1',
             'per_page'        => 'nullable|integer|min:1|max:200',
         ]);
@@ -52,15 +67,35 @@ class HistoriqueVehiculeController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
+        // ── Validation manuelle du statut (liste CSV) ───────────────────────────
+        // On ne peut pas utiliser la règle "in:" de Laravel ici car le champ
+        // peut contenir plusieurs valeurs séparées par des virgules
+        // (ex: "valide,permanent"). On valide donc chaque valeur à la main.
+        $statutsAutorises = ['valide', 'expire_bientot', 'expire', 'sans_document', 'permanent'];
+        $statutFilter = null;
+        if ($statutRaw = $request->get('statut')) {
+            $statutFilter = array_values(array_filter(array_map('trim', explode(',', $statutRaw))));
+            $invalides    = array_diff($statutFilter, $statutsAutorises);
+            if (count($invalides) > 0) {
+                return response()->json([
+                    'errors' => ['statut' => ['Valeur(s) de statut invalide(s) : ' . implode(', ', $invalides)]],
+                ], 422);
+            }
+        }
+
         $perPage = min(max((int) $request->get('per_page', 15), 1), 200);
         $page    = max((int) $request->get('page', 1), 1);
 
-        // ── Base = VEHICULES, LEFT JOIN documents (avec date_expiration renseignée) ──
+        // ── Base = VEHICULES, LEFT JOIN documents ───────────────────────────────
+        // NB : on NE filtre PLUS sur whereNotNull('d.date_expiration') ici.
+        // Un document sans date_expiration (ex. Carte grise) doit quand même
+        // rejoindre la ligne : c'est un document "permanent", pas une absence
+        // de document. Le filtre sur la période (date_debut/date_fin) continue
+        // de s'appliquer plus bas, lui, uniquement sur les documents datés.
         $query = DB::table('vehicules as v')
             ->leftJoin('documents_vehicules as d', function ($join) {
                 $join->on('d.vehicule_immatriculation', '=', 'v.immatriculation')
-                     ->where('d.est_supprime', 0)
-                     ->whereNotNull('d.date_expiration');
+                     ->where('d.est_supprime', 0);
             })
             ->leftJoin('marques as ma',      'ma.id', '=', 'v.marque_id')
             ->leftJoin('modeles as mo',      'mo.id', '=', 'v.modele_id')
@@ -83,6 +118,9 @@ class HistoriqueVehiculeController extends Controller
         }
 
         // ── Filtre période sur la date d'expiration ─────────────────────────────
+        // Volontairement, ce filtre ne concerne que les documents datés : un
+        // document permanent (sans date) n'a pas vocation à apparaître dans une
+        // recherche par période d'expiration.
         if ($dateDebut = $request->get('date_debut')) {
             $query->whereDate('d.date_expiration', '>=', $dateDebut);
         }
@@ -114,28 +152,45 @@ class HistoriqueVehiculeController extends Controller
 
         // ── Calcul du statut de conformité pour chaque ligne ────────────────────
         $data = $rows->map(function ($row) use ($today) {
-            if (!$row->date_expiration) {
-                return [
-                    'document_id'             => $row->document_id,
-                    'immatriculation'         => $row->immatriculation,
-                    'marque'                  => $row->marque,
-                    'modele'                  => $row->modele,
-                    'direction'               => $row->direction,
-                    'ville'                   => $row->ville,
-                    'affectation'             => $row->affectation,
-                    'responsable_du_vehicule' => $row->responsable_du_vehicule,
-                    'vehicule_statut'         => $row->vehicule_statut,
-                    'type_document'           => $row->type_document,
-                    'nom_document'            => $row->nom_document,
-                    'date_emission'           => $row->date_emission,
-                    'date_expiration'         => null,
-                    'jours_restants'          => null,
-                    'statut'                  => 'sans_document',
-                    'niveau_urgence'          => null,
-                    'url_fichier'             => null,
-                ];
+            $base = [
+                'document_id'             => $row->document_id,
+                'immatriculation'         => $row->immatriculation,
+                'marque'                  => $row->marque,
+                'modele'                  => $row->modele,
+                'direction'               => $row->direction,
+                'ville'                   => $row->ville,
+                'affectation'             => $row->affectation,
+                'responsable_du_vehicule' => $row->responsable_du_vehicule,
+                'vehicule_statut'         => $row->vehicule_statut,
+                'type_document'           => $row->type_document,
+                'nom_document'            => $row->nom_document,
+                'date_emission'           => $row->date_emission,
+            ];
+
+            // Cas 1 : aucun document du tout pour ce véhicule (jointure vide)
+            if (!$row->document_id) {
+                return array_merge($base, [
+                    'date_expiration' => null,
+                    'jours_restants'  => null,
+                    'statut'          => 'sans_document',
+                    'niveau_urgence'  => null,
+                    'url_fichier'     => null,
+                ]);
             }
 
+            // Cas 2 : document existant mais SANS date_expiration
+            // → document permanent (ex. Carte grise) : n'expire pas, point final.
+            if (!$row->date_expiration) {
+                return array_merge($base, [
+                    'date_expiration' => null,
+                    'jours_restants'  => null,
+                    'statut'          => 'permanent',
+                    'niveau_urgence'  => null,
+                    'url_fichier'     => $this->buildFileUrl($row->chemin_fichier),
+                ]);
+            }
+
+            // Cas 3 : document avec date_expiration → calcul normal
             $expiration    = Carbon::parse($row->date_expiration)->startOfDay();
             $joursRestants = $today->diffInDays($expiration, false);
 
@@ -151,30 +206,27 @@ class HistoriqueVehiculeController extends Controller
                 $statut = 'valide'; $niveau = null;
             }
 
-            return [
-                'document_id'             => $row->document_id,
-                'immatriculation'         => $row->immatriculation,
-                'marque'                  => $row->marque,
-                'modele'                  => $row->modele,
-                'direction'               => $row->direction,
-                'ville'                   => $row->ville,
-                'affectation'             => $row->affectation,
-                'responsable_du_vehicule' => $row->responsable_du_vehicule,
-                'vehicule_statut'         => $row->vehicule_statut,
-                'type_document'           => $row->type_document,
-                'nom_document'            => $row->nom_document,
-                'date_emission'           => $row->date_emission,
-                'date_expiration'         => $row->date_expiration,
-                'jours_restants'          => (int) $joursRestants,
-                'statut'                  => $statut,
-                'niveau_urgence'          => $niveau,
-                'url_fichier'             => $this->buildFileUrl($row->chemin_fichier),
-            ];
+            return array_merge($base, [
+                'date_expiration' => $row->date_expiration,
+                'jours_restants'  => (int) $joursRestants,
+                'statut'          => $statut,
+                'niveau_urgence'  => $niveau,
+                'url_fichier'     => $this->buildFileUrl($row->chemin_fichier),
+            ]);
         });
 
+        $compteurs = [
+            'expire'         => $data->where('statut', 'expire')->count(),
+            'expire_bientot' => $data->where('statut', 'expire_bientot')->count(),
+            'valide'         => $data->where('statut', 'valide')->count(),
+            'sans_document'  => $data->where('statut', 'sans_document')->count(),
+            'permanent'      => $data->where('statut', 'permanent')->count(),
+        ];
+
         // ── Filtre par statut calculé (post-calcul, car statut est dérivé en PHP) ──
-        if ($statutFilter = $request->get('statut')) {
-            $data = $data->filter(fn ($d) => $d['statut'] === $statutFilter)->values();
+        // Accepte une liste de statuts séparés par virgule (ex: "valide,permanent").
+        if ($statutFilter) {
+            $data = $data->filter(fn ($d) => in_array($d['statut'], $statutFilter, true))->values();
         }
 
         $total     = $data->count();
@@ -187,12 +239,7 @@ class HistoriqueVehiculeController extends Controller
             'current_page' => $page,
             'last_page'    => $lastPage,
             'per_page'     => $perPage,
-            'compteurs'    => [
-                'expire'         => $data->where('statut', 'expire')->count(),
-                'expire_bientot' => $data->where('statut', 'expire_bientot')->count(),
-                'valide'         => $data->where('statut', 'valide')->count(),
-                'sans_document'  => $data->where('statut', 'sans_document')->count(),
-            ],
+            'compteurs'    => $compteurs,
         ]);
     }
 

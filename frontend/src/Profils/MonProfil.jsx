@@ -4,6 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import Swal from 'sweetalert2';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
+import Footer from '../components/Footer';
 import profileApi from '../api/profile-axios'; // ✅ Instance axios dédiée au profil
 
 
@@ -29,19 +30,17 @@ const PasswordInput = React.memo(({
         placeholder={placeholder}
         disabled={disabled}
         autoComplete="new-password"
-        className={`w-full pl-10 pr-12 py-3 rounded-xl border-2 focus:outline-none focus:ring-0 transition-all duration-200 ${
-          darkMode
+        className={`w-full pl-10 pr-12 py-3 rounded-xl border-2 focus:outline-none focus:ring-0 transition-all duration-200 ${darkMode
             ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-yellow-500'
             : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-yellow-400'
-        }`}
+          }`}
       />
       <button
         type="button"
         onClick={onToggle}
         tabIndex={-1}
-        className={`absolute inset-y-0 right-0 flex items-center pr-4 transition-colors ${
-          darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-400 hover:text-yellow-500'
-        }`}
+        className={`absolute inset-y-0 right-0 flex items-center pr-4 transition-colors ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-400 hover:text-yellow-500'
+          }`}
       >
         <i className={`bi ${show ? 'bi-eye-slash-fill' : 'bi-eye-fill'} text-sm`} />
       </button>
@@ -64,18 +63,18 @@ const MonProfile = () => {
   });
 
   useEffect(() => {
-    try { localStorage.setItem('fleetify_darkMode', String(darkMode)); } catch {}
+    try { localStorage.setItem('fleetify_darkMode', String(darkMode)); } catch { }
   }, [darkMode]);
 
-  const [sidebarCollapsed, setSidebarCollapsed]     = useState(false);
-  const [showNotifications, setShowNotifications]   = useState(false);
-  const [showProfile, setShowProfile]               = useState(false);
-  const [activeTab, setActiveTab]                   = useState('profil');
-  const [isEditing, setIsEditing]                   = useState(false);
-  const [loadingProfile, setLoadingProfile]         = useState(false);
-  const [loadingPassword, setLoadingPassword]       = useState(false);
-  const { theme }   = useTheme();
-  const navigate    = useNavigate();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [activeTab, setActiveTab] = useState('profil');
+  const [isEditing, setIsEditing] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [loadingPassword, setLoadingPassword] = useState(false);
+  const { theme } = useTheme();
+  const navigate = useNavigate();
 
   // ── Référence stable à l'utilisateur localStorage ──────────
   const storedUserRef = useRef(null);
@@ -87,18 +86,18 @@ const MonProfile = () => {
 
   // ── État du profil ──────────────────────────────────────────
   const [profileData, setProfileData] = useState({
-    nom:                storedUser.nom                 || '',
-    email:              storedUser.email               || '',
-    role:               storedUser.role?.libelle       || '',
-    direction:          storedUser.direction?.nom      || '',
-    derniere_connexion: storedUser.derniere_connexion  || '',
-    est_actif:          storedUser.est_actif           ?? true,
-    initiales:          storedUser.initiales           || '',
-    password_status:    storedUser.password_status     || null,
+    nom: storedUser.nom || '',
+    email: storedUser.email || '',
+    role: storedUser.role?.libelle || '',
+    direction: storedUser.direction?.nom || '',
+    derniere_connexion: storedUser.derniere_connexion || '',
+    est_actif: storedUser.est_actif ?? true,
+    initiales: storedUser.initiales || '',
+    password_status: storedUser.password_status || null,
   });
 
   const [editData, setEditData] = useState({
-    nom:   profileData.nom,
+    nom: profileData.nom,
     email: profileData.email,
   });
 
@@ -114,34 +113,34 @@ const MonProfile = () => {
           storedUserRef.current = u;
 
           const fresh = {
-            nom:                u.nom                   || '',
-            email:              u.email                 || '',
-            role:               u.role?.libelle         || '',
-            direction:          u.direction?.nom        || '',
-            derniere_connexion: u.derniere_connexion    || '',
-            est_actif:          u.est_actif             ?? true,
-            initiales:          u.initiales             || '',
-            password_status:    u.password_status       || null,
+            nom: u.nom || '',
+            email: u.email || '',
+            role: u.role?.libelle || '',
+            direction: u.direction?.nom || '',
+            derniere_connexion: u.derniere_connexion || '',
+            est_actif: u.est_actif ?? true,
+            initiales: u.initiales || '',
+            password_status: u.password_status || null,
           };
           setProfileData(fresh);
           // Ne pas écraser editData si l'utilisateur édite déjà
           setEditData(prev => isEditing ? prev : { nom: fresh.nom, email: fresh.email });
         }
       })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      .catch(() => { });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Mot de passe ────────────────────────────────────────────
   const [passwordData, setPasswordData] = useState({
     current_password: '',
-    new_password:     '',
+    new_password: '',
     confirm_password: '',
   });
 
   const [showPasswords, setShowPasswords] = useState({
     current: false,
-    new:     false,
+    new: false,
     confirm: false,
   });
 
@@ -185,7 +184,7 @@ const MonProfile = () => {
   // ── SweetAlert config ───────────────────────────────────────
   const getSwalConfig = () => ({
     background: darkMode ? '#111827' : '#ffffff',
-    color:      darkMode ? '#f1f5f9' : '#111827',
+    color: darkMode ? '#f1f5f9' : '#111827',
     confirmButtonColor: theme.primary,
     customClass: { popup: 'swal-profile-popup', confirmButton: 'swal-confirm-btn' },
   });
@@ -193,25 +192,25 @@ const MonProfile = () => {
   // ✅ Succès : fermeture automatique après 2.5s, PAS de bouton
   const showSuccess = (msg) => Swal.fire({
     ...getSwalConfig(),
-    icon:              'success',
-    title:             'Succès',
-    text:              msg,
-    timer:             2500,
-    timerProgressBar:  true,
+    icon: 'success',
+    title: 'Succès',
+    text: msg,
+    timer: 2500,
+    timerProgressBar: true,
     showConfirmButton: false,
     allowOutsideClick: false,
-    iconColor:         '#22c55e',
+    iconColor: '#22c55e',
   });
 
   // ✅ Erreur : bouton "D'accord" obligatoire pour fermer
   const showError = (msg) => Swal.fire({
     ...getSwalConfig(),
-    icon:              'error',
-    title:             'Erreur',
-    text:              msg,
+    icon: 'error',
+    title: 'Erreur',
+    text: msg,
     showConfirmButton: true,
     confirmButtonText: "D'accord",
-    iconColor:         '#ef4444',
+    iconColor: '#ef4444',
   });
 
   // ── Alerte expiration mot de passe ──────────────────────────
@@ -254,7 +253,7 @@ const MonProfile = () => {
     setLoadingProfile(true);
     try {
       const res = await profileApi.put('/profile', {
-        nom:   editData.nom,
+        nom: editData.nom,
         email: editData.email,
       });
 
@@ -266,14 +265,14 @@ const MonProfile = () => {
         // Afficher le succès puis rafraîchir la page pour refléter les changements
         await Swal.fire({
           ...getSwalConfig(),
-          icon:              'success',
-          title:             'Succès',
-          text:              'Profil mis à jour avec succès !',
-          timer:             2000,
-          timerProgressBar:  true,
+          icon: 'success',
+          title: 'Succès',
+          text: 'Profil mis à jour avec succès !',
+          timer: 2000,
+          timerProgressBar: true,
           showConfirmButton: false,
           allowOutsideClick: false,
-          iconColor:         '#22c55e',
+          iconColor: '#22c55e',
         });
 
         // Rechargement de la page après fermeture du SweetAlert
@@ -323,14 +322,14 @@ const MonProfile = () => {
         // 2. SweetAlert timer 3s sans bouton, on attend la fermeture complète
         await Swal.fire({
           ...getSwalConfig(),
-          icon:              'success',
-          title:             'Mot de passe modifié',
-          text:              'Votre mot de passe a été modifié avec succès. Vous allez être redirigé vers la page de connexion.',
-          timer:             3000,
-          timerProgressBar:  true,
+          icon: 'success',
+          title: 'Mot de passe modifié',
+          text: 'Votre mot de passe a été modifié avec succès. Vous allez être redirigé vers la page de connexion.',
+          timer: 3000,
+          timerProgressBar: true,
           showConfirmButton: false,
           allowOutsideClick: false,
-          iconColor:         '#22c55e',
+          iconColor: '#22c55e',
         });
 
         // 3. Redirection vers login après fermeture — session déjà vidée
@@ -347,37 +346,36 @@ const MonProfile = () => {
   const getPasswordStrength = (pwd) => {
     if (!pwd) return { score: 0, label: '', color: '' };
     let score = 0;
-    if (pwd.length >= 8)           score++;
-    if (pwd.length >= 12)          score++;
-    if (/[A-Z]/.test(pwd))         score++;
-    if (/[0-9]/.test(pwd))         score++;
-    if (/[^A-Za-z0-9]/.test(pwd))  score++;
+    if (pwd.length >= 8) score++;
+    if (pwd.length >= 12) score++;
+    if (/[A-Z]/.test(pwd)) score++;
+    if (/[0-9]/.test(pwd)) score++;
+    if (/[^A-Za-z0-9]/.test(pwd)) score++;
     if (score <= 1) return { score, label: 'Très faible', color: '#ef4444' };
-    if (score === 2) return { score, label: 'Faible',     color: '#f97316' };
-    if (score === 3) return { score, label: 'Moyen',      color: '#eab308' };
-    if (score === 4) return { score, label: 'Fort',       color: '#22c55e' };
-    return              { score, label: 'Très fort',   color: '#10b981' };
+    if (score === 2) return { score, label: 'Faible', color: '#f97316' };
+    if (score === 3) return { score, label: 'Moyen', color: '#eab308' };
+    if (score === 4) return { score, label: 'Fort', color: '#22c55e' };
+    return { score, label: 'Très fort', color: '#10b981' };
   };
 
   const pwdStrength = getPasswordStrength(passwordData.new_password);
 
   // ── Style input commun ──────────────────────────────────────
   const inputClass = (editable) =>
-    `w-full pl-10 pr-4 py-3 rounded-xl border-2 transition-all duration-200 focus:outline-none ${
-      editable
-        ? darkMode
-          ? 'bg-gray-800 border-gray-700 text-white focus:border-yellow-500'
-          : 'bg-white border-gray-200 text-gray-900 focus:border-yellow-400'
-        : darkMode
-          ? 'bg-gray-800/50 border-gray-800 text-gray-400 cursor-not-allowed'
-          : 'bg-gray-50 border-gray-100 text-gray-500 cursor-not-allowed'
+    `w-full pl-10 pr-4 py-3 rounded-xl border-2 transition-all duration-200 focus:outline-none ${editable
+      ? darkMode
+        ? 'bg-gray-800 border-gray-700 text-white focus:border-yellow-500'
+        : 'bg-white border-gray-200 text-gray-900 focus:border-yellow-400'
+      : darkMode
+        ? 'bg-gray-800/50 border-gray-800 text-gray-400 cursor-not-allowed'
+        : 'bg-gray-50 border-gray-100 text-gray-500 cursor-not-allowed'
     }`;
 
   // ════════════════════════════════════════════════════════════
   // RENDER
   // ════════════════════════════════════════════════════════════
   return (
-    <div className={`${darkMode ? 'bg-gray-950' : 'bg-gray-50'} min-h-screen transition-colors duration-300`}>
+    <div className={`${darkMode ? 'bg-gray-950' : 'bg-gray-50'} min-h-screen flex flex-col transition-colors duration-300`}>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
 
       <style>{`
@@ -395,28 +393,27 @@ const MonProfile = () => {
         darkMode={darkMode} setDarkMode={setDarkMode}
         sidebarCollapsed={sidebarCollapsed}
         showNotifications={showNotifications} setShowNotifications={setShowNotifications}
-        showProfile={showProfile}             setShowProfile={setShowProfile}
+        showProfile={showProfile} setShowProfile={setShowProfile}
       />
 
       <main
-        className="transition-all duration-300 pt-24 px-6 pb-6"
-        style={{ marginLeft: sidebarCollapsed ? '5rem' : '18rem' }}
+        className="flex-1 transition-all duration-300 pt-24 px-4 pb-6"
+        style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}
       >
         {/* ── Onglets ── */}
         <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm mb-6 p-2`}>
           <div className="flex gap-2">
             {[
-              { key: 'profil',   icon: 'bi-person-fill',      label: 'Mon Profil' },
-              { key: 'securite', icon: 'bi-shield-lock-fill', label: 'Sécurité'   },
+              { key: 'profil', icon: 'bi-person-fill', label: 'Mon Profil' },
+              { key: 'securite', icon: 'bi-shield-lock-fill', label: 'Sécurité' },
             ].map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
-                  activeTab === tab.key
+                className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${activeTab === tab.key
                     ? 'text-white shadow-md'
                     : `${darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-50'}`
-                }`}
+                  }`}
                 style={activeTab === tab.key
                   ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }
                   : {}}
@@ -651,14 +648,12 @@ const MonProfile = () => {
               {profileData.password_status && (
                 <div className={`w-full rounded-xl p-4 mt-4 ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
                   <p className={`text-xs font-semibold uppercase mb-2 ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>Expiration mot de passe</p>
-                  <p className={`text-sm font-medium ${
-                    profileData.password_status.is_expired     ? 'text-red-500'    :
-                    profileData.password_status.is_near_expiry ? 'text-yellow-500' : (darkMode ? 'text-green-400' : 'text-green-600')
-                  }`}>
-                    <i className={`bi ${
-                      profileData.password_status.is_expired     ? 'bi-x-circle-fill'        :
-                      profileData.password_status.is_near_expiry ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill'
-                    } mr-1`} />
+                  <p className={`text-sm font-medium ${profileData.password_status.is_expired ? 'text-red-500' :
+                      profileData.password_status.is_near_expiry ? 'text-yellow-500' : (darkMode ? 'text-green-400' : 'text-green-600')
+                    }`}>
+                    <i className={`bi ${profileData.password_status.is_expired ? 'bi-x-circle-fill' :
+                        profileData.password_status.is_near_expiry ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill'
+                      } mr-1`} />
                     {profileData.password_status.is_expired
                       ? 'Mot de passe expiré !'
                       : `${profileData.password_status.days_remaining} jour(s) restants`}
@@ -744,9 +739,8 @@ const MonProfile = () => {
 
                 {/* Correspondance */}
                 {passwordData.confirm_password && passwordData.new_password && (
-                  <div className={`flex items-center gap-2 text-xs font-medium ${
-                    passwordData.new_password === passwordData.confirm_password ? 'text-green-500' : 'text-red-500'
-                  }`}>
+                  <div className={`flex items-center gap-2 text-xs font-medium ${passwordData.new_password === passwordData.confirm_password ? 'text-green-500' : 'text-red-500'
+                    }`}>
                     <i className={`bi ${passwordData.new_password === passwordData.confirm_password ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}`} />
                     {passwordData.new_password === passwordData.confirm_password
                       ? 'Les mots de passe correspondent'
@@ -773,13 +767,10 @@ const MonProfile = () => {
           </div>
         )}
 
-        {/* Footer */}
-        <div className={`mt-8 py-6 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
-          <p className={`text-sm text-center ${darkMode ? 'text-gray-500' : 'text-gray-600'}`}>
-            © 2026 SGS Tous droits réservés — Version 1.0
-          </p>
-        </div>
       </main>
+
+      {/* ── FOOTER ── */}
+      <Footer darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} theme={theme} />
     </div>
   );
 };

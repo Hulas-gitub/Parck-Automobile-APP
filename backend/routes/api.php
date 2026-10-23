@@ -19,7 +19,9 @@ use App\Http\Controllers\Admin\HistoriqueVehiculeController;
 use App\Http\Controllers\Admin\HistoriqueConnexionController;
 use App\Http\Controllers\Admin\AccidentController;
 use App\Http\Controllers\Admin\ActivitesSystemesController;
-
+use App\Http\Controllers\Admin\FournisseurOutilController;
+use App\Http\Controllers\Admin\DemandeInterventionController;
+use App\Http\Controllers\Admin\InterventionController; // interventions + caisse (ex-CaisseController)
 /*
 |--------------------------------------------------------------------------
 | API Routes — Fleetify SGS
@@ -74,9 +76,11 @@ Route::middleware('auth:sanctum')->group(function () {
         | 📊 DASHBOARD
         |----------------------------------------------------------------------
         */
-        Route::get('/dashboard',                  [DashboardController::class, 'index'])->name('dashboard');
-        Route::get('/dashboard/kpi-vehicules',    [DashboardController::class, 'getKpiVehiculesDetail'])->name('dashboard.kpi-vehicules');
-        Route::get('/documents/check-expiration', [DocumentExpirationController::class, 'checkExpiration'])->name('documents.check-expiration');
+        Route::middleware('role:admin,chef_parc,daal')->group(function () {
+            Route::get('/dashboard',                  [DashboardController::class, 'index'])->name('dashboard');
+            Route::get('/dashboard/kpi-vehicules',    [DashboardController::class, 'getKpiVehiculesDetail'])->name('dashboard.kpi-vehicules');
+            Route::get('/documents/check-expiration', [DocumentExpirationController::class, 'checkExpiration'])->name('documents.check-expiration');
+        });
 
         /*
         |----------------------------------------------------------------------
@@ -88,7 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | comme une valeur de {id} → erreur de cast / 404.
         |----------------------------------------------------------------------
         */
-        Route::prefix('activites-systeme')->name('activites-systeme.')->group(function () {
+        Route::prefix('activites-systeme')->name('activites-systeme.')->middleware('role:admin')->group(function () {
             // ── Routes fixes AVANT {id} ──────────────────────────────────
             Route::get('/stats',        [ActivitesSystemesController::class, 'stats'])->name('stats');
             Route::get('/utilisateurs', [ActivitesSystemesController::class, 'utilisateurs'])->name('utilisateurs');
@@ -124,7 +128,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 👥 UTILISATEURS
         |----------------------------------------------------------------------
         */
-        Route::prefix('utilisateurs')->name('utilisateurs.')->group(function () {
+        Route::prefix('utilisateurs')->name('utilisateurs.')->middleware('role:admin')->group(function () {
             Route::get   ('/',                    [UtilisateursController::class, 'index'])->name('index');
             Route::post  ('/generate-password',   [UtilisateursController::class, 'generatePassword'])->name('generate-password');
             Route::post  ('/',                    [UtilisateursController::class, 'store'])->name('store');
@@ -140,7 +144,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🔐 RÔLES
         |----------------------------------------------------------------------
         */
-        Route::prefix('roles')->name('roles.')->group(function () {
+        Route::prefix('roles')->name('roles.')->middleware('role:admin')->group(function () {
             Route::get   ('/',            [UtilisateursController::class, 'indexRoles'])->name('index');
             Route::post  ('/',            [UtilisateursController::class, 'storeRole'])->name('store');
             Route::put   ('/{id}',        [UtilisateursController::class, 'updateRole'])->name('update');
@@ -153,7 +157,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🏢 DIRECTIONS
         |----------------------------------------------------------------------
         */
-        Route::prefix('directions')->name('directions.')->group(function () {
+        Route::prefix('directions')->name('directions.')->middleware('role:admin')->group(function () {
             Route::get   ('/',            [UtilisateursController::class, 'indexDirections'])->name('index');
             Route::post  ('/',            [UtilisateursController::class, 'storeDirection'])->name('store');
             Route::put   ('/{id}',        [UtilisateursController::class, 'updateDirection'])->name('update');
@@ -166,7 +170,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | ⛽ CARBURANT GLOBAL
         |----------------------------------------------------------------------
         */
-        Route::prefix('carburant')->name('carburant.global.')->group(function () {
+        Route::prefix('carburant')->name('carburant.global.')->middleware('role:admin,chef_parc')->group(function () {
             Route::get('/vehicules',                   [CarnetCarburantController::class, 'listeVehicules'])->name('vehicules');
             Route::get('/vehicules/{immatriculation}', [CarnetCarburantController::class, 'vehiculeDetail'])->name('vehicule.detail');
         });
@@ -176,7 +180,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🎨 PARAMÈTRES THÈME — admin seulement
         |----------------------------------------------------------------------
         */
-        Route::prefix('parametres/theme')->name('parametres.theme.')->group(function () {
+        Route::prefix('parametres/theme')->name('parametres.theme.')->middleware('role:admin')->group(function () {
             Route::post  ('/',               [ParametresSystemeController::class, 'storeTheme'])->name('store');
             Route::put   ('/{id}/appliquer', [ParametresSystemeController::class, 'appliquerTheme'])->name('appliquer');
             Route::delete('/{id}',           [ParametresSystemeController::class, 'destroyTheme'])->name('destroy');
@@ -187,7 +191,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🔧 INTERVENTIONS — RÉFÉRENTIELS
         |----------------------------------------------------------------------
         */
-        Route::prefix('interventions/referentiels')->name('interventions.referentiels.')->group(function () {
+        Route::prefix('interventions/referentiels')->name('interventions.referentiels.')->middleware('role:admin,chef_parc,mecanicien')->group(function () {
 
             Route::get('/', [InterventionsReferentielsController::class, 'allReferentiels'])->name('all');
 
@@ -229,7 +233,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🚗 VÉHICULES
         |----------------------------------------------------------------------
         */
-        Route::prefix('vehicules')->name('vehicules.')->group(function () {
+        Route::prefix('vehicules')->name('vehicules.')->middleware('role:admin,chef_parc,daal')->group(function () {
 
             // Références globales
             Route::get('/references', [VehiculesController::class, 'references'])->name('references');
@@ -298,14 +302,9 @@ Route::middleware('auth:sanctum')->group(function () {
         /*
         |----------------------------------------------------------------------
         | 📜 HISTORIQUE VÉHICULES — CONFORMITÉ DES DOCUMENTS
-        |
-        | RÈGLE CRITIQUE : la route fixe /types-documents doit être déclarée
-        | AVANT la route racine "/" pour rester cohérent avec le reste du
-        | fichier (même si ici il n'y a pas de conflit direct, on garde
-        | la convention du projet).
         |----------------------------------------------------------------------
         */
-        Route::prefix('historique-vehicules')->name('historique-vehicules.')->group(function () {
+        Route::prefix('historique-vehicules')->name('historique-vehicules.')->middleware('role:admin,chef_parc,daal')->group(function () {
             Route::get('/types-documents', [HistoriqueVehiculeController::class, 'typesDocuments'])->name('types-documents');
             Route::get('/',                [HistoriqueVehiculeController::class, 'index'])->name('index');
         });
@@ -313,14 +312,9 @@ Route::middleware('auth:sanctum')->group(function () {
         /*
         |----------------------------------------------------------------------
         | 🔄 HISTORIQUE DES AFFECTATIONS
-        |
-        | RÈGLE CRITIQUE : les routes à segments fixes (references, statistiques)
-        | doivent être déclarées AVANT les routes paramétriques ({id}).
-        | Laravel résout les routes dans l'ordre de déclaration. Si /{id} était
-        | déclaré en premier, "references" serait traité comme un id=0 / 404.
         |----------------------------------------------------------------------
         */
-        Route::prefix('historique-affectations')->name('historique-affectations.')->group(function () {
+        Route::prefix('historique-affectations')->name('historique-affectations.')->middleware('role:admin,chef_parc')->group(function () {
 
             // ── 1. Routes fixes AVANT {id} ──────────────────────────────────
             Route::get('/references',   [HistoriqueAffectationController::class, 'references'])->name('references');
@@ -340,12 +334,9 @@ Route::middleware('auth:sanctum')->group(function () {
         /*
         |----------------------------------------------------------------------
         | 🕓 HISTORIQUE DES CONNEXIONS
-        |
-        | RÈGLE CRITIQUE : aucune route à segment fixe autre que {id} ici,
-        | mais on garde la convention : {id} et ses actions en dernier.
         |----------------------------------------------------------------------
         */
-        Route::prefix('historique-connexions')->name('historique-connexions.')->group(function () {
+        Route::prefix('historique-connexions')->name('historique-connexions.')->middleware('role:admin')->group(function () {
             Route::get ('/',                    [HistoriqueConnexionController::class, 'index'])->name('index');
             Route::get ('/{id}',                [HistoriqueConnexionController::class, 'show'])->name('show');
             Route::post('/{id}/force-logout',   [HistoriqueConnexionController::class, 'forceLogout'])->name('force-logout');
@@ -356,7 +347,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🚖 CHAUFFEURS
         |----------------------------------------------------------------------
         */
-        Route::prefix('chauffeurs')->name('chauffeurs.')->group(function () {
+        Route::prefix('chauffeurs')->name('chauffeurs.')->middleware('role:admin,chef_parc')->group(function () {
 
             Route::get('/kpi/global', [ChauffeurController::class, 'kpiGlobal'])->name('kpi.global');
 
@@ -379,7 +370,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | 🔍 INSPECTIONS VÉHICULES
         |----------------------------------------------------------------------
         */
-        Route::prefix('inspections-vehicules')->name('inspections-vehicules.')->group(function () {
+        Route::prefix('inspections-vehicules')->name('inspections-vehicules.')->middleware('role:admin,chef_parc,mecanicien,chauffeur')->group(function () {
 
             Route::get('/referentiels', [InspectionsVehiculesController::class, 'referentiels'])->name('referentiels');
 
@@ -401,12 +392,9 @@ Route::middleware('auth:sanctum')->group(function () {
         /*
         |----------------------------------------------------------------------
         | 🚨 ACCIDENTS
-        |
-        | RÈGLE CRITIQUE : statistiques et form-data (routes fixes) déclarées
-        | AVANT /{id} pour éviter que Laravel les interprète comme un id.
         |----------------------------------------------------------------------
         */
-        Route::prefix('accidents')->name('accidents.')->group(function () {
+        Route::prefix('accidents')->name('accidents.')->middleware('role:admin,chef_parc,chef_tf')->group(function () {
 
             // ── Routes fixes AVANT {id} ──────────────────────────────────────
             Route::get('/statistiques', [AccidentController::class, 'statistiques'])->name('statistiques');
@@ -421,6 +409,109 @@ Route::middleware('auth:sanctum')->group(function () {
 
             // ── Changement de statut uniquement ─────────────────────────────
             Route::patch('/{id}/statut', [AccidentController::class, 'updateStatut'])->name('statut');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | 📦 INVENTAIRE & OUTILS
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('inventaire')->name('inventaire.')->middleware('role:admin,chef_parc,mecanicien')->group(function () {
+            Route::get   ('/fournisseurs',             [FournisseurOutilController::class, 'fournisseurs']);
+            Route::post  ('/fournisseurs',             [FournisseurOutilController::class, 'fournisseurStore']);
+            Route::put   ('/fournisseurs/{id}',        [FournisseurOutilController::class, 'fournisseurUpdate']);
+            Route::patch ('/fournisseurs/{id}/toggle', [FournisseurOutilController::class, 'fournisseurToggle']);
+            Route::delete('/fournisseurs/{id}',        [FournisseurOutilController::class, 'fournisseurDestroy']);
+
+            Route::get   ('/outils',        [FournisseurOutilController::class, 'outils']);
+            Route::post  ('/outils',        [FournisseurOutilController::class, 'outilStore']);
+            Route::put   ('/outils/{id}',   [FournisseurOutilController::class, 'outilUpdate']);
+            Route::delete('/outils/{id}',   [FournisseurOutilController::class, 'outilDestroy']);
+
+            Route::get   ('/pieces',                 [FournisseurOutilController::class, 'pieces']);
+            Route::post  ('/pieces',                 [FournisseurOutilController::class, 'pieceStore']);
+            Route::put   ('/pieces/{id}',            [FournisseurOutilController::class, 'pieceUpdate']);
+            Route::patch ('/pieces/{id}/toggle',     [FournisseurOutilController::class, 'pieceToggle']);
+            Route::post  ('/pieces/{id}/entree',     [FournisseurOutilController::class, 'pieceEntree']);
+            Route::get   ('/pieces/{id}/mouvements', [FournisseurOutilController::class, 'pieceMouvements']);
+            Route::delete('/pieces/{id}',            [FournisseurOutilController::class, 'pieceDestroy']);
+
+            Route::get   ('/problemes',                [FournisseurOutilController::class, 'problemes']);
+            Route::post  ('/problemes',                [FournisseurOutilController::class, 'problemeStore']);
+            Route::put   ('/problemes/{id}',           [FournisseurOutilController::class, 'problemeUpdate']);
+            Route::patch ('/problemes/{id}/en-cours',  [FournisseurOutilController::class, 'problemePrendreEnCharge']);
+            Route::patch ('/problemes/{id}/resoudre',  [FournisseurOutilController::class, 'problemeResoudre']);
+            Route::delete('/problemes/{id}',           [FournisseurOutilController::class, 'problemeDestroy']);
+
+            Route::get('/stock/envoyer-alertes', [FournisseurOutilController::class, 'envoyerAlertesStock']);
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | 📝 DEMANDES D'INTERVENTION
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('demandes-intervention')->name('demandes-intervention.')->middleware('role:admin,chef_parc,daal,mecanicien,chauffeur')->group(function () {
+            // ⚠️ "references" AVANT "{id}"
+            Route::get('references',       [DemandeInterventionController::class, 'references'])->name('references');
+
+            Route::get('/',                [DemandeInterventionController::class, 'index'])->name('index');
+            Route::post('/',               [DemandeInterventionController::class, 'store'])->name('store');
+            Route::get('{id}',             [DemandeInterventionController::class, 'show'])->whereNumber('id')->name('show');
+            Route::put('{id}',             [DemandeInterventionController::class, 'update'])->whereNumber('id')->name('update');
+            Route::delete('{id}',          [DemandeInterventionController::class, 'destroy'])->whereNumber('id')->name('destroy');
+
+            // Traitement (demandes EXTERNES — DAAL uniquement)
+            Route::post('{id}/valider',    [DemandeInterventionController::class, 'valider'])->whereNumber('id')->name('valider');
+            Route::post('{id}/rejeter',    [DemandeInterventionController::class, 'rejeter'])->whereNumber('id')->name('rejeter');
+
+            // Reprise après échec d'email (demandes EXTERNES en attente)
+            Route::post('{id}/renvoyer-notification', [DemandeInterventionController::class, 'renvoyerNotification'])->whereNumber('id')->name('renvoyer-notification');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | 🔧 INTERVENTIONS (Réalisées / Saisie)
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('interventions')->name('interventions.')->middleware('role:admin,chef_parc,daal,mecanicien,chauffeur')->group(function () {
+            // ⚠️ Routes fixes AVANT {id} / {immat}
+            // Référentiels pour formulaires (intervenants, outils, pièces, véhicules, statuts véhicule, caisse)
+            Route::get('references',                [InterventionController::class, 'references'])->name('references');
+            // Totaux globaux (panneau « Coût global réparations »)
+            Route::get('statistiques',              [InterventionController::class, 'statistiques'])->name('statistiques');
+            // Demandes ouvertes pour un véhicule donné (en_cours / en_attente)
+            Route::get('{immat}/demandes-ouvertes', [InterventionController::class, 'demandesOuvertes'])->name('demandes-ouvertes');
+
+            Route::get('/',                         [InterventionController::class, 'index'])->name('index');
+            Route::post('/',                        [InterventionController::class, 'store'])->name('store'); // multipart/form-data (facture)
+            Route::get('{id}',                      [InterventionController::class, 'show'])->whereNumber('id')->name('show');
+            Route::put('{id}',                      [InterventionController::class, 'update'])->whereNumber('id')->name('update');
+            // Modification AVEC upload de facture : POST + champ _method=PUT (multipart)
+            Route::post('{id}',                     [InterventionController::class, 'update'])->whereNumber('id')->name('update.post');
+            Route::delete('{id}',                   [InterventionController::class, 'destroy'])->whereNumber('id')->name('destroy');
+            Route::patch('{id}/statut',             [InterventionController::class, 'updateStatut'])->whereNumber('id')->name('statut');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | 💵 CAISSE (ex « Petite caisse »)
+        |
+        | Logique portée par InterventionController (méthodes caisse*).
+        | Les dépenses sont enregistrées via l'ajout d'une intervention ;
+        | la route `sortie` est conservée côté API mais n'est plus utilisée par le front
+        | (l'onglet « Nouvelle dépense » est supprimé).
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('caisse')->name('caisse.')->middleware('role:admin,chef_parc,daal,mecanicien')->group(function () {
+            Route::get('solde',                                   [InterventionController::class, 'caisseSolde'])->name('solde');
+            Route::get('mouvements',                              [InterventionController::class, 'caisseMouvements'])->name('mouvements');
+            Route::post('approvisionnement',                      [InterventionController::class, 'caisseApprovisionnement'])->name('approvisionnement');
+            Route::post('sortie',                                 [InterventionController::class, 'caisseSortie'])->name('sortie');
+            Route::post('mouvements/{id}/annuler',                [InterventionController::class, 'caisseAnnuler'])->whereNumber('id')->name('annuler');
+            Route::get('periodes',                                [InterventionController::class, 'caissePeriodes'])->name('periodes');
+            Route::post('periodes/{id}/cloturer',                 [InterventionController::class, 'caisseCloturerPeriode'])->whereNumber('id')->name('cloturer');
+            Route::get('export',                                  [InterventionController::class, 'caisseExport'])->name('export');
         });
 
     }); // fin prefix admin
