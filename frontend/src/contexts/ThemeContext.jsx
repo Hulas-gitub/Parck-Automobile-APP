@@ -1,11 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { getTheme, createTheme, appliquerTheme, deleteTheme } from '../api/Admin-Axios/Theme-axios';
 
 // ============================================================================
 // THÈMES PRÉDÉFINIS STATIQUES
 // valeur = code hex principal | couleur = nom affiché
-// Ces thèmes sont toujours présents dans la liste.
-// Les thèmes custom créés par l'admin s'ajoutent depuis la BDD.
 // ============================================================================
 export const THEMES_PREDEFINIS = [
   { valeur: '#ffc400', couleur: 'Orange Classique',   primaryLight: '#ffe066', primaryDark: '#e6a800', predefini: true },
@@ -45,16 +43,58 @@ const buildTheme = (t) => {
   const shades    = predefini ?? generateShades(t.valeur);
   return {
     id:           t.id   ?? null,
-    valeur:       t.valeur,                   // ex: '#ffc400'  — code hex
-    couleur:      t.couleur,                  // ex: 'Orange'   — nom
-    primary:      t.valeur,                   // alias pratique pour le CSS
+    valeur:       t.valeur,
+    couleur:      t.couleur,
+    primary:      t.valeur,
     primaryLight: t.primaryLight ?? shades.primaryLight,
     primaryDark:  t.primaryDark  ?? shades.primaryDark,
-    name:         t.couleur,                  // alias pour l'affichage
-    predefini:    t.predefini ?? false,
-    est_applique: t.est_applique ?? false,
+    name:         t.couleur,
+    predefini:    t.predefini ?? !!predefini,   // ✅ un prédéfini enregistré en BDD reste "prédéfini"
+    est_applique: !!(t.est_applique ?? false),
   };
 };
+
+// ============================================================================
+// CACHE LOCAL DU THÈME ACTIF
+// Lu de façon SYNCHRONE avant le 1er rendu → plus aucun flash de couleur.
+// ============================================================================
+const THEME_CACHE_KEY = 'fleetify_theme_actif';
+
+const readCachedTheme = () => {
+  try {
+    const raw = localStorage.getItem(THEME_CACHE_KEY);
+    if (!raw) return null;
+    const t = JSON.parse(raw);
+    return t?.valeur ? t : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedTheme = (t) => {
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify({
+      id: t.id, valeur: t.valeur, couleur: t.couleur,
+      primaryLight: t.primaryLight, primaryDark: t.primaryDark,
+    }));
+  } catch { /* localStorage indisponible : on ignore */ }
+};
+
+const applyCssVars = (t) => {
+  const s = document.documentElement.style;
+  s.setProperty('--primary-color', t.primary);
+  s.setProperty('--primary-light', t.primaryLight);
+  s.setProperty('--primary-dark',  t.primaryDark);
+};
+
+// Thème de départ = celui du cache (sinon Orange par défaut)
+const THEME_INITIAL = (() => {
+  const cache = readCachedTheme();
+  return buildTheme({ ...(cache ?? THEMES_PREDEFINIS[0]), est_applique: true });
+})();
+
+// Variables CSS appliquées dès le chargement du module, avant même le 1er rendu React
+if (typeof document !== 'undefined') applyCssVars(THEME_INITIAL);
 
 // ============================================================================
 // CONTEXT
@@ -71,99 +111,79 @@ export const useTheme = () => {
 // PROVIDER
 // ============================================================================
 export const ThemeProvider = ({ children }) => {
-  // Liste complète : prédéfinis + custom BDD
-  const [themes, setThemes]           = useState(THEMES_PREDEFINIS.map(t => buildTheme({ ...t, id: null, est_applique: false })));
-  // Thème actif (objet complet)
-  const [themeActif, setThemeActif]   = useState(() => buildTheme(THEMES_PREDEFINIS[0]));
+  // ✅ Liste = UNIQUEMENT les thèmes présents en BDD (supprime = 0). Vide tant que l'API n'a pas répondu.
+  const [themes, setThemes] = useState([]);
+  // ✅ Thème actif : initialisé depuis le cache, plus jamais depuis un défaut en dur
+  const [themeActif, setThemeActif]     = useState(THEME_INITIAL);
   const [loadingTheme, setLoadingTheme] = useState(true);
 
-  // ── Charger depuis le backend au montage ─────────────────────────────────
-  useEffect(() => {
-    const fetchTheme = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) { setLoadingTheme(false); return; }
+  // Référence toujours à jour de la liste (évite les valeurs périmées dans les closures)
+  const themesRef = useRef(themes);
+  themesRef.current = themes;
 
-      try {
-        const data = await getTheme();
-        // data.themes = toutes les lignes de parametres_systeme
-        // data.valeur / data.couleur = thème actif (est_applique=1)
+  // ── Synchroniser avec le backend ─────────────────────────────────────────
+  const rafraichirTheme = useCallback(async () => {
+    try {
+      const data = await getTheme();
 
-        if (Array.isArray(data.themes) && data.themes.length > 0) {
-          // Construire la liste complète :
-          // 1. Les prédéfinis (toujours présents, avec leur id BDD si ils existent)
-          // 2. Les custom (non-prédéfinis) ajoutés par l'admin
-          const predefinisValeurs = THEMES_PREDEFINIS.map(p => p.valeur);
-
-          const lignesBDD = data.themes.map(t => buildTheme(t));
-
-          const customsUniquement = lignesBDD.filter(t => !predefinisValeurs.includes(t.valeur));
-
-          // Enrichir les prédéfinis avec leur id BDD s'ils y sont
-          const predefinisEnrichis = THEMES_PREDEFINIS.map(p => {
-            const ligneBDD = data.themes.find(t => t.valeur === p.valeur);
-            return buildTheme({
-              ...p,
-              id:           ligneBDD?.id           ?? null,
-              est_applique: ligneBDD?.est_applique  ?? false,
-            });
-          });
-
-          setThemes([...predefinisEnrichis, ...customsUniquement]);
-        }
-
-        // Thème actif
-        if (data.valeur) {
-          const shades = THEMES_PREDEFINIS.find(p => p.valeur === data.valeur) ?? generateShades(data.valeur);
-          const actif  = buildTheme({
-            valeur:       data.valeur,
-            couleur:      data.couleur,
-            id:           data.id_actif,
-            est_applique: true,
-            primaryLight: shades.primaryLight,
-            primaryDark:  shades.primaryDark,
-          });
-          setThemeActif(actif);
-        }
-      } catch (err) {
-        console.warn('Fallback thème par défaut :', err.message);
-      } finally {
-        setLoadingTheme(false);
+      // ✅ La BDD est la seule source de vérité : on remplace la liste, même si elle est vide.
+      //    Un thème supprimé (supprime = 1) ou absent de la BDD disparaît donc du front.
+      if (Array.isArray(data.themes)) {
+        setThemes(data.themes.map(buildTheme));
       }
-    };
 
-    fetchTheme();
+      if (data.valeur) {
+        const actif = buildTheme({
+          valeur:       data.valeur,
+          couleur:      data.couleur,
+          id:           data.id_actif,
+          est_applique: true,
+          // ✅ on respecte les nuances enregistrées en BDD (sinon fallback automatique)
+          primaryLight: data.primaryLight ?? undefined,
+          primaryDark:  data.primaryDark  ?? undefined,
+        });
+        setThemeActif(actif);
+        writeCachedTheme(actif);
+      }
+    } catch (err) {
+      // ✅ En cas d'erreur on GARDE le thème en cache, on ne retombe pas sur le défaut
+      console.warn('Synchronisation du thème impossible, thème en cache conservé :', err.message);
+    } finally {
+      setLoadingTheme(false);
+    }
   }, []);
 
+  // ✅ Plus de condition sur le token : la route du thème doit être publique (voir routes/api.php)
+  useEffect(() => { rafraichirTheme(); }, [rafraichirTheme]);
+
   // ── Appliquer les CSS variables dès que le thème actif change ────────────
-  useEffect(() => {
-    document.documentElement.style.setProperty('--primary-color', themeActif.primary);
-    document.documentElement.style.setProperty('--primary-light', themeActif.primaryLight);
-    document.documentElement.style.setProperty('--primary-dark',  themeActif.primaryDark);
-  }, [themeActif]);
+  useEffect(() => { applyCssVars(themeActif); }, [themeActif]);
+
+  // ── Marquer un thème comme actif (état + cache) après succès de l'API ────
+  const activer = async (cible) => {
+    await appliquerTheme(cible.id);               // PUT /admin/parametres/theme/{id}/appliquer
+    const actif = { ...cible, est_applique: true };
+    setThemes(prev => prev.map(t => ({ ...t, est_applique: t.id === cible.id })));
+    setThemeActif(actif);
+    writeCachedTheme(actif);                      // ✅ mémorisé immédiatement
+  };
 
   // ── Appliquer un thème existant (il a déjà un id en BDD) ─────────────────
   const appliquer = async (themeId) => {
-    await appliquerTheme(themeId); // PUT /admin/parametres/theme/{id}/appliquer
-
-    // Mettre à jour l'état local : est_applique=1 sur lui, 0 sur les autres
-    setThemes(prev => {
-      const nouvelleListe = prev.map(t => ({ ...t, est_applique: t.id === themeId }));
-      const nouvelActif = nouvelleListe.find(t => t.id === themeId);
-      if (nouvelActif) setThemeActif({ ...nouvelActif, est_applique: true });
-      return nouvelleListe;
-    });
+    const cible = themesRef.current.find(t => t.id === themeId);
+    if (!cible) throw new Error('Thème introuvable');
+    await activer(cible);
   };
 
-  // ── Créer un thème custom + l'ajouter à la liste ─────────────────────────
-  const creerTheme = async (customColors) => {
-    // customColors = { valeur: '#a855f7', couleur: 'Violet Custom', primaryLight, primaryDark }
+  // ── Créer un thème en BDD (retourne l'objet thème complet) ───────────────
+  const creerThemeInterne = async (customColors) => {
     const data = await createTheme(
       customColors.valeur,
       customColors.couleur,
       customColors.primaryLight,
       customColors.primaryDark,
     );
-    // data.id = nouvel id BDD
+
     const nouveau = buildTheme({
       id:           data.id,
       valeur:       customColors.valeur,
@@ -172,15 +192,19 @@ export const ThemeProvider = ({ children }) => {
       primaryDark:  customColors.primaryDark,
       est_applique: false,
     });
+
     setThemes(prev => [...prev, nouveau]);
-    return data.id;
+
+    return nouveau;
   };
+
+  const creerTheme = async (customColors) => (await creerThemeInterne(customColors)).id;
 
   // ── Créer ET appliquer immédiatement ─────────────────────────────────────
   const creerEtAppliquer = async (customColors) => {
-    const id = await creerTheme(customColors);
-    await appliquer(id);
-    return id;
+    const nouveau = await creerThemeInterne(customColors);
+    await activer(nouveau);
+    return nouveau.id;
   };
 
   // ── Supprimer un thème custom ─────────────────────────────────────────────
@@ -191,15 +215,14 @@ export const ThemeProvider = ({ children }) => {
 
   return (
     <ThemeContext.Provider value={{
-      // État
-      theme:        themeActif,       // objet thème actif (primary, primaryLight, primaryDark, name…)
-      themes,                         // liste complète pour la grille
+      theme: themeActif,
+      themes,
       loadingTheme,
-      // Actions
-      appliquer,           // appliquer un thème existant par son id
-      creerTheme,          // créer un thème sans l'appliquer
-      creerEtAppliquer,    // créer + appliquer en une fois
-      supprimerTheme,      // supprimer un thème custom
+      appliquer,
+      creerTheme,
+      creerEtAppliquer,
+      supprimerTheme,
+      rafraichirTheme,   // à appeler après un login si besoin
     }}>
       {children}
     </ThemeContext.Provider>

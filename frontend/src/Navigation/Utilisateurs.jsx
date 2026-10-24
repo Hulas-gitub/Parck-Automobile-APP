@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import Sidebar from '../components/Sidebar';
@@ -6,6 +7,7 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import Swal from 'sweetalert2';
 import { getFormStyles, getTableStyles, getRowBackgroundColor, PageSkeleton } from '../utils/uniformStyles';
+import { showSuccess, showError, showConfirm } from '../utils/walConfig';
 import {
   getUtilisateurs,
   getUtilisateur,
@@ -43,6 +45,11 @@ import {
 //    (le champ de recherche garde donc le focus).
 //  • Toutes les erreurs (validation 422, erreur serveur 500, réseau…) s'affichent
 //    dans un SweetAlert ; la modale reste ouverte pour ne pas perdre la saisie.
+//
+// MENU « ACTIONS » (trois points) :
+//  • Le menu est rendu dans un PORTAIL (document.body) en position fixe : il n'est
+//    donc plus coupé par le overflow du tableau. Il s'ouvre vers le haut s'il n'y
+//    a pas assez de place en bas, et se ferme au scroll / redimensionnement.
 // ============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,6 +59,88 @@ const Spinner = ({ size = 'md' }) => {
   const s = size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-10 h-10' : 'w-6 h-6';
   return (
     <div className={`${s} border-2 border-current border-t-transparent rounded-full animate-spin opacity-70`} />
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MENU D'ACTIONS (trois points) — rendu en PORTAIL
+// Défini EN DEHORS de la page pour ne pas être recréé à chaque rendu.
+// ─────────────────────────────────────────────────────────────────────────────
+const MENU_WIDTH = 192; // = w-48
+
+const ActionMenuPortal = ({ menuKey, openKey, setOpenKey, darkMode, children }) => {
+  const btnRef  = useRef(null);
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+  const isOpen = openKey === menuKey;
+
+  // Calcule la position une fois le menu monté (on connaît alors sa vraie hauteur)
+  useLayoutEffect(() => {
+    if (!isOpen) { setPos(null); return; }
+    const btn  = btnRef.current;
+    const menu = menuRef.current;
+    if (!btn || !menu) return;
+
+    const r      = btn.getBoundingClientRect();
+    const menuH  = menu.offsetHeight;
+    const gap    = 4;
+    const margin = 8;
+
+    // Horizontal : aligné à droite du bouton, sans sortir de l'écran
+    let left = r.right - MENU_WIDTH;
+    left = Math.max(margin, Math.min(left, window.innerWidth - MENU_WIDTH - margin));
+
+    // Vertical : en dessous si la place suffit, sinon au-dessus
+    const spaceBelow = window.innerHeight - r.bottom;
+    let top = spaceBelow >= menuH + gap + margin ? r.bottom + gap : r.top - menuH - gap;
+    top = Math.max(margin, Math.min(top, window.innerHeight - menuH - margin));
+
+    setPos({ top, left });
+  }, [isOpen]);
+
+  // Ferme le menu au scroll / redimensionnement (position fixe → évite le décalage)
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = (e) => {
+      if (menuRef.current && e?.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpenKey(null);
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [isOpen, setOpenKey]);
+
+  return (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        onClick={() => setOpenKey(isOpen ? null : menuKey)}
+        className={`p-2 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}
+      >
+        <i className="bi bi-three-dots-vertical" />
+      </button>
+
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          // La classe "action-menu-portal" sert au gestionnaire de clic extérieur de la page
+          className={`action-menu-portal fixed rounded-xl border shadow-2xl overflow-hidden ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+          style={{
+            top:        pos ? pos.top  : 0,
+            left:       pos ? pos.left : 0,
+            width:      MENU_WIDTH,
+            zIndex:     9999,
+            visibility: pos ? 'visible' : 'hidden', // masqué le temps de mesurer
+          }}
+        >
+          {children}
+        </div>,
+        document.body
+      )}
+    </div>
   );
 };
 
@@ -316,8 +405,13 @@ const Utilisateurs = () => {
   }, [darkMode, theme]);
 
   // Fermeture menus au clic dehors
+  // (le menu en portail porte la classe "action-menu-portal" : un clic dedans ne le ferme pas ici)
   useEffect(() => {
-    const handler = () => { setShowActionMenu(null); setShowFilterMenu(false); };
+    const handler = (e) => {
+      if (e.target?.closest?.('.action-menu-portal')) return;
+      setShowActionMenu(null);
+      setShowFilterMenu(false);
+    };
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, []);
@@ -865,65 +959,51 @@ const Utilisateurs = () => {
 
   // ─────────────────────────────────────────────────────────────────────────
   // MENU ACTION — UTILISATEURS
+  // NB : appelé comme une FONCTION ( {ActionMenuUtilisateur({ menuKey, item })} ) :
+  // le composant ActionMenuPortal (stable, défini hors de la page) n'est ainsi
+  // jamais remonté à chaque rendu de la page.
   // ─────────────────────────────────────────────────────────────────────────
+  const menuItemCls = `w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`;
+  const menuDangerCls = `w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`;
+
   const ActionMenuUtilisateur = ({ menuKey, item }) => (
-    <div className="relative" onClick={e => e.stopPropagation()}>
-      <button
-        onClick={() => setShowActionMenu(showActionMenu === menuKey ? null : menuKey)}
-        className={`p-2 rounded-lg transition-colors ${dm('hover:bg-gray-700 text-gray-400', 'hover:bg-gray-100 text-gray-600')}`}
-      >
-        <i className="bi bi-three-dots-vertical" />
+    <ActionMenuPortal menuKey={menuKey} openKey={showActionMenu} setOpenKey={setShowActionMenu} darkMode={darkMode}>
+      <button onClick={() => openDetails(item)} className={menuItemCls}>
+        <i className="bi bi-eye-fill text-blue-500" /><span>Voir détails</span>
       </button>
-      {showActionMenu === menuKey && (
-        <div className={`absolute right-0 mt-2 w-48 rounded-xl border shadow-2xl z-50 overflow-hidden ${dm('bg-gray-800 border-gray-700', 'bg-white border-gray-200')}`}>
-          <button onClick={() => openDetails(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
-            <i className="bi bi-eye-fill text-blue-500" /><span>Voir détails</span>
-          </button>
-          <button onClick={() => openEdit(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
-            <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
-          </button>
-          <button onClick={() => handleToggleUserStatus(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
-            <i className={`bi ${item.est_actif ? 'bi-lock-fill text-red-500' : 'bi-unlock-fill text-green-500'}`} />
-            <span>{item.est_actif ? 'Bloquer' : 'Débloquer'}</span>
-          </button>
-          <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
-          <button onClick={() => handleDeleteUser(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}>
-            <i className="bi bi-trash-fill" /><span>Supprimer</span>
-          </button>
-        </div>
-      )}
-    </div>
+      <button onClick={() => openEdit(item)} className={menuItemCls}>
+        <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
+      </button>
+      <button onClick={() => handleToggleUserStatus(item)} className={menuItemCls}>
+        <i className={`bi ${item.est_actif ? 'bi-lock-fill text-red-500' : 'bi-unlock-fill text-green-500'}`} />
+        <span>{item.est_actif ? 'Bloquer' : 'Débloquer'}</span>
+      </button>
+      <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
+      <button onClick={() => handleDeleteUser(item)} className={menuDangerCls}>
+        <i className="bi bi-trash-fill" /><span>Supprimer</span>
+      </button>
+    </ActionMenuPortal>
   );
 
   // ─────────────────────────────────────────────────────────────────────────
   // MENU ACTION — RÔLES & DIRECTIONS
   // ─────────────────────────────────────────────────────────────────────────
   const ActionMenuSimple = ({ menuKey, item }) => (
-    <div className="relative" onClick={e => e.stopPropagation()}>
-      <button
-        onClick={() => setShowActionMenu(showActionMenu === menuKey ? null : menuKey)}
-        className={`p-2 rounded-lg transition-colors ${dm('hover:bg-gray-700 text-gray-400', 'hover:bg-gray-100 text-gray-600')}`}
-      >
-        <i className="bi bi-three-dots-vertical" />
+    <ActionMenuPortal menuKey={menuKey} openKey={showActionMenu} setOpenKey={setShowActionMenu} darkMode={darkMode}>
+      <button onClick={() => openDetails(item)} className={menuItemCls}>
+        <i className="bi bi-eye-fill text-blue-500" /><span>Voir détails</span>
       </button>
-      {showActionMenu === menuKey && (
-        <div className={`absolute right-0 mt-2 w-48 rounded-xl border shadow-2xl z-50 overflow-hidden ${dm('bg-gray-800 border-gray-700', 'bg-white border-gray-200')}`}>
-          <button onClick={() => openDetails(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
-            <i className="bi bi-eye-fill text-blue-500" /><span>Voir détails</span>
-          </button>
-          <button onClick={() => openEdit(item)} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-gray-300 hover:bg-gray-700', 'text-gray-700 hover:bg-gray-50')}`}>
-            <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
-          </button>
-          <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
-          <button
-            onClick={() => activeTab === 'roles' ? handleDeleteRole(item) : handleDeleteDirection(item)}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${dm('text-red-400 hover:bg-gray-700', 'text-red-600 hover:bg-red-50')}`}
-          >
-            <i className="bi bi-trash-fill" /><span>Supprimer</span>
-          </button>
-        </div>
-      )}
-    </div>
+      <button onClick={() => openEdit(item)} className={menuItemCls}>
+        <i className="bi bi-pencil-fill text-yellow-500" /><span>Modifier</span>
+      </button>
+      <div className={`border-t ${dm('border-gray-700', 'border-gray-100')}`} />
+      <button
+        onClick={() => activeTab === 'roles' ? handleDeleteRole(item) : handleDeleteDirection(item)}
+        className={menuDangerCls}
+      >
+        <i className="bi bi-trash-fill" /><span>Supprimer</span>
+      </button>
+    </ActionMenuPortal>
   );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1326,7 +1406,7 @@ const Utilisateurs = () => {
                 ].map(tab => (
                   <button
                     key={tab.key}
-                    onClick={() => { setActiveTab(tab.key); setSearchQuery(''); }}
+                    onClick={() => { setActiveTab(tab.key); setSearchQuery(''); setShowActionMenu(null); }}
                     className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all text-sm ${
                       activeTab === tab.key ? 'text-white shadow-md' : dm('text-gray-400 hover:bg-gray-800', 'text-gray-600 hover:bg-gray-50')
                     }`}
@@ -1418,7 +1498,7 @@ const Utilisateurs = () => {
                             <StatusBadge active={user.est_actif} labelTrue="Actif" labelFalse="Bloqué" />
                           </td>
                           <td className="px-6 py-4">
-                            <ActionMenuUtilisateur menuKey={`user-${user.id}`} item={user} />
+                            {ActionMenuUtilisateur({ menuKey: `user-${user.id}`, item: user })}
                           </td>
                         </tr>
                       ))}
@@ -1470,7 +1550,7 @@ const Utilisateurs = () => {
                           </td>
                           <td className="px-6 py-4"><StatusBadge active={role.estActif} /></td>
                           <td className="px-6 py-4">
-                            <ActionMenuSimple menuKey={`role-${role.id}`} item={role} />
+                            {ActionMenuSimple({ menuKey: `role-${role.id}`, item: role })}
                           </td>
                         </tr>
                       ))}
@@ -1520,7 +1600,7 @@ const Utilisateurs = () => {
                           </td>
                           <td className="px-6 py-4"><StatusBadge active={dir.estActif} /></td>
                           <td className="px-6 py-4">
-                            <ActionMenuSimple menuKey={`dir-${dir.id}`} item={dir} />
+                            {ActionMenuSimple({ menuKey: `dir-${dir.id}`, item: dir })}
                           </td>
                         </tr>
                       ))}
@@ -1534,9 +1614,9 @@ const Utilisateurs = () => {
             )}
           </>
         )}
-<Footer darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} theme={theme} />
-      </main>
 
+      </main>
+        <Footer darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} theme={theme} />
       {/* MODALES */}
       {renderFormModal(showAddModal,  () => { setShowAddModal(false);  setErrors({}); }, false)}
       {renderFormModal(showEditModal, () => { setShowEditModal(false); setErrors({}); }, true)}

@@ -3,7 +3,7 @@ import axios from 'axios';
 // ─── Instance axios (même config que api.js login) ────────────────────────────
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
-  timeout: 10000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -66,6 +66,7 @@ api.interceptors.response.use(
     } else {
       console.error('❌ Erreur de configuration Axios:', error.message);
     }
+    console.error('code:', error.code, '| message:', error.message);
     return Promise.reject(error);
   }
 );

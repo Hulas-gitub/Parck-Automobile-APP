@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, createContext, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -31,6 +32,11 @@ import {
 //      3) AUCUN window.location.reload()
 //  • Le modal de détail reste synchronisé avec la liste rechargée.
 //  • Le chargement avec skeleton n'a lieu qu'au 1er affichage / changement d'onglet.
+//
+//  MENU « ACTIONS » (trois points) :
+//  • Le menu est rendu dans un PORTAIL (document.body) en position fixe, donc il
+//    n'est plus coupé par le overflow du tableau. Il s'ouvre vers le haut s'il
+//    n'y a pas assez de place en bas, et se ferme au scroll / redimensionnement.
 // ============================================================================
 
 const toast = (darkMode, theme) => ({
@@ -128,6 +134,96 @@ const SkeletonCard = ({ darkMode }) => (
     <div className={`h-8 w-16 rounded animate-pulse ${darkMode ? 'bg-gray-700' : 'bg-gray-200'}`} />
   </div>
 );
+
+// ─── Menu d'actions (trois points) — rendu en PORTAIL ─────────────────────────
+// Défini EN DEHORS du composant de page pour ne pas être recréé à chaque rendu.
+const MenuCtx = createContext({ darkMode: false });
+
+const MENU_WIDTH = 192; // = w-48
+
+const ActionMenu = ({ id, openMenuId, setOpenMenuId, darkMode, children }) => {
+  const btnRef  = useRef(null);
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+  const isOpen = openMenuId === id;
+
+  // Calcule la position une fois le menu monté (on connaît alors sa vraie hauteur)
+  useLayoutEffect(() => {
+    if (!isOpen) { setPos(null); return; }
+    const btn  = btnRef.current;
+    const menu = menuRef.current;
+    if (!btn || !menu) return;
+
+    const r     = btn.getBoundingClientRect();
+    const menuH = menu.offsetHeight;
+    const gap   = 4;
+    const margin = 8;
+
+    // Horizontal : aligné à droite du bouton, sans sortir de l'écran
+    let left = r.right - MENU_WIDTH;
+    left = Math.max(margin, Math.min(left, window.innerWidth - MENU_WIDTH - margin));
+
+    // Vertical : en dessous si la place suffit, sinon au-dessus
+    const spaceBelow = window.innerHeight - r.bottom;
+    let top = spaceBelow >= menuH + gap + margin ? r.bottom + gap : r.top - menuH - gap;
+    top = Math.max(margin, Math.min(top, window.innerHeight - menuH - margin));
+
+    setPos({ top, left });
+  }, [isOpen]);
+
+  // Ferme le menu au scroll / redimensionnement (position fixe → évite le décalage)
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = (e) => {
+      if (menuRef.current && e?.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpenMenuId(null);
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [isOpen, setOpenMenuId]);
+
+  return (
+    <div className="relative action-menu inline-block">
+      <button ref={btnRef} onClick={() => setOpenMenuId(isOpen ? null : id)}
+        className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
+        <i className="bi bi-three-dots-vertical" />
+      </button>
+
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          // La classe "action-menu" évite que le clic dans le menu soit vu comme un clic extérieur
+          className={`action-menu fixed rounded-lg shadow-xl ${darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}
+          style={{
+            top:        pos ? pos.top  : 0,
+            left:       pos ? pos.left : 0,
+            width:      MENU_WIDTH,
+            zIndex:     9999,
+            visibility: pos ? 'visible' : 'hidden', // masqué le temps de mesurer
+          }}>
+          <MenuCtx.Provider value={{ darkMode }}>
+            <div className="py-1">{children}</div>
+          </MenuCtx.Provider>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
+
+const MenuItem = ({ icon, label, color = '', onClick }) => {
+  const { darkMode } = useContext(MenuCtx);
+  return (
+    <button onClick={onClick}
+      className={`w-full text-left px-4 py-2 text-sm ${color || (darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100')} flex items-center gap-2`}>
+      <i className={`bi ${icon}`} />{label}
+    </button>
+  );
+};
 
 // ─── Composant Pagination ─────────────────────────────────────────────────────
 const Pagination = ({ currentPage, totalPages, onPageChange, darkMode, theme, totalItems, pageSize }) => {
@@ -364,6 +460,7 @@ const InspectionVehicules = () => {
     });
   }, [inspections]);
 
+  // Ferme le menu d'actions au clic en dehors (bouton ET menu portal portent la classe "action-menu")
   useEffect(() => {
     const fn = (e) => { if (openMenuId && !e.target.closest('.action-menu')) setOpenMenuId(null); };
     document.addEventListener('mousedown', fn);
@@ -471,9 +568,9 @@ const InspectionVehicules = () => {
   };
 
   const deleteInsp = async (id) => {
+    setOpenMenuId(null);
     const result = await swal().confirm('Supprimer cette inspection ?', 'Cette action est irréversible.', 'Supprimer');
     if (!result.isConfirmed) return;
-    setOpenMenuId(null);
     try {
       await deleteInspection(id);
       setInspections(prev => prev.filter(i => i.id !== id));                 // 1) disparition immédiate
@@ -550,13 +647,13 @@ const InspectionVehicules = () => {
   };
 
   const deleteAcc = async (acc) => {
+    setOpenMenuId(null);
     const result = await swal().confirm(
       `Supprimer "${acc.nom}" ?`,
       "S'il est utilisé dans des inspections, il sera simplement désactivé.",
       'Supprimer'
     );
     if (!result.isConfirmed) return;
-    setOpenMenuId(null);
     try {
       await deleteAccessoire(acc.id);
       // Le serveur peut soit supprimer, soit simplement désactiver : la resynchronisation
@@ -602,25 +699,30 @@ const InspectionVehicules = () => {
   const inputCls = `w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'}`;
   const labelCls = `block text-sm font-semibold mb-1.5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`;
 
-  const ActionMenu = ({ id, children }) => (
-    <div className="relative action-menu inline-block">
-      <button onClick={() => setOpenMenuId(openMenuId === id ? null : id)}
-        className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}>
-        <i className="bi bi-three-dots-vertical" />
-      </button>
-      {openMenuId === id && (
-        <div className={`absolute right-0 mt-2 w-48 rounded-lg shadow-lg z-20 ${darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
-          <div className="py-1">{children}</div>
-        </div>
-      )}
-    </div>
-  );
+  // Props communes du menu d'actions
+  const menuProps = { openMenuId, setOpenMenuId, darkMode };
 
-  const MenuItem = ({ icon, label, color = '', onClick }) => (
-    <button onClick={onClick}
-      className={`w-full text-left px-4 py-2 text-sm ${color || (darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100')} flex items-center gap-2`}>
-      <i className={`bi ${icon}`} />{label}
-    </button>
+  // Barre d'onglets : affichée juste AVANT chaque tableau
+  const tabsBar = (
+        <div className={`${cardCls} mb-4 p-2 flex gap-2`}>
+          {[
+            { key: 'inspections', icon: 'bi-clipboard-check', label: 'Inspections véhicules', count: inspections.length },
+            { key: 'accessoires', icon: 'bi-grid-3x3-gap',    label: 'Accessoires',            count: accessoires.length },
+          ].map(tab => (
+            <button key={tab.key}
+              onClick={() => { setActiveTab(tab.key); setSearchTerm(''); setOpenMenuId(null); }}
+              className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm transition-all
+                ${activeTab === tab.key ? 'text-white shadow-md' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
+              style={activeTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
+              <i className={`bi ${tab.icon} text-base`} />
+              {tab.label}
+              <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-bold
+                ${activeTab === tab.key ? 'bg-white/25 text-white' : darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
+                {tab.count}
+              </span>
+            </button>
+          ))}
+        </div>
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -636,27 +738,6 @@ const InspectionVehicules = () => {
         showProfile={showProfile} setShowProfile={setShowProfile} />
 
       <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
-
-        {/* ── ONGLETS ─────────────────────────────────────────────────────── */}
-        <div className={`${cardCls} mb-6 p-2 flex gap-2`}>
-          {[
-            { key: 'inspections', icon: 'bi-clipboard-check', label: 'Inspections véhicules', count: inspections.length },
-            { key: 'accessoires', icon: 'bi-grid-3x3-gap',    label: 'Accessoires',            count: accessoires.length },
-          ].map(tab => (
-            <button key={tab.key}
-              onClick={() => { setActiveTab(tab.key); setSearchTerm(''); }}
-              className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm transition-all
-                ${activeTab === tab.key ? 'text-white shadow-md' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
-              style={activeTab === tab.key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-              <i className={`bi ${tab.icon} text-base`} />
-              {tab.label}
-              <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-bold
-                ${activeTab === tab.key ? 'bg-white/25 text-white' : darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
-                {tab.count}
-              </span>
-            </button>
-          ))}
-        </div>
 
         {/* ══════════════════════════════════════════════════════════════════
             ONGLET INSPECTIONS
@@ -705,6 +786,8 @@ const InspectionVehicules = () => {
                 </button>
               </div>
             </div>
+
+            {tabsBar}
 
             <div className={`${cardCls} overflow-hidden`}>
               <div className="overflow-x-auto">
@@ -779,7 +862,7 @@ const InspectionVehicules = () => {
                                 <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statutBadge(item.statut_global)}`}>{statutLabel(item.statut_global)}</span>
                               </td>
                               <td className="px-4 py-3 text-center">
-                                <ActionMenu id={item.id}>
+                                <ActionMenu id={item.id} {...menuProps}>
                                   <MenuItem icon="bi-eye text-purple-500" label="Voir détails"
                                     onClick={() => { setDetailItem(item); setShowDetailModal(true); setOpenMenuId(null); }} />
                                   <MenuItem icon="bi-pencil-square text-blue-500" label="Modifier"
@@ -864,6 +947,8 @@ const InspectionVehicules = () => {
               </div>
             </div>
 
+            {tabsBar}
+
             <div className={`${cardCls} overflow-hidden`}>
               <div className="overflow-x-auto">
                 <table className="min-w-full">
@@ -912,7 +997,7 @@ const InspectionVehicules = () => {
                                 <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>—</span>
                               </td>
                               <td className="px-4 py-3 text-center">
-                                <ActionMenu id={acc.id}>
+                                <ActionMenu id={acc.id} {...menuProps}>
                                   <MenuItem icon="bi-pencil-square text-blue-500" label="Modifier"
                                     onClick={() => openAccModal('edit', acc)} />
                                   <MenuItem
@@ -1145,7 +1230,7 @@ const InspectionVehicules = () => {
                     style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
                     {submitting
                       ? <><i className="bi bi-arrow-repeat animate-spin" />Enregistrement...</>
-                      : <><i className={`bi ${inspModalMode === 'create' ? 'bi-plus-lg' : 'bi-check-lg'}`} />{inspModalMode === 'create' ? "Créer l'inspection" : 'Enregistrer les modifications'}</>}
+                      : <><i className={`bi ${inspModalMode === 'create' ? 'bi-plus-lg' : 'bi-check-lg'}`} />Enregistrer</>}
                   </button>
                 </div>
               </div>

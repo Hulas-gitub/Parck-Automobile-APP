@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ,
-  timeout: 10000,
+  timeout: 30000,
   // ✅ withCredentials retiré - pas nécessaire pour Bearer token
   headers: {
     'Content-Type': 'application/json',
@@ -75,6 +75,7 @@ api.interceptors.response.use(
     } else if (error.request) {
       // La requête a été faite mais pas de réponse
       console.error('❌ Pas de réponse du serveur');
+      console.error('code:', error.code, '| message:', error.message);
       console.error('Vérifiez que le serveur Laravel est démarré sur:', error.config?.baseURL);
       console.error('Détails:', {
         url: error.config?.url,

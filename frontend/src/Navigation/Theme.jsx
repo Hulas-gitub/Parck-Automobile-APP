@@ -135,7 +135,8 @@ const ThemeSkeleton = ({ darkMode }) => {
 // THEME PAGE
 // ============================================================================
 const Theme = () => {
-  const { theme, themes, appliquer, creerEtAppliquer, supprimerTheme } = useTheme();
+  // ✅ loadingTheme : on attend la réponse de la BDD avant d'afficher la liste
+  const { theme, themes, loadingTheme, appliquer, creerEtAppliquer, supprimerTheme } = useTheme();
   const navigate = useNavigate();
 
   const [darkMode, setDarkMode] = useState(() => {
@@ -165,19 +166,16 @@ const Theme = () => {
   const [customMode, setCustomMode]               = useState(false);
   const [applying, setApplying]                   = useState(false);
 
-  // ── Skeleton au chargement de la page ─────────────────────────────────────
+  // ── Skeleton : affiché tant que les thèmes de la BDD ne sont pas chargés ──
   const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
-    if (themes && themes.length > 0) {
-      const t = setTimeout(() => setPageLoading(false), 300);
-      return () => clearTimeout(t);
-    }
-    const fallback = setTimeout(() => setPageLoading(false), 1500);
-    return () => clearTimeout(fallback);
-  }, [themes]);
+    if (loadingTheme) return;
+    const t = setTimeout(() => setPageLoading(false), 300);
+    return () => clearTimeout(t);
+  }, [loadingTheme]);
 
-  // Thème en cours de prévisualisation (objet complet)
+  // Thème en cours de prévisualisation (objet complet, toujours présent en BDD)
   const previewTheme = previewId !== null ? themes.find(t => t.id === previewId) : null;
 
   // ── État de l'éditeur custom ───────────────────────────────────────────────
@@ -201,8 +199,10 @@ const Theme = () => {
     setCustomMode(false);
   };
 
-  // ── Appliquer un thème existant ───────────────────────────────────────────
+  // ── Appliquer un thème existant (tous les thèmes listés ont un id en BDD) ─
   const handleApplyTheme = async (t) => {
+    if (!t?.id) return;
+
     const result = await showConfirm(darkMode, theme, {
       title: 'Appliquer ce thème ?',
       html: `Le thème <strong>${t.couleur}</strong> sera appliqué à toute l'application.`,
@@ -213,24 +213,15 @@ const Theme = () => {
 
     setApplying(true);
     try {
-      if (t.id) {
-        await appliquer(t.id);
-      } else {
-        // Prédéfini pas encore en BDD → créer + appliquer
-        await creerEtAppliquer({
-          valeur:       t.valeur,
-          couleur:      t.couleur,
-          primaryLight: t.primaryLight,
-          primaryDark:  t.primaryDark,
-        });
-      }
+      await appliquer(t.id);
 
       showSuccess(darkMode, t, 'Thème appliqué !', `"${t.couleur}" est maintenant le thème actif.`);
 
-      // Ne pas recharger - le thème sera appliqué automatiquement par le context
+      // Ne pas recharger - le thème est appliqué et mémorisé automatiquement par le context
 
-    } catch {
-      showError(darkMode, theme, 'Erreur', 'Impossible d\'appliquer le thème. Veuillez réessayer.');
+    } catch (err) {
+      const msg = err.response?.data?.message ?? 'Impossible d\'appliquer le thème. Veuillez réessayer.';
+      showError(darkMode, theme, 'Erreur', msg);
     } finally {
       setApplying(false);
       setShowPreview(false);
@@ -274,7 +265,8 @@ const Theme = () => {
 
       showSuccess(darkMode, { primary: customColors.valeur, primaryDark: customColors.primaryDark }, 'Thème enregistré et appliqué !', 'Il apparaît maintenant dans la liste des thèmes.');
 
-      // Ne pas recharger - le thème sera appliqué automatiquement par le context
+      // Retour à la liste des thèmes
+      setCustomMode(false);
 
     } catch {
       showError(darkMode, theme, 'Erreur', 'Impossible d\'enregistrer le thème. Veuillez réessayer.');
@@ -283,11 +275,11 @@ const Theme = () => {
     }
   };
 
-  // ── Supprimer un thème custom ─────────────────────────────────────────────
+  // ── Supprimer un thème (suppression logique côté BDD : supprime = 1) ──────
   const handleDelete = async (t) => {
     const result = await showConfirm(darkMode, theme, {
       title: 'Supprimer ce thème ?',
-      html: `<strong>${t.couleur}</strong> sera supprimé définitivement.`,
+      html: `<strong>${t.couleur}</strong> sera retiré de la liste des thèmes.`,
       confirmText: 'Supprimer',
       isDanger: true,
     });
@@ -296,6 +288,14 @@ const Theme = () => {
 
     try {
       await supprimerTheme(t.id);
+
+      // Si on était en train de prévisualiser ce thème, on ferme l'aperçu
+      if (previewId === t.id) {
+        setShowPreview(false);
+        setPreviewId(null);
+      }
+
+      showSuccess(darkMode, theme, 'Thème supprimé', `"${t.couleur}" a été supprimé.`);
     } catch (err) {
       const msg = err.response?.data?.message ?? 'Impossible de supprimer ce thème.';
       showError(darkMode, theme, 'Erreur', msg);
@@ -500,20 +500,26 @@ const Theme = () => {
             </div>
           )}
 
-          {/* ── Liste de tous les thèmes ── */}
+          {/* ── Liste de tous les thèmes (uniquement ceux présents en BDD, supprime = 0) ── */}
           {!customMode && (
             <div className={`${card} p-6`}>
               <h2 className={`text-xl font-extrabold mb-6 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
                 <Palette className="w-6 h-6" style={{ color: theme.primary }} /> Tous les Thèmes
               </h2>
 
+              {themes.length === 0 && (
+                <p className={`text-sm font-semibold ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  Aucun thème disponible. Créez-en un avec « Personnaliser ».
+                </p>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                {themes.map((t, index) => {
+                {themes.map((t) => {
                   const isActif      = t.est_applique;
                   const isPreviewing = t.id === previewId;
 
                   return (
-                    <div key={t.id ?? `predef-${index}`}
+                    <div key={t.id}
                       className={`relative rounded-xl overflow-hidden border-2 transition-all duration-300 ${isActif ? 'shadow-xl scale-105' : isPreviewing ? 'shadow-lg' : 'hover:shadow-lg'}`}
                       style={{ borderColor: isActif ? '#10b981' : isPreviewing ? t.primary : darkMode ? '#374151' : '#e5e7eb' }}>
 
@@ -557,8 +563,7 @@ const Theme = () => {
 
                         {/* Boutons */}
                         <div className="flex gap-2">
-                          {/* Aperçu — seulement si le thème a un id (déjà en BDD) ou est prédéfini */}
-                          <button onClick={() => handlePreview(t.id ?? `predef-${index}`)}
+                          <button onClick={() => handlePreview(t.id)}
                             className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 ${darkMode ? 'bg-gray-700 text-gray-200 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
                             <Eye className="w-3.5 h-3.5" /> Aperçu
                           </button>
@@ -577,10 +582,10 @@ const Theme = () => {
                             </div>
                           )}
 
-                          {/* Supprimer — seulement custom + non actif */}
-                          {!t.predefini && !isActif && t.id && (
+                          {/* Supprimer — tout thème non actif présent en BDD */}
+                          {!isActif && (
                             <button onClick={() => handleDelete(t)}
-                              className={`p-2 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors`}
+                              className="p-2 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
                               title="Supprimer ce thème">
                               <Trash2 className="w-4 h-4" />
                             </button>

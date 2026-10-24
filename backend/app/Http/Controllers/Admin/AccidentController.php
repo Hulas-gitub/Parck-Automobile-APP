@@ -230,8 +230,8 @@ class AccidentController extends Controller
 
             DB::commit();
 
-            // ── Mettre à jour les KPI du véhicule (incrémenter nb_accidents) ──
-            $this->updateKpiAccident($accident->vehicule_immatriculation, $accident->date_accident, 1);
+            // ── Resynchroniser les KPI du véhicule (recomptage exact) ──
+            $this->syncKpiAccidents($accident->vehicule_immatriculation, $accident->date_accident);
 
             $accident->load([
                 'chauffeur:id,nom,direction_id',
@@ -263,6 +263,10 @@ class AccidentController extends Controller
     {
         $accident = Accident::where('est_supprime', false)->findOrFail($id);
         $this->validateAccident($request, isUpdate: true);
+
+        // Ancien état mémorisé AVANT toute modification (pour resynchroniser les KPI)
+        $ancienneImmat = $accident->vehicule_immatriculation;
+        $ancienneDate  = $accident->date_accident;
 
         DB::beginTransaction();
         try {
@@ -360,14 +364,9 @@ class AccidentController extends Controller
 
             DB::commit();
 
-            // ── Mettre à jour les KPI si le véhicule a changé ──
-            $ancienneImmat = $accident->getOriginal('vehicule_immatriculation');
-            $nouvelleImmat = $accident->vehicule_immatriculation;
-
-            if ($ancienneImmat && $ancienneImmat !== $nouvelleImmat) {
-                $this->updateKpiAccident($ancienneImmat, $accident->date_accident, -1); // décrémenter l'ancien véhicule
-                $this->updateKpiAccident($nouvelleImmat, $accident->date_accident,  1); // incrémenter le nouveau
-            }
+            // ── Resynchroniser les KPI (ancien et nouveau véhicule / mois) ──
+            $this->syncKpiAccidents($ancienneImmat, $ancienneDate);
+            $this->syncKpiAccidents($accident->vehicule_immatriculation, $accident->date_accident);
 
             $accident->load([
                 'chauffeur:id,nom,direction_id',
@@ -426,8 +425,8 @@ class AccidentController extends Controller
         $accident->date_suppression = now();
         $accident->save();
 
-        // ── Décrémenter nb_accidents dans les KPI du véhicule ──
-        $this->updateKpiAccident($immatriculation, $accident->date_accident, -1);
+        // ── Resynchroniser nb_accidents dans les KPI du véhicule ──
+        $this->syncKpiAccidents($immatriculation, $accident->date_accident);
 
         return response()->json([
             'success' => true,
@@ -768,26 +767,27 @@ class AccidentController extends Controller
         ];
     }
 
-    private function updateKpiAccident(string $immatriculation, $dateAccident, int $delta = 1): void
+    /**
+     * Recompte les accidents non supprimés du véhicule pour le mois de l'accident
+     * et écrit la valeur exacte dans kpi_vehicules (crée la ligne si absente).
+     */
+    private function syncKpiAccidents(string $immatriculation, $dateAccident): void
     {
-        // Utiliser la date DE L'ACCIDENT (pas aujourd'hui)
-        // Un accident de juin doit aller dans mois_periode=6, même si on l'enregistre en juillet
-        $date  = Carbon::parse($dateAccident);
-        $annee = $date->year;
-        $mois  = $date->month;
+        $d = Carbon::parse($dateAccident);
+
+        $nb = Accident::where('est_supprime', false)
+            ->where('vehicule_immatriculation', $immatriculation)
+            ->whereYear('date_accident', $d->year)
+            ->whereMonth('date_accident', $d->month)
+            ->count();
 
         DB::table('kpi_vehicules')->updateOrInsert(
-            // Clé de recherche : véhicule + mois + année DE L'ACCIDENT
             [
                 'vehicule_immatriculation' => $immatriculation,
-                'annee_periode'            => $annee,
-                'mois_periode'             => $mois,
+                'annee_periode'            => $d->year,
+                'mois_periode'             => $d->month,
             ],
-            // Si ligne existante → incrémenter/décrémenter nb_accidents
-            // Si ligne absente   → créer avec nb_accidents = max(0, delta)
-            [
-                'nb_accidents' => DB::raw("GREATEST(0, nb_accidents + {$delta})"),
-            ]
+            ['nb_accidents' => $nb]
         );
     }
 

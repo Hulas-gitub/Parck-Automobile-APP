@@ -67,6 +67,9 @@ class NotificationsController extends Controller
             $notif->time_ago = Carbon::parse($notif->date_creation)->diffForHumans();
             $notif->est_lu   = (int) $notif->est_lu;
 
+            // Ne jamais exposer certaines clés du champ `donnees` (ex : demande_id)
+            $notif->donnees = $this->sanitizeDonnees($notif->donnees);
+
             // Type et icône selon le niveau de priorité de la catégorie
             $niveau = strtolower($notif->categorie_couleur ?? 'normal');
 
@@ -119,6 +122,30 @@ class NotificationsController extends Controller
                 'total'         => $notifications->total(),
             ],
         ]);
+    }
+
+    /**
+     * Retire du champ `donnees` les clés qui ne doivent jamais être envoyées au front.
+     * Accepte du JSON (string) ou un tableau ; renvoie le même format.
+     */
+    private function sanitizeDonnees($donnees)
+    {
+        $hidden = ['demande_id'];
+
+        if (empty($donnees)) {
+            return $donnees;
+        }
+
+        $isString = is_string($donnees);
+        $data     = $isString ? json_decode($donnees, true) : (array) $donnees;
+
+        if (!is_array($data)) {
+            return $donnees; // contenu non JSON : on ne touche pas
+        }
+
+        $data = array_diff_key($data, array_flip($hidden));
+
+        return $isString ? json_encode($data, JSON_UNESCAPED_UNICODE) : $data;
     }
 
     /**

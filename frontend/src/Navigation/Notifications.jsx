@@ -63,6 +63,9 @@ const parseDonnees = (d) => {
   }
 };
 
+// Clés du champ `donnees` qu'on n'affiche jamais
+const HIDDEN_DONNEES_KEYS = ['demande_id'];
+
 const humanizeKey = (k) => String(k).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 const stringifyValue = (v) => (v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v));
 
@@ -221,12 +224,6 @@ const Notifications = () => {
     }
   };
 
-  const openLink = (url) => {
-    if (!url) return;
-    if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener');
-    else navigate(url); // lien interne (ex : /Navigation/DemandesInterventions)
-  };
-
   // Ouvre le popup de détail (et marque comme lue la notification si elle ne l'est pas)
   const openDetail = (notif) => {
     setSelected(notif);
@@ -260,7 +257,10 @@ const Notifications = () => {
   const selUnread = selected && !selected.est_lu;
   const selTyp = selected ? (TYPE_ICON[selected.type] || TYPE_ICON.info) : TYPE_ICON.info;
   const selNiveau = selected ? (NIVEAUX[selected.categorie_couleur] || NIVEAUX.normal) : NIVEAUX.normal;
-  const selDonnees = selected ? parseDonnees(selected.donnees) : null;
+  const selDonneesRaw = selected ? parseDonnees(selected.donnees) : null;
+  const selDonnees = selDonneesRaw
+    ? Object.fromEntries(Object.entries(selDonneesRaw).filter(([k]) => !HIDDEN_DONNEES_KEYS.includes(k)))
+    : null;
 
   return (
     <div className={`${darkMode ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900'} min-h-screen flex flex-col`}>
@@ -702,16 +702,6 @@ const Notifications = () => {
 
             {/* Pied : actions */}
             <div className={`px-7 py-4 border-t flex flex-wrap items-center justify-end gap-3 ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
-              {selected.lien_url && (
-                <button
-                  onClick={() => { const url = selected.lien_url; setSelected(null); openLink(url); }}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90 flex items-center gap-2"
-                  style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}
-                >
-                  <i className="bi bi-box-arrow-up-right" />
-                  Ouvrir la page concernée
-                </button>
-              )}
               <button
                 onClick={() => setSelected(null)}
                 className={`px-5 py-2.5 rounded-xl text-sm font-bold border ${darkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}

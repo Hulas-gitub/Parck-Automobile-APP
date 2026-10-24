@@ -110,7 +110,11 @@ class DashboardController extends Controller
             DB::raw('SUM(kv.cout_interventions)               as cout_interventions'),
             DB::raw('SUM(kv.cout_pieces)                      as cout_pieces'),
             DB::raw('SUM(kv.nb_anomalies)                     as nb_anomalies'),
-            DB::raw('SUM(kv.nb_accidents)                     as nb_accidents'),
+            DB::raw("(SELECT COUNT(*) FROM accidents a
+                      WHERE a.vehicule_immatriculation = kv.vehicule_immatriculation
+                        AND a.est_supprime = 0
+                        AND (YEAR(a.date_accident) * 100 + MONTH(a.date_accident)) BETWEEN {$debutInt} AND {$finInt}
+                     ) as nb_accidents"),
 
             DB::raw('SUM(kv.cout_missions + kv.cout_interventions + kv.cout_pieces) as cout_total'),
 

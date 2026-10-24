@@ -205,17 +205,17 @@ const exportToExcel = (data, filename, headers, headerColor, sheetName = 'Véhic
 // ============================================================================
 // EXPORT PDF
 // ============================================================================
-const exportToPDF = (title, headers, data, orientation = 'landscape') => {
+const exportToPDF = (title, headers, data, orientation = 'landscape', headerColor = '#1e3a5f') => {
   const win = window.open('', '_blank');
   if (!win) return;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
   <style>
     @page { size: ${orientation}; margin: 20mm; }
     body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a2e; padding: 20px; }
-    h1 { color: #1a1a2e; font-size: 22px; border-bottom: 3px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px; font-weight: 800; }
+    h1 { color: #1a1a2e; font-size: 22px; border-bottom: 3px solid ${headerColor}; padding-bottom: 10px; margin-bottom: 20px; font-weight: 800; }
     .meta { color: #64748b; font-size: 12px; margin-bottom: 16px; font-weight: 600; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th { background: #1e3a5f; color: #fff; padding: 10px 12px; text-align: left; font-weight: 800; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+    th { background: ${headerColor}; color: #fff; padding: 10px 12px; text-align: left; font-weight: 800; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
     td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; }
     tr:nth-child(odd) td { background: #f0f4ff; }
     tr:nth-child(even) td { background: #f8fafc; }
@@ -247,7 +247,7 @@ const HorizontalBarChart = ({ data, colors, darkMode, title, theme }) => {
     if (!win) return;
     const rows = data.map(d => `<tr><td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;">${d.name}</td><td style="padding:8px 12px;text-align:right;font-weight:700;">${d.value}</td></tr>`).join('');
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-    <style>body{font-family:'Segoe UI',Arial,sans-serif;padding:40px;}h1{font-size:20px;border-bottom:3px solid #6366f1;padding-bottom:10px;font-weight:800;}table{width:100%;border-collapse:collapse;margin-top:20px;}th{background:#1e3a5f;color:#fff;padding:10px 12px;text-align:left;font-weight:800;}</style></head>
+    <style>body{font-family:'Segoe UI',Arial,sans-serif;padding:40px;}h1{font-size:20px;border-bottom:3px solid ${theme?.primary || '#6366f1'};padding-bottom:10px;font-weight:800;}table{width:100%;border-collapse:collapse;margin-top:20px;}th{background:${theme?.primary || '#1e3a5f'};color:#fff;padding:10px 12px;text-align:left;font-weight:800;}</style></head>
     <body><h1>${title}</h1><table><thead><tr><th>Element</th><th style="text-align:right;">Valeur</th></tr></thead><tbody>${rows}</tbody></table>
     <script>window.onload=function(){window.print();}<\/script></body></html>`);
     win.document.close();
@@ -300,7 +300,7 @@ const VehicleExportDropdown = ({ fetchAllVehicles, darkMode, theme }) => {
       const allVehicles = await fetchAllVehicles();
       const rows = allVehicles.map(vToRow);
       if (format === 'excel') exportToExcel(rows, 'Vehicules_Tous', vHeaders, theme?.primary);
-      else exportToPDF('Liste Complète des Véhicules', vHeaders, rows);
+      else exportToPDF('Liste Complète des Véhicules', vHeaders, rows, 'landscape', theme?.primary);
     } catch (err) { console.error('Erreur export:', err); }
     finally { setExporting(false); setOpen(false); }
   };
@@ -315,7 +315,7 @@ const VehicleExportDropdown = ({ fetchAllVehicles, darkMode, theme }) => {
       Object.entries(groups).forEach(([name, list]) => {
         const rows = list.map(vToRow);
         if (format === 'excel') exportToExcel(rows, `Vehicules_${label}_${name}`, vHeaders, theme?.primary, name);
-        else exportToPDF(`Véhicules - ${label}: ${name}`, vHeaders, rows);
+        else exportToPDF(`Véhicules - ${label}: ${name}`, vHeaders, rows, 'landscape', theme?.primary);
       });
     } catch (err) { console.error('Erreur export:', err); }
     finally { setExporting(false); setOpen(false); }
@@ -841,6 +841,18 @@ const Vehicules = () => {
       return data.data ?? data;
     } catch (err) { console.error('Erreur export:', err); return []; }
   }, [searchTerm, filterCategorie, filterMarque, filterModele, filterStatut, filterVille]);
+
+  // ── Imprimer la liste des véhicules (mode paysage) ──
+  const handlePrintVehicles = async () => {
+    try {
+      const allVehicles = await fetchAllVehicles();
+      const rows = allVehicles.map(vehicleToExportRow);
+      exportToPDF('Liste des Véhicules', VEHICLE_EXPORT_HEADERS, rows, 'landscape', theme.primary);
+    } catch (err) {
+      console.error('Erreur impression:', err);
+      showError(darkMode, theme, 'Erreur', 'Impossible de générer le document pour impression.', 'error');
+    }
+  };
 
   // ── Chargement données détail ──
   const loadDetailData = useCallback(async (immatriculation) => {
@@ -1485,7 +1497,12 @@ const Vehicules = () => {
               <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}>
                 <div className={`px-5 py-3 flex items-center justify-between border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
                   <p className={`text-sm font-extrabold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}><i className="bi bi-list-ul mr-2"></i>{totalVehicles} véhicule(s)</p>
-                  <TableExportButton fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} theme={theme} />
+                  <div className="flex items-center gap-2">
+                    <button onClick={handlePrintVehicles} className={`px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${darkMode ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`} title="Imprimer la liste (paysage)">
+                      <i className="bi bi-printer"></i> Imprimer
+                    </button>
+                    <TableExportButton fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} theme={theme} />
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -1507,7 +1524,7 @@ const Vehicules = () => {
                                 {/* Véhicule */}
                                 <td className="px-5 py-4">
                                   <div className="flex items-center gap-3">
-                                    <StableImage src={vehicle.image} alt={`${vehicle.marque} ${vehicle.modele}`} className="w-11 h-11 rounded-lg shadow-sm" darkMode={darkMode} clickable={true} />
+                                    <StableImage src={vehicle.image} alt={`${vehicle.marque} ${vehicle.modele}`} className="w-20 h-20 rounded-lg shadow-sm object-cover" darkMode={darkMode} clickable={true} />
                                     <div>
                                       <p className={`font-extrabold text-sm ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{vehicle.immatriculation}</p>
                                       <p className={`text-xs font-semibold ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{vehicle.marque} {vehicle.modele} · {vehicle.annee}</p>
@@ -1576,7 +1593,12 @@ const Vehicules = () => {
               <>
                 <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm p-4 mb-4 flex items-center justify-between`}>
                   <p className={`text-sm font-extrabold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}><i className="bi bi-grid-3x3-gap-fill mr-2"></i>{totalVehicles} véhicule(s) — Vue Grille</p>
-                  <TableExportButton fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} theme={theme} />
+                  <div className="flex items-center gap-2">
+                    <button onClick={handlePrintVehicles} className={`px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${darkMode ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`} title="Imprimer la liste (paysage)">
+                      <i className="bi bi-printer"></i> Imprimer
+                    </button>
+                    <TableExportButton fetchAllVehicles={fetchAllVehicles} darkMode={darkMode} theme={theme} />
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                   {loading

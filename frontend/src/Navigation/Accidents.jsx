@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import Swal from 'sweetalert2';
+import { showSuccess, showError, showConfirm } from '../utils/walConfig';
 import { useTheme } from '../contexts/ThemeContext';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -18,68 +18,12 @@ import {
 } from '../api/Admin-Axios/Accident-axios';
 
 // ============================================================================
-// SWEETALERT2 HELPERS — thème dynamique (dark/light + couleur du thème actif)
+// SWEETALERT2 — helpers centralisés (utils/walConfig.js), identiques à la page Interventions
 // ============================================================================
-
-/**
- * Construit les options SweetAlert2 adaptées au thème courant.
- * @param {boolean} darkMode
- * @param {{ primary: string, primaryDark: string }} theme
- */
-const buildSwalOptions = (darkMode, theme) => ({
-  background:    darkMode ? '#111827' : '#ffffff',
-  color:         darkMode ? '#f9fafb' : '#111827',
-  confirmButtonColor: theme.primary,
-  cancelButtonColor:  darkMode ? '#374151' : '#e5e7eb',
-  customClass: {
-    popup:         darkMode ? 'swal-dark-popup'   : 'swal-light-popup',
-    confirmButton: 'swal-confirm-btn',
-    cancelButton:  'swal-cancel-btn',
-  },
-});
-
-/**
- * Alerte d'erreur — un seul bouton "D'ACCORD".
- */
-const swalError = (darkMode, theme, title, text) =>
-  Swal.fire({
-    icon:              'error',
-    title:             title || 'Une erreur est survenue',
-    text,
-    confirmButtonText: "D'accord",
-    showCancelButton:  false,
-    ...buildSwalOptions(darkMode, theme),
-  });
-
-/**
- * Alerte de succès — se ferme seule et rafraîchit la page.
- */
-const swalSuccess = (darkMode, theme, title, text) =>
-  Swal.fire({
-    icon:             'success',
-    title:            title || 'Succès',
-    text,
-    timer:            1800,
-    timerProgressBar: true,
-    showConfirmButton: false,
-    ...buildSwalOptions(darkMode, theme),
-  }).then(() => window.location.reload());
-
-/**
- * Alerte de confirmation — retourne true si confirmé.
- */
+const swalError   = (darkMode, theme, title, text) => showError(darkMode, theme, title || 'Une erreur est survenue', text);
+const swalSuccess = (darkMode, theme, title, text) => showSuccess(darkMode, theme, title || 'Succès', text);
 const swalConfirm = async (darkMode, theme, title, text, confirmText = 'Supprimer') => {
-  const result = await Swal.fire({
-    icon:              'warning',
-    title,
-    text,
-    showCancelButton:  true,
-    confirmButtonText: confirmText,
-    cancelButtonText:  'Annuler',
-    cancelButtonColor:  darkMode ? '#374151' : '#e5e7eb',
-    ...buildSwalOptions(darkMode, theme),
-    confirmButtonColor: '#ef4444', // rouge pour destructif
-  });
+  const result = await showConfirm(darkMode, theme, { title, html: text, confirmText, isDanger: true });
   return result.isConfirmed;
 };
 
@@ -964,7 +908,7 @@ const AccidentFormModal = ({ accident, darkMode, theme, onClose, onSave, formDat
             </div>
             <div>
               <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                {isEdit ? 'Modifier l\'accident' : 'Déclarer un accident'}
+                {isEdit ? 'Modifier l\'accident' : 'Enregistrer'}
               </h2>
               {isEdit && <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{accident.ref}</p>}
             </div>
@@ -1345,7 +1289,7 @@ const AccidentFormModal = ({ accident, darkMode, theme, onClose, onSave, formDat
             style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
             {saving
               ? <><i className="bi bi-hourglass-split animate-spin"></i> Enregistrement...</>
-              : <><i className={`bi ${isEdit ? 'bi-check-lg' : 'bi-plus-lg'}`}></i> {isEdit ? 'Enregistrer' : 'Déclarer l\'accident'}</>
+              : <><i className={`bi ${isEdit ? 'bi-check-lg' : 'bi-plus-lg'}`}></i> { 'Enregistrer'}</>
             }
           </button>
         </div>
@@ -1359,23 +1303,49 @@ const AccidentFormModal = ({ accident, darkMode, theme, onClose, onSave, formDat
 // ============================================================================
 const ActionMenu = ({ accident, darkMode, theme, onView, onEdit, onDelete }) => {
   const [open, setOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const [menuStyle, setMenuStyle] = useState({});
   const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const MENU_W = 180;
+  const MENU_H = 150; // hauteur approximative (3 actions + séparateur)
 
   const toggle = (e) => {
     e.stopPropagation(); e.preventDefault();
-    if (!open) {
+    if (!open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
-      setMenuPos({ top: rect.bottom + 4, left: rect.right - 176 });
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // S'il n'y a pas assez de place en bas, le menu s'ouvre vers le haut
+      const showAbove = spaceBelow < MENU_H + 12 && rect.top > MENU_H + 12;
+      let left = rect.right - MENU_W;
+      if (left < 8) left = 8;
+      if (left + MENU_W > window.innerWidth - 8) left = window.innerWidth - MENU_W - 8;
+      setMenuStyle({
+        position: 'fixed',
+        top: showAbove ? rect.top - MENU_H - 4 : rect.bottom + 4,
+        left,
+        width: MENU_W,
+        zIndex: 99999,
+      });
     }
     setOpen(o => !o);
   };
 
   useEffect(() => {
     if (!open) return;
+    const onDown = (e) => {
+      if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const close = () => setOpen(false);
-    const t = setTimeout(() => { document.addEventListener('click', close, { once: true }); }, 0);
-    return () => { clearTimeout(t); document.removeEventListener('click', close); };
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
   }, [open]);
 
   return (
@@ -1389,19 +1359,19 @@ const ActionMenu = ({ accident, darkMode, theme, onView, onEdit, onDelete }) => 
       </button>
 
       {open && ReactDOM.createPortal(
-        <div onClick={e => e.stopPropagation()}
-          className={`fixed z-[9999] rounded-xl shadow-2xl border py-1.5 w-44 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-          style={{ top: menuPos.top, left: menuPos.left, animation: 'fadeInDown .15s ease-out' }}>
-          <button onClick={e => { e.stopPropagation(); onView(accident); setOpen(false); }}
+        <div ref={menuRef} onClick={e => e.stopPropagation()}
+          className={`rounded-xl shadow-2xl border py-1.5 overflow-hidden ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+          style={menuStyle}>
+          <button onClick={e => { e.stopPropagation(); setOpen(false); onView(accident); }}
             className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}>
             <i className="bi bi-eye text-base" style={{ color: theme.primary }}></i> Voir les détails
           </button>
-          <button onClick={e => { e.stopPropagation(); onEdit(accident); setOpen(false); }}
+          <button onClick={e => { e.stopPropagation(); setOpen(false); onEdit(accident); }}
             className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}>
             <i className="bi bi-pencil-fill text-base" style={{ color: theme.primary }}></i> Modifier
           </button>
           <div className={`my-1 mx-3 h-px ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`} />
-          <button onClick={e => { e.stopPropagation(); onDelete(accident.id); setOpen(false); }}
+          <button onClick={e => { e.stopPropagation(); setOpen(false); onDelete(accident.id); }}
             className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors ${darkMode ? 'text-red-400 hover:bg-red-900/20' : 'text-red-600 hover:bg-red-50'}`}>
             <i className="bi bi-trash3-fill text-base"></i> Supprimer
           </button>
@@ -1737,6 +1707,14 @@ const Accidents = () => {
       .catch(() => {});
   }, [filterPeriode]);
 
+  // Rafraîchit liste + stats sans recharger la page (après création / modification / suppression / statut)
+  const refreshData = useCallback(() => {
+    fetchAccidents();
+    getAccidentStatistiques({ jours: filterPeriode })
+      .then(res => { if (res.success) setStats(res.data); })
+      .catch(() => {});
+  }, [fetchAccidents, filterPeriode]);
+
   // Reset page quand filtre change
   useEffect(() => { setCurrentPage(1); }, [filterNiveau, filterStatut, filterResp, filterChauffeur, filterImmob, filterPeriode, searchTerm, sortBy, sortDir]);
 
@@ -1766,6 +1744,7 @@ const Accidents = () => {
       if (res.success) {
         setShowFormModal(false);
         setEditAccident(null);
+        refreshData();
         await swalSuccess(darkMode, theme,
           id ? 'Accident mis à jour !' : 'Accident déclaré !',
           id ? 'Les modifications ont été enregistrées.' : 'L\'accident a été déclaré avec succès.'
@@ -1793,6 +1772,7 @@ const Accidents = () => {
       const res = await deleteAccident(id);
       if (res.success) {
         setShowDetailModal(false);
+        refreshData();
         await swalSuccess(darkMode, theme, 'Accident supprimé', 'L\'accident a été supprimé avec succès.');
       } else {
         await swalError(darkMode, theme, 'Erreur', res.message || 'La suppression a échoué.');
@@ -1810,6 +1790,7 @@ const Accidents = () => {
         setAccidents(prev => prev.map(a => a.id === id ? { ...a, statut: newStatut } : a));
         if (selectedAccident?.id === id) setSelectedAccident(prev => ({ ...prev, statut: newStatut }));
         showToast(`Statut mis à jour : ${getStatutInfo(newStatut).libelle}`, 'info');
+        refreshData();
       } else {
         await swalError(darkMode, theme, 'Erreur', res.message || 'Mise à jour du statut échouée.');
       }
@@ -1933,7 +1914,7 @@ const Accidents = () => {
         <div className="fixed inset-0 z-30" onClick={() => { setShowNotifications(false); setShowProfile(false); }} />
       )}
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {initialLoading ? (
           <SkeletonPage darkMode={darkMode} />
