@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import Swal from 'sweetalert2';
@@ -8,6 +8,26 @@ import logoUrl from '../assets/logo.png';
 // Rayons des courbes concaves de l'onglet actif
 const TAB_RADIUS = 12; // items principaux
 const SUB_RADIUS = 10; // items de sous-menu
+
+// Clé de sauvegarde de la position de scroll du menu
+const SCROLL_KEY = 'sidebar_scroll';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cache au niveau du module : survit aux remontages du composant.
+// Il ne repasse à false qu'au rechargement de la page (le module est
+// réinitialisé) ou à la déconnexion → le skeleton, l'appel API et l'animation
+// d'entrée ne se jouent donc qu'une seule fois par session.
+// ─────────────────────────────────────────────────────────────────────────────
+let sidebarBootstrapped = false;
+
+const readCachedUser = () => {
+  try {
+    const raw = localStorage.getItem('user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes des rôles
@@ -35,12 +55,11 @@ const buildMenuItems = (navigate) => [
         label: 'Tableau de bord',
         path: '/Navigation/Dashboard',
         onClick: () => navigate('/Navigation/Dashboard'),
-        roles: [ROLES.ADMIN, ROLES.CHEF_PARC,ROLES.DALL],
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC, ROLES.DALL],
       },
     ],
   },
 
-  
   {
     items: [
       {
@@ -185,41 +204,41 @@ const buildMenuItems = (navigate) => [
     ],
   },
 
-{
-  items: [
-    {
-      label:' Accidents',
-      icon: 'bi-cone-striped',
-      path: '/Navigation/Accidents',
-      onClick: () => navigate('/Navigation/Accidents'),
-      roles: [ROLES.ADMIN, ROLES.CHEF_PARC,],
-    }
-  ]
-},  
+  {
+    items: [
+      {
+        label: ' Accidents',
+        icon: 'bi-cone-striped',
+        path: '/Navigation/Accidents',
+        onClick: () => navigate('/Navigation/Accidents'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC],
+      }
+    ]
+  },
 
-{
-  items: [
-    {
-      label: 'Damandes d\'interventions',
-      icon: 'bi-file-earmark-bar-graph-fill',
-      path: '/Navigation/DemandesInterventions',
-      onClick: () => navigate('/Navigation/DemandesInterventions'),
-      roles: [ROLES.ADMIN, ROLES.CHEF_PARC,ROLES.DALL],
-    }
-  ]
-},
+  {
+    items: [
+      {
+        label: 'Damandes d\'interventions',
+        icon: 'bi-file-earmark-bar-graph-fill',
+        path: '/Navigation/DemandesInterventions',
+        onClick: () => navigate('/Navigation/DemandesInterventions'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC, ROLES.DALL],
+      }
+    ]
+  },
 
-{
-  items: [
-    {
-      label: 'Interventions enrégistrées',
-      icon: 'bi-fuel-pump-fill',
-      path: '/Navigation/InterventionsVehicules',
-      onClick: () => navigate('/Navigation/InterventionsVehicules'),
-      roles: [ROLES.ADMIN, ROLES.CHEF_PARC,ROLES.DALL],
-    }
-  ]
-},
+  {
+    items: [
+      {
+        label: 'Interventions enrégistrées',
+        icon: 'bi-fuel-pump-fill',
+        path: '/Navigation/InterventionsVehicules',
+        onClick: () => navigate('/Navigation/InterventionsVehicules'),
+        roles: [ROLES.ADMIN, ROLES.CHEF_PARC, ROLES.DALL],
+      }
+    ]
+  },
 
   {
     section: 'ANALYSES & STATISTIQUES',
@@ -249,8 +268,8 @@ const buildMenuItems = (navigate) => [
       },
     ],
   },
-{
-   items: [
+  {
+    items: [
       {
         icon: 'bi-file-earmark-bar-graph-fill',
         label: "Rapport d'activités",
@@ -265,8 +284,8 @@ const buildMenuItems = (navigate) => [
       {
         icon: 'bi-bell-fill',
         label: 'Notifications',
-        path: '/Admin/Configuration/Notifications',
-        onClick: () => navigate('/Admin/Configuration/Notifications'),
+        path: '/Navigation/Notifications',
+        onClick: () => navigate('/Navigation/Notifications'),
         roles: [ROLES.ADMIN],
       },
     ],
@@ -283,18 +302,18 @@ const buildMenuItems = (navigate) => [
     ],
   },
 
-/*{
-  items:[
-    {
-      icon:'bi-gearbox-fill',
-      label:'Configuration', 
-      path:'Navigation/Configuration',
-      onClick:() => navigate('Navigation/Configuration'),
-      roles:[ROLES.ADMIN],
-    } 
-  ]
-},
-*/
+  /*{
+    items:[
+      {
+        icon:'bi-gearbox-fill',
+        label:'Configuration',
+        path:'Navigation/Configuration',
+        onClick:() => navigate('Navigation/Configuration'),
+        roles:[ROLES.ADMIN],
+      }
+    ]
+  },
+  */
   {
     items: [
       {
@@ -378,13 +397,31 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
   const navigate  = useNavigate();
   const location  = useLocation();
 
-  const [user,      setUser]      = useState(null);
-  const [userRole,  setUserRole]  = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [menuReady, setMenuReady] = useState(false);
+  const [user,      setUser]      = useState(() => (sidebarBootstrapped ? readCachedUser() : null));
+  const [userRole,  setUserRole]  = useState(() => (sidebarBootstrapped ? readCachedUser()?.role?.code ?? null : null));
+  const [isLoading, setIsLoading] = useState(!sidebarBootstrapped);
+  const [menuReady, setMenuReady] = useState(sidebarBootstrapped);
+
+  // Les animations d'entrée ne se jouent que au tout premier affichage
+  const playEntrance = useRef(!sidebarBootstrapped).current;
   const [openMenus, setOpenMenus] = useState({ configuration: false, audit: false, analyses: false, statistiques: false });
 
+  // Référence vers la <nav> scrollable
+  const navRef = useRef(null);
+
+  // Mémorise le scroll en continu (survit aux remontages du composant)
+  const handleNavScroll = (e) => {
+    try {
+      sessionStorage.setItem(SCROLL_KEY, String(e.currentTarget.scrollTop));
+    } catch {
+      /* sessionStorage indisponible : on ignore */
+    }
+  };
+
   useEffect(() => {
+    // Déjà chargé pendant cette session : rien à refaire en naviguant
+    if (sidebarBootstrapped) return undefined;
+
     let cancelled = false;
     const MAX_SKELETON_MS = 1200; // durée max d'affichage du skeleton (< 3s)
 
@@ -405,7 +442,11 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
     const showMenu = () => {
       if (cancelled) return;
       setIsLoading(false);
-      requestAnimationFrame(() => !cancelled && setMenuReady(true));
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        sidebarBootstrapped = true;
+        setMenuReady(true);
+      });
     };
 
     // Utilisateur déjà en cache : on affiche le menu immédiatement, sans skeleton
@@ -450,6 +491,33 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
     if (Object.keys(toOpen).length) setOpenMenus(prev => ({ ...prev, ...toOpen }));
   }, [location.pathname]);
 
+  // Restaure le scroll + amène l'élément actif dans la vue
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    if (!nav || isLoading) return;
+
+    // 1) Restaure la dernière position connue
+    let saved = 0;
+    try {
+      saved = parseInt(sessionStorage.getItem(SCROLL_KEY) || '0', 10) || 0;
+    } catch {
+      saved = 0;
+    }
+    if (saved) nav.scrollTop = saved;
+
+    // 2) Si l'élément actif n'est pas visible, on scrolle jusqu'à lui
+    const active = nav.querySelector('[data-active="true"]');
+    if (active) {
+      const navRect    = nav.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      const hidden =
+        activeRect.top < navRect.top || activeRect.bottom > navRect.bottom;
+      if (hidden) {
+        active.scrollIntoView({ block: 'center', behavior: 'auto' });
+      }
+    }
+  }, [location.pathname, isLoading, openMenus]);
+
   const isVisible = (item) => {
     if (!item.roles) return true;
     if (!userRole)   return false;
@@ -480,6 +548,8 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
       if (result.isConfirmed) {
         api.post('/logout').catch(() => {}).finally(() => {
           ['token', 'user', 'remember_me', 'expires_at'].forEach(k => localStorage.removeItem(k));
+          try { sessionStorage.removeItem(SCROLL_KEY); } catch { /* ignore */ }
+          sidebarBootstrapped = false;
           Swal.fire({
             background: darkMode ? '#111827' : '#ffffff',
             color: darkMode ? '#f1f5f9' : '#111827',
@@ -544,7 +614,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
         boxShadow: darkMode
           ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 3px rgba(0,0,0,0.25)'
           : 'none',
-        border: `1px solid ${darkMode ? 'rgba(255,255,255,0.06)' : 'transparent'}`,
+        border: `1px solid ${darkMode ? 'rgba(255,255,255,0.06)' : '#d1d5db'}`,
       }),
     };
   };
@@ -552,7 +622,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
   return (
     <aside
       style={{
-        width: sidebarCollapsed ? '72px' : '240px',
+        width: sidebarCollapsed ? '72px' : '260px',
         transition: 'width 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
         background: darkMode
           ? 'linear-gradient(175deg, #0f172a 0%, #111827 55%, #0d1520 100%)'
@@ -572,7 +642,8 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
         aria-hidden="true"
         style={{
           position: 'absolute', top: 0, right: 0, bottom: 0, width: '1px',
-          background: lineColor, zIndex: 0, pointerEvents: 'none',
+          background: darkMode ? '#1e293b' : '#e5e7eb',
+          zIndex: 0, pointerEvents: 'none',
         }}
       />
 
@@ -619,25 +690,26 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
         .swal2-timer-progress-bar { background: #22c55e !important; }
       `}</style>
 
-      {/* ══ HEADER logo + toggle ══ */}
+      {/* ══ HEADER logo + toggle ══
+          Menu ouvert  : logo + titre à gauche, croix à droite (1 ligne)
+          Menu réduit  : logo en haut, bouton ☰ en dessous (empilés, centrés) */}
       <div style={{
-        padding: '14px 12px',
+        padding: sidebarCollapsed ? '14px 0' : '14px 12px',
         borderBottom: `1px solid ${lineColor}`,
         display: 'flex',
         alignItems: 'center',
-        justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+        justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
         flexShrink: 0,
-        gap: '8px',
       }}>
-        <div className="sb-logo-area" style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+        <div className={playEntrance ? 'sb-logo-area' : undefined} style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden', flexShrink: 0 }}>
           <div style={{
-            padding: '7px',
+            padding: sidebarCollapsed ? '5px' : '7px',
             borderRadius: '10px',
             background: darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)',
             border: `1px solid ${darkMode ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.08)'}`,
             flexShrink: 0,
           }}>
-            <img src={logoUrl} alt="Fleetify" style={{ width: '24px', height: 'auto', display: 'block' }} />
+            <img src={logoUrl} alt="Fleetify" style={{ width: '50px', height: 'auto', display: 'block' }} />
           </div>
           {!sidebarCollapsed && (
             <div style={{ overflow: 'hidden' }}>
@@ -653,29 +725,37 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
 
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          title={sidebarCollapsed ? 'Afficher le menu' : 'Réduire le menu'}
           style={{
-            padding: '6px 7px',
-            borderRadius: '8px',
-            border: `1px solid ${lineColor}`,
-            background: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.03)',
-            color: darkMode ? '#475569' : '#6b7280',
+            position: 'absolute',
+            top: '18px',
+            right: '-12px',
+            width: '24px',
+            height: '24px',
+            padding: 0,
+            borderRadius: '50%',
+            border: `1px solid ${darkMode ? '#334155' : '#d1d5db'}`,
+            background: darkMode ? '#1e293b' : '#ffffff',
+            color: darkMode ? '#94a3b8' : '#6b7280',
+            boxShadow: darkMode ? '0 2px 6px rgba(0,0,0,0.4)' : '0 2px 6px rgba(15,23,42,0.15)',
             cursor: 'pointer',
-            flexShrink: 0,
+            zIndex: 50,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             transition: 'all 0.18s ease',
-            marginLeft: sidebarCollapsed ? 'auto' : '0',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = darkMode ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.08)'; e.currentTarget.style.color = darkMode ? '#94a3b8' : '#475569'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.03)'; e.currentTarget.style.color = darkMode ? '#475569' : '#6b7280'; }}
+          onMouseEnter={e => { e.currentTarget.style.background = theme.primary; e.currentTarget.style.color = '#ffffff'; e.currentTarget.style.borderColor = theme.primary; }}
+          onMouseLeave={e => { e.currentTarget.style.background = darkMode ? '#1e293b' : '#ffffff'; e.currentTarget.style.color = darkMode ? '#94a3b8' : '#6b7280'; e.currentTarget.style.borderColor = darkMode ? '#334155' : '#d1d5db'; }}
         >
-          <i className={sidebarCollapsed ? 'bi bi-list' : 'bi bi-x-lg'} style={{ fontSize: sidebarCollapsed ? '16px' : '13px' }} />
+          <i className={sidebarCollapsed ? 'bi bi-layout-sidebar-inset' : 'bi bi-layout-sidebar'} style={{ fontSize: '12px' }} />
         </button>
       </div>
 
       {/* ══ NAVIGATION ══ */}
       <nav
+        ref={navRef}
+        onScroll={handleNavScroll}
         className="scrollbar-hide"
         style={{
           flex: 1,
@@ -702,7 +782,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                 {/* Label section */}
                 {!sidebarCollapsed && section.section && (
                   <div
-                    className="sb-section"
+                    className={playEntrance ? 'sb-section' : undefined}
                     style={{
                       fontSize: '10.5px',
                       fontWeight: 700,
@@ -727,7 +807,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                   return (
                     <div
                       key={iIdx}
-                      className="sb-item-enter"
+                      className={playEntrance ? 'sb-item-enter' : undefined}
                       style={{
                         animationDelay: `${delay}ms`,
                         position: 'relative',
@@ -737,6 +817,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                       {/* ── Bouton principal ── */}
                       <button
                         className={`sb-nav-btn ${itemActive ? 'sb-item-active' : ''}`}
+                        data-active={itemActive ? 'true' : undefined}
                         onClick={() => (item.hasSubmenu ? toggleMenu(item.key) : item.onClick?.())}
                         style={cardBase(itemActive)}
                         onMouseEnter={e => {
@@ -744,7 +825,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                             Object.assign(e.currentTarget.style, {
                               background: darkMode ? 'rgba(255,255,255,0.09)' : '#f8fafc',
                               color: darkMode ? '#e2e8f0' : '#111827',
-                              borderColor: darkMode ? 'rgba(255,255,255,0.11)' : '#f1f5f9',
+                              borderColor: darkMode ? 'rgba(255,255,255,0.11)' : '#9ca3af',
                               boxShadow: 'none',
                             });
                           }
@@ -754,7 +835,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                             Object.assign(e.currentTarget.style, {
                               background: darkMode ? 'rgba(255,255,255,0.04)' : 'transparent',
                               color: darkMode ? '#94a3b8' : '#4b5563',
-                              borderColor: darkMode ? 'rgba(255,255,255,0.06)' : 'transparent',
+                              borderColor: darkMode ? 'rgba(255,255,255,0.06)' : '#d1d5db',
                               boxShadow: 'none',
                             });
                           }
@@ -811,6 +892,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                               <button
                                 key={subIdx}
                                 className={`sb-sub-btn ${sActive ? 'sb-sub-active' : ''}`}
+                                data-active={sActive ? 'true' : undefined}
                                 onClick={() => sub.onClick?.()}
                                 style={{
                                   width: sActive ? '100%' : `calc(100% - ${SUB_RADIUS}px)`,
@@ -825,7 +907,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                                   fontWeight: sActive ? 600 : 400,
                                   letterSpacing: '0.01em',
                                   transition: 'all 0.18s cubic-bezier(0.22,1,0.36,1)',
-                                  animation: `slideInLeft 0.25s cubic-bezier(0.22,1,0.36,1) ${subIdx * 35}ms both`,
+                                  animation: playEntrance ? `slideInLeft 0.25s cubic-bezier(0.22,1,0.36,1) ${subIdx * 35}ms both` : 'none',
                                   zIndex: sActive ? 2 : 1,
                                   ...(sActive ? {
                                     background: `linear-gradient(90deg, ${theme.primary}, ${theme.primaryDark})`,
@@ -836,7 +918,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                                     borderRadius: '8px',
                                     background: darkMode ? 'rgba(255,255,255,0.03)' : 'transparent',
                                     color: darkMode ? '#64748b' : '#6b7280',
-                                    border: `1px solid ${darkMode ? 'rgba(255,255,255,0.04)' : 'transparent'}`,
+                                    border: `1px solid ${darkMode ? 'rgba(255,255,255,0.04)' : '#d1d5db'}`,
                                   }),
                                 }}
                                 onMouseEnter={e => {
@@ -844,7 +926,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                                     Object.assign(e.currentTarget.style, {
                                       background: darkMode ? 'rgba(255,255,255,0.08)' : '#f8fafc',
                                       color: darkMode ? '#cbd5e1' : '#111827',
-                                      borderColor: darkMode ? 'rgba(255,255,255,0.09)' : '#f1f5f9',
+                                      borderColor: darkMode ? 'rgba(255,255,255,0.09)' : '#9ca3af',
                                     });
                                   }
                                 }}
@@ -853,7 +935,7 @@ const Sidebar = ({ darkMode, sidebarCollapsed, setSidebarCollapsed }) => {
                                     Object.assign(e.currentTarget.style, {
                                       background: darkMode ? 'rgba(255,255,255,0.03)' : 'transparent',
                                       color: darkMode ? '#64748b' : '#6b7280',
-                                      borderColor: darkMode ? 'rgba(255,255,255,0.04)' : 'transparent',
+                                      borderColor: darkMode ? 'rgba(255,255,255,0.04)' : '#d1d5db',
                                     });
                                   }
                                 }}

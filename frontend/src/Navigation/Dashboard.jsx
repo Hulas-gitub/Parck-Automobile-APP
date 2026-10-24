@@ -470,7 +470,7 @@ const Dashboard = () => {
         showNotifications={showNotifications} setShowNotifications={setShowNotifications}
         showProfile={showProfile} setShowProfile={setShowProfile} />
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ─── STATS GRID ─── */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

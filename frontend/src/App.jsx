@@ -18,6 +18,7 @@ import DemandesInterventions from './Navigation/DemandesInterventions';
 import InterventionsVehicules from './Navigation/InterventionsVehicules';
 import CarnetCarburant from './Navigation/CarnetCarburant';
 import HistoriqueVehicule from './Navigation/HistoriqueVehicule';
+import Notifications from './Navigation/Notifications';
 
 // Composant pour protéger les routes avec contrôle d'accès basé sur les rôles (RBAC)
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -246,6 +247,17 @@ function App() {
           />
           <Route path="/Admin/Navigation/Theme" element={<Navigate to="/Navigation/Theme" replace />} />
 
+          {/* Notifications (Admin uniquement) */}
+          <Route 
+            path="/Navigation/Notifications" 
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <Notifications />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/Admin/Navigation/Notifications" element={<Navigate to="/Navigation/Notifications" replace />} />
+
           {/* Route 404 */}
           <Route 
             path="*" 
@@ -258,7 +270,7 @@ function App() {
                 fontFamily: 'system-ui, -apple-system, sans-serif'
               }}>
                 <div style={{ textAlign: 'center' }}>
-                  <h1 style={{ fontSize: '72px', margin: '0', color: '#ffc400' }}>404</h1>
+                  <h1 style={{ fontSize: '72px', margin: '0', color: '#000000' }}>404</h1>
                   <p  style={{ fontSize: '18px', color: '#6B7280' }}>Page non trouvée</p>
                   <a 
                     href="/Login" 
@@ -266,7 +278,7 @@ function App() {
                       display: 'inline-block',
                       marginTop: '20px',
                       padding: '10px 24px',
-                      backgroundColor: '#ffc400',
+                      backgroundColor: '#000000',
                       color: 'white',
                       textDecoration: 'none',
                       borderRadius: '6px',

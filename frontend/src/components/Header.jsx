@@ -217,7 +217,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
 
   const handleViewAllNotifications = () => {
     setShowNotifications(false);
-    navigate('/admin/configuration/notifications');
+    navigate('/Navigation/notifications');
   };
 
   const getNotificationStyle = (notification) => {
@@ -354,7 +354,7 @@ const Header = ({ darkMode, setDarkMode, sidebarCollapsed, showNotifications, se
       {/* z-index : au-dessus du calque « clic ailleurs » des pages (z-30), sous la sidebar (z-40) */}
       <header
         className={`hdr-root ${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} border-b px-6 py-4 flex items-center justify-between fixed top-0 right-0 transition-all duration-300`}
-        style={{ left: sidebarCollapsed ? '4.5rem' : '15rem', zIndex: Z_HEADER }}
+        style={{ left: sidebarCollapsed ? '4.5rem' : '16.25rem', zIndex: Z_HEADER }}
       >
 
         {/* ── Espace gauche ── */}

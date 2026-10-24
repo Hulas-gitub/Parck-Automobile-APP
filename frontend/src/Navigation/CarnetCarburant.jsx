@@ -96,7 +96,6 @@ const CarnetCarburant = () => {
   const [showActionMenu, setShowActionMenu] = useState(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exportLoading,  setExportLoading]  = useState({ pdf: false, excel: false });
-  const [viewMode,       setViewMode]       = useState('grid');
 
   // ── Pagination ──
   const [currentPage, setCurrentPage] = useState(1);
@@ -799,7 +798,7 @@ const CarnetCarburant = () => {
       <Header darkMode={darkMode} setDarkMode={setDarkMode} sidebarCollapsed={sidebarCollapsed} theme={theme} showNotifications={showNotifications} setShowNotifications={setShowNotifications} showProfile={showProfile} setShowProfile={setShowProfile} />
 
 <main
-  className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+  className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
         {/* ── SÉLECTEUR DE VÉHICULE ── */}
         <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} rounded-xl border shadow-sm p-5 mb-6`}>
           <div className="flex items-center gap-4 flex-wrap">
@@ -950,19 +949,6 @@ const CarnetCarburant = () => {
                         className={`pl-10 pr-4 py-2 rounded-lg border ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-400' : 'bg-gray-50 border-gray-200 text-gray-900'} focus:outline-none focus:ring-2 w-52`}
                         style={{ '--tw-ring-color': theme.primary }} />
                     </div>
-                    {/* Toggle vue */}
-                    <div className={`flex items-center gap-1 p-1 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                      <button onClick={() => setViewMode('table')}
-                        className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${viewMode === 'table' ? (darkMode ? 'bg-gray-700 text-white' : 'bg-gray-200 text-gray-900') : (darkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900')}`}
-                        title="Vue tableau">
-                        <i className="bi bi-table me-1"></i> Tableau
-                      </button>
-                      <button onClick={() => setViewMode('grid')}
-                        className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${viewMode === 'grid' ? (darkMode ? 'bg-gray-700 text-white' : 'bg-gray-200 text-gray-900') : (darkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900')}`}
-                        title="Vue grille">
-                        <i className="bi bi-grid-3x3-gap-fill me-1"></i> Grille
-                      </button>
-                    </div>
                     {/* Filtres */}
                     <div className="relative" onClick={e => e.stopPropagation()}>
                       <button onClick={() => setShowFilterMenu(p => !p)}
@@ -1028,7 +1014,7 @@ const CarnetCarburant = () => {
                     <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Aucun plein de carburant enregistré</p>
                   </div>
                 </div>
-              ) : viewMode === 'table' ? (
+              ) : (
                 /* VUE TABLEAU */
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -1120,21 +1106,6 @@ const CarnetCarburant = () => {
                       })}
                     </tbody>
                   </table>
-                </div>
-              ) : (
-                /* VUE GRILLE */
-                <div className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {currentItems.map((c) => (
-                      <CarburantCard
-                        key={c.id}
-                        item={c}
-                        onView={handleViewDetail}
-                        onEdit={handleOpenEdit}
-                        onDelete={handleDelete}
-                      />
-                    ))}
-                  </div>
                 </div>
               )}
 

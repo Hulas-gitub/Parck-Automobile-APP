@@ -8,7 +8,7 @@ const Footer = ({ darkMode, sidebarCollapsed, theme }) => {
       className={`transition-all duration-300 mt-auto px-6 py-4 border-t flex flex-col sm:flex-row items-center justify-between gap-2 ${
         darkMode ? 'bg-gray-900 border-gray-800 text-gray-400' : 'bg-white border-gray-100 text-gray-500'
       }`}
-      style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}
+      style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}
     >
       <p className="text-xs font-semibold">
         © {year} <span className="font-extrabold" style={{ color: theme?.primary }}>Société Gabonaise de services (SGS)</span>. Tous droits réservés.

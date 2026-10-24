@@ -1,36 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { useTheme } from '../contexts/ThemeContext';
 import Swal from 'sweetalert2';
+import { useTheme } from '../contexts/ThemeContext';
 
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
-import { getFormStyles, getTableStyles, getRowBackgroundColor, PageSkeleton } from '../utils/uniformStyles';
+import { getRowBackgroundColor } from '../utils/uniformStyles';
+import { showSuccess, showError, getSwalConfig } from '../utils/walConfig';
 import {
   getFournisseurs, createFournisseur, updateFournisseur, toggleFournisseur, deleteFournisseur,
   getOutils, createOutil, updateOutil, deleteOutil,
-  getPieces, createPiece, updatePiece, togglePiece, entreeStockPiece, getPieceMouvements, deletePiece,
   getProblemes, createProbleme, updateProbleme, prendreEnChargeProbleme, resoudreProbleme, deleteProbleme,
-  envoyerAlertesStock,
 } from '../api/Admin-Axios/Intervention-axios';
 
 // API PAR ONGLET
-const FETCHERS = { fournisseurs: getFournisseurs, outils: getOutils, pieces: getPieces, problemes: getProblemes };
+const FETCHERS = { fournisseurs: getFournisseurs, outils: getOutils, problemes: getProblemes };
 
 const CRUD = {
   fournisseurs: { create: createFournisseur, update: updateFournisseur, remove: deleteFournisseur },
   outils: { create: createOutil, update: updateOutil, remove: deleteOutil },
-  pieces: { create: createPiece, update: updatePiece, remove: deletePiece },
   problemes: { create: createProbleme, update: updateProbleme, remove: deleteProbleme },
 };
 
 // Listes à recharger après une modification (données liées côté serveur)
 const REFRESH_AFTER = {
-  fournisseurs: ['pieces'],     // fournisseur_nom affiché dans les pièces
-  outils: ['problemes'],  // outil_nom affiché dans les problèmes
-  pieces: [],
-  problemes: ['outils'],     // outils.etat synchronisé (OK ↔ defaut)
+  fournisseurs: [],
+  outils: ['problemes'],    // outil_nom affiché dans les problèmes
+  problemes: ['outils'],    // outils.etat synchronisé (OK ou defaut)
 };
 
 // UTILITAIRES
@@ -41,13 +38,11 @@ const extractErrorMessage = (error) => {
   return data.message || 'Une erreur inattendue est survenue.';
 };
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-// « 2026-03-01 14:00:00 » → Date (compatible Safari)
+// « 2026-03-01 14:00:00 » donne une Date (compatible Safari)
 const toDate = (d) => new Date(String(d).replace(' ', 'T'));
-// → valeur pour <input type="datetime-local">
+// valeur pour <input type="datetime-local">
 const toInputDT = (d) => (d ? String(d).replace(' ', 'T').slice(0, 16) : '');
-// → valeur pour <input type="date">
+// valeur pour <input type="date">
 const toInputDate = (d) => (d ? String(d).slice(0, 10) : '');
 
 const fmtDate = (d) => {
@@ -84,7 +79,7 @@ const etatOutilCls = (etat) =>
       etat === 'defaut' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700';
 const etatOutilLabel = (etat) => (etat === 'defaut' ? 'Défaut signalé' : etat);
 
-// MENU D'ACTIONS (portal → jamais coupé par le overflow du tableau)
+// MENU D'ACTIONS (portal : jamais coupé par le overflow du tableau)
 const MenuItem = ({ icon, label, onClick, tone = 'default', darkMode }) => {
   const tones = {
     default: darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100',
@@ -147,14 +142,12 @@ const ActionMenu = ({ darkMode, children }) => {
 };
 
 // LISTE DÉROULANTE AVEC SAISIE
-const CATEGORIES_OUTIL = ['Outillage mécanique', 'Levage', 'Diagnostic', 'Électrique', 'Pneumatique', 'Carrosserie'];
-const TYPES_PIECE = ['Filtre', 'Freinage', 'Lubrifiant', 'Pneumatique', 'Électrique', 'Carrosserie', 'Moteur', 'Autre'];
-const UNITES = ['unité', 'jeu', 'bidon', 'litre', 'kg', 'mètre'];
+const CATEGORIES_OUTIL = ['Outillage mécanique', 'Levage', 'Diagnostic', 'Électrique', 'Pneumatique', 'Carrosserie', 'Consommable'];
 
 /**
  * Liste déroulante où l'on peut toujours taper.
- *  - allowCustom = true  : la valeur saisie est conservée telle quelle (champs texte libres)
- *  - allowCustom = false : la saisie sert à filtrer, il faut choisir un élément (champs liés à un id)
+ *  allowCustom = true  : la valeur saisie est conservée telle quelle (champs texte libres)
+ *  allowCustom = false : la saisie sert à filtrer, il faut choisir un élément (champs liés à un id)
  * options : string[] ou [{ value, label }]
  */
 const ComboBox = ({ value, onChange, options, allowCustom = false, placeholder, clearLabel, darkMode, inputCls }) => {
@@ -236,13 +229,11 @@ const SkeletonPage = ({ darkMode }) => {
   const card = `${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm`;
   return (
     <div>
-      {/* En-tête */}
       <div className="mb-6 space-y-2">
         <Shimmer darkMode={darkMode} className="w-72 h-8" />
         <Shimmer darkMode={darkMode} className="w-96 max-w-full h-4" />
       </div>
 
-      {/* Cartes de stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className={`${card} p-6 flex items-center justify-between`}>
@@ -255,11 +246,10 @@ const SkeletonPage = ({ darkMode }) => {
         ))}
       </div>
 
-      {/* Onglets + recherche + bouton */}
       <div className={`${card} p-5 mb-6`}>
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex flex-wrap gap-2">
-            {['w-32', 'w-24', 'w-44', 'w-48'].map((w, i) => (
+            {['w-32', 'w-24', 'w-44'].map((w, i) => (
               <Shimmer key={i} darkMode={darkMode} className={`${w} h-9 rounded-lg`} />
             ))}
           </div>
@@ -270,7 +260,6 @@ const SkeletonPage = ({ darkMode }) => {
         </div>
       </div>
 
-      {/* Tableau */}
       <div className={`${card} overflow-hidden`}>
         <div className={`px-6 py-4 flex gap-6 ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
           {Array.from({ length: 7 }).map((_, i) => (
@@ -327,35 +316,21 @@ const FournisseursOutils = () => {
   // Données (venant de l'API)
   const [fournisseurs, setFournisseurs] = useState([]);
   const [outils, setOutils] = useState([]);
-  const [pieces, setPieces] = useState([]);
   const [problemes, setProblemes] = useState([]);
 
-  const setters = { fournisseurs: setFournisseurs, outils: setOutils, pieces: setPieces, problemes: setProblemes };
+  const setters = { fournisseurs: setFournisseurs, outils: setOutils, problemes: setProblemes };
+
+  // Config SweetAlert commune
+  const swalBase = () => getSwalConfig(darkMode, theme);
 
   // Formulaire générique
   const emptyForm = {
     nom: '', contact: '', telephone: '', email: '', type: 'pieces', adresse: '', est_actif: true,
-    categorie: '', etat: 'OK', emplacement: '', date_dernier_controle: '', notes: '',
-    sku: '', type_piece: '', description: '', quantite_stock: 0, seuil_alerte: 0,
-    unite: 'unité', prix_unitaire: 0, fournisseur_id: '',
+    categorie: '', quantite_stock: '', etat: 'OK', emplacement: '', date_dernier_controle: '', notes: '',
     outil_id: '', description_probleme: '',
     statut: 'signale', date_signalement: '', date_resolution: '', notes_resolution: '',
   };
   const [formData, setFormData] = useState(emptyForm);
-
-  // SWEETALERT
-  const swalBase = () => ({
-    background: darkMode ? '#111827' : '#fff',
-    color: darkMode ? '#f1f5f9' : '#111827',
-    confirmButtonColor: theme.primary,
-    cancelButtonColor: darkMode ? '#374151' : '#9ca3af',
-  });
-
-  const swalError = (err, title = 'Erreur') =>
-    Swal.fire({ icon: 'error', title, text: typeof err === 'string' ? err : extractErrorMessage(err), confirmButtonText: "D'accord", ...swalBase() });
-
-  const swalSuccess = (title, text) =>
-    Swal.fire({ icon: 'success', title, text, timer: 1800, timerProgressBar: true, showConfirmButton: false, ...swalBase() });
 
   // CHARGEMENT
   const loadList = async (key) => {
@@ -368,7 +343,7 @@ const FournisseursOutils = () => {
     try {
       await Promise.all(Object.keys(FETCHERS).map(loadList));
     } catch (err) {
-      swalError(err, 'Erreur de chargement');
+      showError(darkMode, theme, 'Erreur de chargement', typeof err === 'string' ? err : extractErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -389,6 +364,8 @@ const FournisseursOutils = () => {
   const normalizeItem = (item) => {
     const f = { ...emptyForm };
     Object.keys(emptyForm).forEach((k) => { if (item[k] !== null && item[k] !== undefined) f[k] = item[k]; });
+    // le champ "type" n'a de valeur par défaut que pour les fournisseurs
+    f.type = item.type ?? (activeFilter === 'fournisseurs' ? 'pieces' : '');
     f.date_dernier_controle = toInputDate(item.date_dernier_controle);
     f.date_signalement = toInputDT(item.date_signalement);
     f.date_resolution = toInputDT(item.date_resolution);
@@ -410,7 +387,7 @@ const FournisseursOutils = () => {
       });
       setActiveFilter('problemes');
     } else {
-      setFormData(emptyForm);
+      setFormData({ ...emptyForm, type: activeFilter === 'fournisseurs' ? 'pieces' : '' });
     }
     setShowModal(true);
   };
@@ -441,16 +418,10 @@ const FournisseursOutils = () => {
         };
       case 'outils':
         return {
-          nom: d.nom, type: nn(d.type), categorie: nn(d.categorie), etat: d.etat,
-          emplacement: nn(d.emplacement), date_dernier_controle: nn(d.date_dernier_controle), notes: nn(d.notes)
-        };
-      case 'pieces':
-        return {
-          sku: nn(d.sku), nom: d.nom, type_piece: nn(d.type_piece), description: nn(d.description),
-          quantite_stock: Number(d.quantite_stock), seuil_alerte: Number(d.seuil_alerte),
-          unite: d.unite, prix_unitaire: Number(d.prix_unitaire),
-          fournisseur_id: d.fournisseur_id ? Number(d.fournisseur_id) : null,
-          emplacement: nn(d.emplacement), est_actif: !!d.est_actif
+          nom: d.nom, type: nn(d.type), categorie: nn(d.categorie),
+          quantite_stock: Math.max(0, parseInt(d.quantite_stock, 10) || 0),
+          etat: d.etat, emplacement: nn(d.emplacement),
+          date_dernier_controle: nn(d.date_dernier_controle), notes: nn(d.notes)
         };
       case 'problemes':
         return {
@@ -468,10 +439,17 @@ const FournisseursOutils = () => {
     e.preventDefault();
 
     if (activeFilter === 'problemes') {
-      if (!formData.outil_id) return swalError('Veuillez sélectionner un outil.', 'Champ requis');
-      if (!formData.description_probleme.trim()) return swalError('La description du problème est obligatoire.', 'Champ requis');
+      if (!formData.outil_id) return showError(darkMode, theme, 'Champ requis', 'Veuillez sélectionner un outil.');
+      if (!formData.description_probleme.trim()) return showError(darkMode, theme, 'Champ requis', 'La description du problème est obligatoire.');
     } else if (!formData.nom.trim()) {
-      return swalError('Le nom est obligatoire.', 'Champ requis');
+      return showError(darkMode, theme, 'Champ requis', 'Le nom est obligatoire.');
+    }
+
+    if (activeFilter === 'outils') {
+      const q = Number(formData.quantite_stock);
+      if (formData.quantite_stock === '' || isNaN(q) || q < 0) {
+        return showError(darkMode, theme, 'Champ requis', 'La quantité en stock est obligatoire (nombre positif ou nul).');
+      }
     }
 
     const isEdit = modalMode === 'edit' && selectedItem;
@@ -486,9 +464,9 @@ const FournisseursOutils = () => {
       setters[key]((prev) => (isEdit ? prev.map((x) => (x.id === saved.id ? saved : x)) : [...prev, saved]));
       refreshLinked(key);
       handleCloseModal();
-      swalSuccess(isEdit ? 'Modifié !' : 'Créé !', isEdit ? "L'élément a été mis à jour." : "L'élément a été créé avec succès.");
+      showSuccess(darkMode, theme, isEdit ? 'Modifié !' : 'Créé !', isEdit ? "L'élément a été mis à jour." : "L'élément a été créé avec succès.");
     } catch (err) {
-      swalError(err, "Erreur d'enregistrement");
+      showError(darkMode, theme, "Erreur d'enregistrement", typeof err === 'string' ? err : extractErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -507,19 +485,18 @@ const FournisseursOutils = () => {
       await CRUD[key].remove(id);
       setters[key]((prev) => prev.filter((x) => x.id !== id));
       refreshLinked(key);
-      swalSuccess('Supprimé');
+      showSuccess(darkMode, theme, 'Supprimé', "L'élément a été supprimé avec succès.");
     } catch (err) {
-      swalError(err, 'Suppression impossible'); // ex. 409 fournisseur lié à des pièces
+      showError(darkMode, theme, 'Suppression impossible', typeof err === 'string' ? err : extractErrorMessage(err));
     }
   };
 
   const handleToggleStatus = async (id) => {
-    const key = activeFilter;
     try {
-      const res = key === 'fournisseurs' ? await toggleFournisseur(id) : await togglePiece(id);
-      setters[key]((prev) => prev.map((x) => (x.id === id ? { ...x, ...res.data } : x)));
+      const res = await toggleFournisseur(id);
+      setFournisseurs((prev) => prev.map((x) => (x.id === id ? { ...x, ...res.data } : x)));
     } catch (err) {
-      swalError(err);
+      showError(darkMode, theme, 'Erreur', typeof err === 'string' ? err : extractErrorMessage(err));
     }
   };
 
@@ -529,7 +506,7 @@ const FournisseursOutils = () => {
       const res = await prendreEnChargeProbleme(item.id);
       setProblemes((prev) => prev.map((p) => (p.id === item.id ? res.data : p)));
     } catch (err) {
-      swalError(err);
+      showError(darkMode, theme, 'Erreur', typeof err === 'string' ? err : extractErrorMessage(err));
     }
   };
 
@@ -544,109 +521,22 @@ const FournisseursOutils = () => {
     try {
       const res = await resoudreProbleme(item.id, r.value || '');
       setProblemes((prev) => prev.map((p) => (p.id === item.id ? res.data : p)));
-      loadList('outils').catch(() => { }); // l'état de l'outil a pu changer (defaut → OK)
-      swalSuccess('Résolu !');
+      loadList('outils').catch(() => { }); // l'état de l'outil a pu changer (defaut vers OK)
+      showSuccess(darkMode, theme, 'Résolu !', 'Le problème a été résolu avec succès.');
     } catch (err) {
-      swalError(err);
-    }
-  };
-
-  // Pièces : entrée de stock
-  const handleEntreeStock = async (item) => {
-    const r = await Swal.fire({
-      titleText: `Entrée de stock : ${item.nom}`,
-      html: `
-        <input id="sw-qte" type="number" min="0" step="any" class="swal2-input" placeholder="Quantité reçue (${esc(item.unite)})">
-        <input id="sw-prix" type="number" min="0" step="any" class="swal2-input" value="${Number(item.prix_unitaire) || 0}" placeholder="Prix unitaire (FCFA)">
-        <textarea id="sw-notes" class="swal2-textarea" placeholder="Notes (bon de livraison, motif…)"></textarea>`,
-      focusConfirm: false, showCancelButton: true,
-      confirmButtonText: "Enregistrer l'entrée", cancelButtonText: 'Annuler',
-      preConfirm: () => {
-        const quantite = parseFloat(document.getElementById('sw-qte').value);
-        if (!(quantite > 0)) { Swal.showValidationMessage('La quantité doit être supérieure à 0'); return false; }
-        const prix = document.getElementById('sw-prix').value;
-        return {
-          quantite,
-          prix_unitaire: prix === '' ? undefined : Number(prix),
-          notes: document.getElementById('sw-notes').value || undefined,
-        };
-      },
-      ...swalBase(),
-    });
-    if (!r.isConfirmed) return;
-    try {
-      const res = await entreeStockPiece(item.id, r.value);
-      setPieces((prev) => prev.map((p) => (p.id === item.id ? res.data : p)));
-      swalSuccess('Stock mis à jour', `+${fmtNum(r.value.quantite)} ${item.unite}`);
-    } catch (err) {
-      swalError(err);
-    }
-  };
-
-  // Pièces : historique
-  const handleMouvements = async (item) => {
-    try {
-      const res = await getPieceMouvements(item.id);
-      const rows = res.data || [];
-      const TYPE = { entree: 'Entrée', sortie: 'Sortie', ajustement: 'Ajustement' };
-      const html = rows.length === 0
-        ? '<p style="opacity:.7">Aucun mouvement enregistré.</p>'
-        : `<div style="max-height:360px;overflow:auto;text-align:left;font-size:13px">
-            <table style="width:100%;border-collapse:collapse">
-              <thead><tr style="text-align:left;opacity:.7">
-                <th style="padding:6px">Date</th><th style="padding:6px">Type</th>
-                <th style="padding:6px">Qté</th><th style="padding:6px">Par</th><th style="padding:6px">Notes</th>
-              </tr></thead>
-              <tbody>${rows.map((m) => `
-                <tr style="border-top:1px solid rgba(128,128,128,.25)">
-                  <td style="padding:6px;white-space:nowrap">${esc(fmtDate(m.date_creation))}</td>
-                  <td style="padding:6px">${esc(TYPE[m.type_mouvement] || m.type_mouvement)}</td>
-                  <td style="padding:6px;font-weight:600">${esc(fmtNum(m.quantite))}</td>
-                  <td style="padding:6px">${esc(m.effectue_par || '')}</td>
-                  <td style="padding:6px">${esc(m.notes || m.fournisseur_nom || '')}</td>
-                </tr>`).join('')}
-              </tbody>
-            </table></div>`;
-      Swal.fire({ titleText: `Historique : ${item.nom}`, html, width: '48rem', confirmButtonText: 'Fermer', ...swalBase() });
-    } catch (err) {
-      swalError(err);
-    }
-  };
-
-  // Alertes stock
-  const handleEnvoyerAlertes = async () => {
-    const r = await Swal.fire({
-      icon: 'question', title: 'Envoyer les alertes de stock ?',
-      text: 'Les emails des pièces sous le seuil seront envoyés aux destinataires concernés.',
-      showCancelButton: true, confirmButtonText: 'Envoyer', cancelButtonText: 'Annuler', ...swalBase(),
-    });
-    if (!r.isConfirmed) return;
-
-    Swal.fire({ title: 'Envoi en cours…', allowOutsideClick: false, didOpen: () => Swal.showLoading(), ...swalBase() });
-    try {
-      const res = await envoyerAlertesStock();
-      const s = res.summary || {};
-      Swal.fire({
-        icon: s.erreurs > 0 ? 'warning' : 'success',
-        title: 'Alertes traitées',
-        html: `<p>Emails envoyés : <b>${s.emails_envoyes ?? 0}</b></p>
-               <p>Ignorés : <b>${s.ignores ?? 0}</b> · Déjà pris : <b>${s.deja_pris ?? 0}</b> · Erreurs : <b>${s.erreurs ?? 0}</b></p>`,
-        confirmButtonText: "D'accord", ...swalBase(),
-      });
-    } catch (err) {
-      swalError(err, "Échec de l'envoi");
+      showError(darkMode, theme, 'Erreur', typeof err === 'string' ? err : extractErrorMessage(err));
     }
   };
 
   // FILTRAGE & PAGINATION
   const getFilteredData = () => {
-    const map = { fournisseurs, outils, pieces, problemes };
+    const map = { fournisseurs, outils, problemes };
     const data = map[activeFilter] || [];
     if (!searchTerm) return data;
     const q = searchTerm.toLowerCase();
     const has = (v) => v && String(v).toLowerCase().includes(q);
     return data.filter((item) =>
-      has(item.nom) || has(item.sku) || has(item.type) || has(item.contact) || has(item.fournisseur_nom) ||
+      has(item.nom) || has(item.type) || has(item.categorie) || has(item.contact) ||
       has(item.description_probleme) || has(item.signale_par) || has(item.outil_nom) ||
       (item.outil_id && has(outilNom(item.outil_id)))
     );
@@ -664,17 +554,12 @@ const FournisseursOutils = () => {
       case 'fournisseurs': return [
         { label: 'Total Fournisseurs', value: fournisseurs.length, icon: 'bi-building', color: 'blue' },
         { label: 'Actifs', value: fournisseurs.filter((f) => f.est_actif).length, icon: 'bi-check-circle', color: 'green' },
-        { label: 'Pièces détachées', value: fournisseurs.filter((f) => f.type === 'pieces').length, icon: 'bi-box-seam', color: 'purple' },
+        { label: 'Inactifs', value: fournisseurs.filter((f) => !f.est_actif).length, icon: 'bi-x-circle', color: 'red' },
       ];
       case 'outils': return [
         { label: 'Total Outils', value: outils.length, icon: 'bi-tools', color: 'orange' },
         { label: 'État OK', value: outils.filter((o) => o.etat === 'OK').length, icon: 'bi-check-circle', color: 'green' },
         { label: 'En Maintenance', value: outils.filter((o) => o.etat === 'Maintenance').length, icon: 'bi-wrench', color: 'yellow' },
-      ];
-      case 'pieces': return [
-        { label: 'Total Pièces', value: pieces.length, icon: 'bi-box-seam', color: 'blue' },
-        { label: 'Stock Faible', value: pieces.filter((p) => p.quantite_stock <= p.seuil_alerte && p.quantite_stock > 0).length, icon: 'bi-exclamation-triangle', color: 'orange' },
-        { label: 'Stock Épuisé', value: pieces.filter((p) => p.quantite_stock <= 0).length, icon: 'bi-x-circle', color: 'red' },
       ];
       case 'problemes': return [
         { label: 'Total signalés', value: problemes.length, icon: 'bi-exclamation-octagon', color: 'red' },
@@ -692,15 +577,6 @@ const FournisseursOutils = () => {
     orange: { bg: 'bg-orange-100 dark:bg-orange-900/20', icon: 'text-orange-600 dark:text-orange-400' },
     yellow: { bg: 'bg-yellow-100 dark:bg-yellow-900/20', icon: 'text-yellow-600 dark:text-yellow-400' },
     red: { bg: 'bg-red-100 dark:bg-red-900/20', icon: 'text-red-600 dark:text-red-400' },
-  };
-
-  // STOCK STATUS
-  const getStockStatus = (q, s) => {
-    const pct = s > 0 ? (q / s) * 100 : Infinity;
-    if (q <= 0) return { label: 'Épuisé', color: 'bg-red-100 text-red-700', icon: 'bi-arrow-down-circle-fill text-red-500' };
-    if (q <= s) return { label: 'Stock faible', color: 'bg-orange-100 text-orange-700', icon: 'bi-exclamation-triangle-fill text-orange-500' };
-    if (pct <= 150) return { label: 'Stock moyen', color: 'bg-yellow-100 text-yellow-700', icon: 'bi-arrow-right-circle-fill text-yellow-500' };
-    return { label: 'Stock élevé', color: 'bg-green-100 text-green-700', icon: 'bi-arrow-up-circle-fill text-green-500' };
   };
 
   // ROW STYLE
@@ -790,6 +666,7 @@ const FournisseursOutils = () => {
           <td className={td}><div className="flex items-center gap-2"><i className="bi bi-tools text-orange-500"></i><span className="font-medium">{item.nom}</span></div></td>
           <td className={tds}>{item.type || ''}</td>
           <td className={tds}>{item.categorie || ''}</td>
+          <td className={`${td} font-semibold`}>{fmtNum(item.quantite_stock)}</td>
           <td className="px-6 py-4 whitespace-nowrap">
             <span className={`px-3 py-1 rounded-full text-xs font-medium ${etatOutilCls(item.etat)}`}>{etatOutilLabel(item.etat)}</span>
           </td>
@@ -806,54 +683,6 @@ const FournisseursOutils = () => {
           </td>
         </tr>
       );
-
-      // PIÈCES
-      if (activeFilter === 'pieces') {
-        const ss = getStockStatus(item.quantite_stock, item.seuil_alerte);
-        return (
-          <tr key={item.id} style={rs} {...rh}>
-            <td className={td}>
-              <div className="flex items-center gap-2">
-                <i className="bi bi-box-seam text-green-500"></i>
-                <div>
-                  <div className="font-medium">{item.nom}</div>
-                  {item.sku && <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>SKU: {item.sku}</div>}
-                </div>
-              </div>
-            </td>
-            <td className={tds}>{item.type_piece || ''}</td>
-            <td className="px-6 py-4 whitespace-nowrap">
-              <div className="flex items-center gap-2">
-                <i className={ss.icon}></i>
-                <div>
-                  <div className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{fmtNum(item.quantite_stock)} {item.unite}</div>
-                  <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Seuil: {fmtNum(item.seuil_alerte)}</div>
-                </div>
-              </div>
-            </td>
-            <td className="px-6 py-4 whitespace-nowrap"><span className={`px-3 py-1 rounded-full text-xs font-medium ${ss.color}`}>{ss.label}</span></td>
-            <td className={tds}>{fmtNum(item.prix_unitaire)} FCFA</td>
-            <td className={tds}>{item.fournisseur_nom || ''}</td>
-            <td className="px-6 py-4 whitespace-nowrap">
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${item.est_actif ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                {item.est_actif ? 'Actif' : 'Inactif'}
-              </span>
-            </td>
-            <td className="px-6 py-4 whitespace-nowrap text-center">
-              {renderMenu(item, (
-                <>
-                  <MenuItem darkMode={darkMode} tone="success" icon="bi-box-arrow-in-down text-green-500"
-                    label="Entrée de stock" onClick={() => handleEntreeStock(item)} />
-                  <MenuItem darkMode={darkMode} icon="bi-clock-history text-blue-500"
-                    label="Historique" onClick={() => handleMouvements(item)} />
-                  {toggleItem(item)}
-                  <MenuDivider darkMode={darkMode} />
-                </>
-              ))}
-            </td>
-          </tr>
-        );
-      }
 
       // PROBLÈMES D'OUTILS
       if (activeFilter === 'problemes') return (
@@ -936,16 +765,19 @@ const FournisseursOutils = () => {
       case 'outils': return (
         <>
           <div className="mb-4"><label className={labelCls}>Nom <span className="text-red-500">*</span></label>
-            <input type="text" name="nom" value={formData.nom} onChange={handleInputChange} className={inputCls} placeholder="Ex: Clé dynamométrique 200Nm" /></div>
+            <input type="text" name="nom" value={formData.nom} onChange={handleInputChange} className={inputCls} placeholder="Ex: Bouteille d'huile de direction" /></div>
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div><label className={labelCls}>Type</label>
-              <input type="text" name="type" value={formData.type} onChange={handleInputChange} className={inputCls} placeholder="Ex: Clé spéciale" /></div>
+              <input type="text" name="type" value={formData.type} onChange={handleInputChange} className={inputCls} placeholder="Ex: Huile, Clé spéciale" /></div>
             <div><label className={labelCls}>Catégorie</label>
               <ComboBox value={formData.categorie} onChange={(v) => setField('categorie', v)}
                 options={CATEGORIES_OUTIL} allowCustom placeholder="Choisir ou saisir une catégorie" darkMode={darkMode} inputCls={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div><label className={labelCls}>Quantité en stock <span className="text-red-500">*</span></label>
+              <input type="number" name="quantite_stock" value={formData.quantite_stock} onChange={handleInputChange}
+                className={inputCls} min="0" step="1" placeholder="Ex: 8" /></div>
             <div><label className={labelCls}>État <span className="text-red-500">*</span></label>
               <select name="etat" value={formData.etat} onChange={handleInputChange} className={inputCls}>
                 <option value="OK">OK</option>
@@ -958,57 +790,9 @@ const FournisseursOutils = () => {
               <input type="date" name="date_dernier_controle" value={formData.date_dernier_controle} onChange={handleInputChange} className={inputCls} /></div>
           </div>
           <div className="mb-4"><label className={labelCls}>Emplacement</label>
-            <input type="text" name="emplacement" value={formData.emplacement} onChange={handleInputChange} className={inputCls} placeholder="Ex: Atelier principal - Armoire A2" /></div>
+            <input type="text" name="emplacement" value={formData.emplacement} onChange={handleInputChange} className={inputCls} placeholder="Ex: Atelier principal, Armoire A2" /></div>
           <div><label className={labelCls}>Notes</label>
             <textarea name="notes" value={formData.notes} onChange={handleInputChange} rows="3" className={`${inputCls} resize-none`} placeholder="Notes et observations" /></div>
-        </>
-      );
-
-      case 'pieces': return (
-        <>
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div><label className={labelCls}>SKU / Référence</label>
-              <input type="text" name="sku" value={formData.sku} onChange={handleInputChange} className={inputCls} placeholder="Ex: FLT-001" /></div>
-            <div><label className={labelCls}>Nom <span className="text-red-500">*</span></label>
-              <input type="text" name="nom" value={formData.nom} onChange={handleInputChange} className={inputCls} placeholder="Ex: Filtre à huile" /></div>
-          </div>
-          <div className="mb-4"><label className={labelCls}>Type de pièce</label>
-            <ComboBox value={formData.type_piece} onChange={(v) => setField('type_piece', v)}
-              options={TYPES_PIECE} allowCustom placeholder="Choisir ou saisir un type" darkMode={darkMode} inputCls={inputCls} />
-          </div>
-          <div className="mb-4"><label className={labelCls}>Description</label>
-            <textarea name="description" value={formData.description} onChange={handleInputChange} rows="2" className={`${inputCls} resize-none`} /></div>
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div><label className={labelCls}>Quantité <span className="text-red-500">*</span></label>
-              <input type="number" name="quantite_stock" value={formData.quantite_stock} onChange={handleInputChange} className={inputCls} min="0" step="any" /></div>
-            <div><label className={labelCls}>Seuil alerte <span className="text-red-500">*</span></label>
-              <input type="number" name="seuil_alerte" value={formData.seuil_alerte} onChange={handleInputChange} className={inputCls} min="0" step="any" /></div>
-            <div><label className={labelCls}>Unité</label>
-              <ComboBox value={formData.unite} onChange={(v) => setField('unite', v)}
-                options={UNITES} allowCustom placeholder="Unité" darkMode={darkMode} inputCls={inputCls} />
-            </div>
-          </div>
-          {modalMode === 'edit' && (
-            <p className={`text-xs mb-4 -mt-2 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-              <i className="bi bi-info-circle mr-1"></i>
-              Modifier la quantité crée un mouvement « ajustement ». Pour un réapprovisionnement, utilisez « Entrée de stock ».
-            </p>
-          )}
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div><label className={labelCls}>Prix unitaire (FCFA) <span className="text-red-500">*</span></label>
-              <input type="number" name="prix_unitaire" value={formData.prix_unitaire} onChange={handleInputChange} className={inputCls} min="0" step="any" /></div>
-            <div><label className={labelCls}>Fournisseur</label>
-              <ComboBox value={formData.fournisseur_id} onChange={(v) => setField('fournisseur_id', v)}
-                options={fournisseurs.filter((f) => f.est_actif || f.id === Number(formData.fournisseur_id)).map((f) => ({ value: f.id, label: f.nom }))}
-                clearLabel="Aucun fournisseur" placeholder="Rechercher un fournisseur…" darkMode={darkMode} inputCls={inputCls} />
-            </div>
-          </div>
-          <div className="mb-4"><label className={labelCls}>Emplacement</label>
-            <input type="text" name="emplacement" value={formData.emplacement} onChange={handleInputChange} className={inputCls} placeholder="Ex: Magasin - Rayon B3" /></div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" name="est_actif" checked={!!formData.est_actif} onChange={handleInputChange} className="w-4 h-4 rounded accent-blue-500" />
-            <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Actif</span>
-          </label>
         </>
       );
 
@@ -1085,8 +869,7 @@ const FournisseursOutils = () => {
   // THEAD CONFIG
   const theadCols = {
     fournisseurs: ['Nom', 'Contact', 'Téléphone', 'Email', 'Type', 'Statut', 'Actions'],
-    outils: ['Nom', 'Type', 'Catégorie', 'État', 'Emplacement', 'Dernier contrôle', 'Actions'],
-    pieces: ['Pièce', 'Type', 'Stock', 'Alerte', 'Prix unitaire', 'Fournisseur', 'Statut', 'Actions'],
+    outils: ['Nom', 'Type', 'Catégorie', 'Quantité en stock', 'État', 'Emplacement', 'Dernier contrôle', 'Actions'],
     problemes: ['Outil', 'Signalé par', 'Description', 'Statut', 'Date signalement', 'Date résolution', 'Notes résolution', 'Actions'],
   };
 
@@ -1133,7 +916,7 @@ const FournisseursOutils = () => {
 
   // RENDER
   const modalTitle = () => {
-    const map = { fournisseurs: 'un fournisseur', outils: 'un outil', pieces: 'une pièce', problemes: "un problème d'outil" };
+    const map = { fournisseurs: 'un fournisseur', outils: 'un outil', problemes: "un problème d'outil" };
     if (modalMode === 'edit') return `Modifier ${map[activeFilter]}`;
     return `${activeFilter === 'problemes' ? 'Déclarer' : 'Créer'} ${map[activeFilter]}`;
   };
@@ -1150,7 +933,7 @@ const FournisseursOutils = () => {
         showProfile={showProfile} setShowProfile={setShowProfile}
       />
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {loading ? (
           <SkeletonPage darkMode={darkMode} />
@@ -1160,7 +943,7 @@ const FournisseursOutils = () => {
             {/* EN-TÊTE */}
             <div className="mb-6">
               <h1 className={`text-3xl font-bold mb-1 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Fournisseurs & Inventaire</h1>
-              <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Gérez vos fournisseurs, outils, pièces détachées et problèmes signalés</p>
+              <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Gérez vos fournisseurs, outils et problèmes signalés</p>
             </div>
 
             {/* STATS */}
@@ -1172,7 +955,7 @@ const FournisseursOutils = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className={`text-sm font-medium mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{s.label}</p>
-                        <h3 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{loading ? '…' : s.value}</h3>
+                        <h3 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{s.value}</h3>
                       </div>
                       <div className={`p-3 rounded-lg ${c.bg}`}><i className={`bi ${s.icon} text-2xl ${c.icon}`}></i></div>
                     </div>
@@ -1189,7 +972,6 @@ const FournisseursOutils = () => {
                   {[
                     { key: 'fournisseurs', icon: 'bi-building', label: 'Fournisseurs' },
                     { key: 'outils', icon: 'bi-tools', label: 'Outils' },
-                    { key: 'pieces', icon: 'bi-box-seam', label: 'Pièces détachées' },
                     { key: 'problemes', icon: 'bi-exclamation-octagon', label: "Problèmes d'outils", badge: nbProblemesOuverts },
                   ].map(({ key, icon, label, badge }) => (
                     <button key={key} onClick={() => setActiveFilter(key)}
@@ -1213,14 +995,6 @@ const FournisseursOutils = () => {
                     <input type="text" placeholder="Rechercher…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                       className={`pl-9 pr-4 py-2 rounded-lg border text-sm outline-none focus:ring-2 w-60 ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:ring-blue-500/30' : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-blue-500/30'}`} />
                   </div>
-
-                  {activeFilter === 'pieces' && (
-                    <button onClick={handleEnvoyerAlertes}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${darkMode ? 'bg-gray-800 text-orange-400 hover:bg-gray-700' : 'bg-orange-50 text-orange-600 hover:bg-orange-100'}`}>
-                      <i className="bi bi-envelope-exclamation"></i>
-                      Envoyer alertes stock
-                    </button>
-                  )}
 
                   <button onClick={() => handleOpenModal('create')}
                     className="px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 hover:shadow-md flex items-center gap-2 transition-all"
@@ -1267,8 +1041,7 @@ const FournisseursOutils = () => {
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white"
                   style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
                   <i className={`bi ${activeFilter === 'fournisseurs' ? 'bi-building' :
-                    activeFilter === 'outils' ? 'bi-tools' :
-                      activeFilter === 'pieces' ? 'bi-box-seam' : 'bi-exclamation-octagon-fill'} text-lg`}></i>
+                    activeFilter === 'outils' ? 'bi-tools' : 'bi-exclamation-octagon-fill'} text-lg`}></i>
                 </div>
                 <div>
                   <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{modalTitle()}</h3>
@@ -1295,8 +1068,7 @@ const FournisseursOutils = () => {
                   style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
                   {saving
                     ? <><i className="bi bi-hourglass-split animate-spin"></i> Enregistrement...</>
-                    : <><i className={`bi ${modalMode === 'edit' ? 'bi-check-lg' : 'bi-plus-lg'}`}></i>
-                      {modalMode === 'edit' ? 'Enregistrer' : (activeFilter === 'problemes' ? 'Déclarer' : 'Créer')}</>}
+                    : <><i className="bi bi-check-lg"></i> Enregistrer</>}
                 </button>
               </div>
             </form>

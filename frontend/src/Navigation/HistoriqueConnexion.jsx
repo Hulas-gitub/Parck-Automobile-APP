@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { useTheme } from '../contexts/ThemeContext';
@@ -11,6 +12,20 @@ import {
   fetchAllHistoriqueConnexionsForExport,
 }
  from '../api/Admin-Axios/HistoriqueConnexion-axios';
+
+// ============================================================================
+// HISTORIQUE DES CONNEXIONS
+// ─────────────────────────────────────────────────────────────────────────────
+//  RAFRAÎCHISSEMENT (même principe que Demandes d'intervention / Véhicules) :
+//  • Le skeleton plein écran n'apparaît QU'AU PREMIER chargement.
+//  • Changement de filtre / page / rafraîchissement automatique (60 s) :
+//    rechargement SILENCIEUX → la page ne « recharge » pas visuellement,
+//    la barre d'outils reste en place (la saisie dans la recherche n'est plus interrompue).
+//  • Après « Forcer la déconnexion » : mise à jour locale immédiate + resynchronisation
+//    silencieuse + SweetAlert ; le modal de détail RESTE OUVERT et affiche la session
+//    mise à jour (« Déconnecté »).
+//  • Toutes les actions d'une ligne sont regroupées dans le menu trois points.
+// ============================================================================
 
 // ============================================================================
 // DONNÉES DE RÉFÉRENCE
@@ -188,7 +203,104 @@ const SessionBadge = ({ active }) => (
 );
 
 // ============================================================================
-// SKELETON PLEINE PAGE (pendant le chargement)
+// MENU TROIS POINTS — actions d'une session (même principe que Véhicules)
+//  • Voir les détails : toujours
+//  • Forcer la déconnexion : uniquement si la session est en ligne
+// ============================================================================
+const RowActionsMenu = ({ session, darkMode, theme, onView, onForceLogout }) => {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState({});
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const canForce = !!session.is_active;
+  const menuWidth = 230;
+  const menuHeight = canForce ? 104 : 56;
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        buttonRef.current && !buttonRef.current.contains(e.target) &&
+        menuRef.current && !menuRef.current.contains(e.target)
+      ) setOpen(false);
+    };
+    const handleScroll = () => setOpen(false);
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('scroll', handleScroll, true);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const showAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight + 8;
+      setMenuStyle({
+        position: 'fixed',
+        top: showAbove ? rect.top - menuHeight - 4 : rect.bottom + 4,
+        left: Math.max(8, rect.right - menuWidth),
+        zIndex: 99999,
+        width: menuWidth,
+      });
+    }
+  }, [open, menuHeight]);
+
+  const mi = (label, icon, color, fn, textCls) => (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); setOpen(false); fn(); }}
+      className={`w-full text-left px-4 py-2.5 text-sm font-semibold flex items-center gap-2.5 transition-colors ${textCls}`}
+    >
+      <i className={`bi ${icon} text-base`} style={{ color }}></i>{label}
+    </button>
+  );
+
+  const neutral = darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50';
+  const danger = darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-red-50';
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        title="Actions"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${open
+          ? 'text-white'
+          : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+        style={open ? { background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` } : {}}
+      >
+        <i className="bi bi-three-dots-vertical text-sm"></i>
+      </button>
+
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          onClick={(e) => e.stopPropagation()}
+          className={`rounded-xl shadow-2xl border py-1.5 overflow-hidden text-left ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+          style={menuStyle}
+        >
+          {mi('Voir les détails', 'bi-eye-fill', theme.primary, () => onView(session), neutral)}
+          {canForce && (
+            <>
+              <div className={`my-1 mx-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-100'}`} />
+              {mi('Forcer la déconnexion', 'bi-power', '#ef4444', () => onForceLogout(session.id), danger)}
+            </>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// SKELETON PLEINE PAGE (premier chargement uniquement)
 // ============================================================================
 const SkeletonBlock = ({ darkMode, className = '' }) => (
   <div className={`${darkMode ? 'bg-gray-800' : 'bg-gray-200'} rounded animate-pulse ${className}`}></div>
@@ -463,6 +575,16 @@ const HistoriqueConnexion = () => {
     },
   });
 
+  // Succès : petite alerte auto-fermante, AUCUN rechargement de page
+  const showSuccess = (title, text) =>
+    Swal.fire({
+      ...getSwalConfig(),
+      icon: 'success', title, text,
+      showConfirmButton: false, showCancelButton: false,
+      timer: 1400, timerProgressBar: false,
+      allowOutsideClick: true, allowEscapeKey: true,
+    });
+
   // ── États données API ──
   const [sessions, setSessions]   = useState([]);
   const [meta, setMeta]           = useState({ current_page: 1, last_page: 1, total: 0, per_page: PER_PAGE });
@@ -470,7 +592,8 @@ const HistoriqueConnexion = () => {
   const [navStats, setNavStats]   = useState({});
   const [osStats, setOsStats]     = useState({});
   const [heures, setHeures]       = useState({});
-  const [loading, setLoading]     = useState(true);
+  const [loading, setLoading]     = useState(true);   // skeleton plein écran : PREMIER chargement uniquement
+  const [refreshing, setRefreshing] = useState(false); // rechargements suivants : silencieux
   const [error, setError]         = useState(null);
 
   // ── Filtres ──
@@ -526,33 +649,59 @@ const HistoriqueConnexion = () => {
     ...overrides,
   }), [filterPeriode, filterRole, filterNav, filterOS, filterStatut, debouncedSearch, sortBy, sortDir, currentPage]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // ── Chargement ──
+  //  • 1er chargement : skeleton plein écran (loading = true au départ)
+  //  • ensuite (filtre, page, intervalle, après action) : SILENCIEUX → on garde l'affichage
+  //    actuel, les nouvelles données le remplacent dès qu'elles arrivent.
+  // reqIdRef évite qu'une réponse ancienne (plus lente) écrase une réponse plus récente.
+  const reqIdRef = useRef(0);
+  const firstLoadDone = useRef(false);
+  const loadData = useCallback(async (silent = false) => {
+    const myId = ++reqIdRef.current;
+    if (firstLoadDone.current && !silent) setRefreshing(true);
     try {
       const { data } = await fetchHistoriqueConnexions(buildParams());
+      if (myId !== reqIdRef.current) return;      // une requête plus récente est déjà passée
       setSessions(data.data || []);
       setMeta(data.meta || { current_page: 1, last_page: 1, total: 0, per_page: PER_PAGE });
       setStats(data.stats || { total: 0, en_ligne: 0, deconnectes: 0, duree_moyenne_mins: 0 });
       setNavStats(data.navigateurs || {});
       setOsStats(data.os || {});
       setHeures(data.heures || {});
+      setError(null);
     } catch (err) {
+      if (myId !== reqIdRef.current) return;
       console.error('Erreur chargement historique connexions:', err);
-      setError("Impossible de charger l'historique des connexions");
-      showToast("Erreur lors du chargement de l'historique", 'error');
+      // en mode silencieux (après le 1er chargement) : on garde l'affichage actuel, sans message d'erreur
+      if (!silent || !firstLoadDone.current) {
+        setError("Impossible de charger l'historique des connexions");
+        showToast("Erreur lors du chargement de l'historique", 'error');
+      }
     } finally {
-      setLoading(false);
+      if (myId === reqIdRef.current) {
+        firstLoadDone.current = true;
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [buildParams]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Rafraîchissement léger périodique (sessions actives, durées) sans reset des filtres
+  // Rafraîchissement automatique SILENCIEUX (sessions actives, durées) sans reset des filtres
   useEffect(() => {
-    const i = setInterval(() => { loadData(); }, 60000);
+    const i = setInterval(() => { loadData(true); }, 60000);
     return () => clearInterval(i);
   }, [loadData]);
+
+  // La session affichée dans le modal reste synchronisée avec la liste rechargée
+  useEffect(() => {
+    setSelectedSession(sv => {
+      if (!sv) return sv;
+      const fresh = sessions.find(x => x.id === sv.id);
+      return fresh && fresh !== sv ? fresh : sv;
+    });
+  }, [sessions]);
 
   const resetFilters = () => {
     setFilterRole(''); setFilterNav(''); setFilterOS(''); setFilterStatut(''); setSearchTerm('');
@@ -564,7 +713,11 @@ const HistoriqueConnexion = () => {
     else { setSortBy(col); setSortDir('desc'); }
   };
 
+  const openSession = (s) => { setSelectedSession(s); setShowModal(true); };
+
   // ── Déconnexion forcée avec confirmation SweetAlert2 ──
+  // Ordre : 1) mise à jour locale immédiate  2) resynchronisation silencieuse  3) SweetAlert.
+  // Le modal de détail RESTE OUVERT et affiche la session « Déconnecté ».
   const handleForceLogout = async (sessionId) => {
     const result = await Swal.fire({
       ...getSwalConfig(),
@@ -582,11 +735,21 @@ const HistoriqueConnexion = () => {
 
     try {
       await forceLogoutSession(sessionId);
-      setShowModal(false);
-      showToast('Session déconnectée de force', 'warning');
-      loadData();
+
+      const etaitActive = sessions.find(x => x.id === sessionId)?.is_active
+        || (selectedSession?.id === sessionId && selectedSession?.is_active);
+      const patch = (s) => (s.id === sessionId ? { ...s, is_active: false, logout_at: s.logout_at || new Date().toISOString() } : s);
+
+      setSessions(prev => prev.map(patch));                              // 1) affichage immédiat
+      setSelectedSession(prev => (prev ? patch(prev) : prev));
+      if (etaitActive) {
+        setStats(st => ({ ...st, en_ligne: Math.max(0, st.en_ligne - 1), deconnectes: st.deconnectes + 1 }));
+      }
+      loadData(true);                                                     // 2) resynchronisation silencieuse
+      showSuccess('Session déconnectée', "La session a été fermée de force.");  // 3) alerte (le modal reste affiché)
     } catch (err) {
       console.error('Erreur force logout:', err);
+      loadData(true);
       Swal.fire({
         ...getSwalConfig(),
         icon: 'error',
@@ -676,7 +839,7 @@ const HistoriqueConnexion = () => {
         <div className="fixed inset-0 z-30" onClick={() => { setShowNotifications(false); setShowProfile(false); }} />
       )}
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ════ EN-TÊTE ════ */}
         <div className="flex items-center justify-between mb-6" style={{ animation: animateCards ? 'fadeInUp .4s ease-out both' : 'none' }}>
@@ -824,7 +987,7 @@ const HistoriqueConnexion = () => {
                 </div>
                 <div className="flex flex-wrap gap-3">
                   {activesSurPage.map(s => (
-                    <button key={s.id} onClick={() => { setSelectedSession(s); setShowModal(true); }}
+                    <button key={s.id} onClick={() => openSession(s)}
                       className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all hover:scale-105 ${darkMode ? 'bg-gray-800 border-gray-700 hover:border-green-500/50' : 'bg-gray-50 border-gray-200 hover:border-green-400'}`}>
                       <div className="relative">
                         <Avatar name={s.user_nom} sizeClass="w-9 h-9" textClass="text-xs" />
@@ -875,13 +1038,11 @@ const HistoriqueConnexion = () => {
 
             <div className="flex items-center gap-3">
               <div className={`flex rounded-lg border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                {[['table', 'bi-table'], ['cards', 'bi-grid-3x3-gap-fill']].map(([v, ic]) => (
-                  <button key={v} onClick={() => setView(v)}
-                    className={`p-2 text-sm transition-colors ${view === v ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
-                    style={view === v ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                    <i className={`bi ${ic}`}></i>
-                  </button>
-                ))}
+                <button onClick={() => setView('table')}
+                  className={`p-2 text-sm transition-colors ${view === 'table' ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
+                  style={view === 'table' ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
+                  <i className="bi bi-table"></i>
+                </button>
               </div>
 
               <div className="relative">
@@ -893,12 +1054,12 @@ const HistoriqueConnexion = () => {
 
             </div>
           </div>
-          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{loading ? 'Chargement...' : `${meta.total} session(s) trouvée(s)`}</p>
+          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{refreshing ? 'Actualisation…' : `${meta.total} session(s) trouvée(s)`}</p>
         </div>
 
             {/* ════ VUE TABLEAU ════ */}
             {view === 'table' && (
-              <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden`}
+              <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm overflow-hidden transition-opacity ${refreshing ? 'opacity-70' : 'opacity-100'}`}
                 style={{ animation: animateCards ? 'fadeInUp .5s ease-out .65s both' : 'none' }}>
 
                 <div className={`px-6 py-3 flex items-center justify-between border-b ${darkMode ? 'border-gray-800' : 'border-gray-100'}`}>
@@ -921,6 +1082,7 @@ const HistoriqueConnexion = () => {
 
                 <div className="overflow-x-auto">
                   <table className="w-full">
+                    {/* En-tête aux couleurs du thème (ThemeContext) : dégradé sur la ligne <tr>, texte blanc par cellule */}
                     <thead>
                       <tr style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
                         {[
@@ -934,7 +1096,7 @@ const HistoriqueConnexion = () => {
                           ['Actions', null],
                         ].map(([h, col], i) => (
                           <th key={i} onClick={() => col && handleSort(col)}
-                            className={`px-4 py-3.5 text-left text-xs font-bold uppercase tracking-wider text-white ${col ? 'cursor-pointer hover:bg-white/10 select-none' : ''}`}>
+                            className={`px-4 py-3.5 text-xs font-bold uppercase tracking-wider text-white ${i === 7 ? 'text-center' : 'text-left'} ${col ? 'cursor-pointer hover:bg-white/10 select-none' : ''}`}>
                             {h}{col && <SortIcon col={col} />}
                           </th>
                         ))}
@@ -959,7 +1121,7 @@ const HistoriqueConnexion = () => {
                               backgroundColor: idx % 2 === 0 ? (darkMode ? '#0c1929' : '#e8eef6') : (darkMode ? '#162033' : '#f1f4f9'),
                               animation: animateCards ? `fadeInUp .4s ease-out ${idx * .04}s both` : 'none',
                             }}
-                            onClick={() => { setSelectedSession(s); setShowModal(true); }}>
+                            onClick={() => openSession(s)}>
 
                             <td className="px-4 py-4 whitespace-nowrap"><SessionBadge active={s.is_active} /></td>
 
@@ -1014,17 +1176,15 @@ const HistoriqueConnexion = () => {
                               </div>
                             </td>
 
-                            <td className="px-4 py-4 text-center" onClick={e => e.stopPropagation()}>
-                              <div className="flex items-center justify-center gap-1">
-                                <button onClick={() => { setSelectedSession(s); setShowModal(true); }}
-                                  className={`p-2 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-gray-400 hover:text-white' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-900'}`}
-                                  title="Voir détails"><i className="bi bi-eye"></i></button>
-                                {s.is_active && (
-                                  <button onClick={() => handleForceLogout(s.id)}
-                                    className="p-2 rounded-lg transition-colors hover:bg-red-500/20 text-red-400 hover:text-red-500"
-                                    title="Forcer déconnexion"><i className="bi bi-power"></i></button>
-                                )}
-                              </div>
+                            {/* Actions : dernière colonne, tout est regroupé dans le menu trois points */}
+                            <td className="px-4 py-4 text-center whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                              <RowActionsMenu
+                                session={s}
+                                darkMode={darkMode}
+                                theme={theme}
+                                onView={openSession}
+                                onForceLogout={handleForceLogout}
+                              />
                             </td>
                           </tr>
                         );
@@ -1060,96 +1220,6 @@ const HistoriqueConnexion = () => {
                       })}
                       <button onClick={() => setCurrentPage(p => Math.min(meta.last_page, p + 1))} disabled={meta.current_page === meta.last_page}
                         className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'} transition-colors`}>
-                        <i className="bi bi-chevron-right"></i>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ════ VUE CARDS ════ */}
-            {view === 'cards' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" style={{ animation: animateCards ? 'fadeInUp .5s ease-out .65s both' : 'none' }}>
-                {sessions.map((s, idx) => {
-                  const ri = getRoleInfo(s.user_role, s.user_role_libelle);
-                  const { anomalies, score } = computeAnomalies(s);
-                  const risk = getRiskColor(score);
-                  const navMeta = getNavMeta(s.navigateur);
-                  const osMeta = getOsMeta(s.os);
-                  return (
-                    <div key={s.id} onClick={() => { setSelectedSession(s); setShowModal(true); }}
-                      className={`${darkMode ? 'bg-gray-900 border-gray-800 hover:border-gray-600' : 'bg-white border-gray-100 hover:border-gray-300'} rounded-xl border shadow-sm p-5 cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5`}
-                      style={{ animation: animateCards ? `fadeInUp .4s ease-out ${idx * .04}s both` : 'none' }}>
-
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="relative">
-                            <Avatar name={s.user_nom} sizeClass="w-10 h-10" textClass="text-sm" />
-                            {s.is_active && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-400 border-2 border-gray-900" style={{ animation: 'pulse-dot 2s infinite' }}></span>}
-                          </div>
-                          <div>
-                            <p className={`font-semibold text-sm ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{s.user_nom}</p>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${ri.bg}`}>{ri.libelle}</span>
-                          </div>
-                        </div>
-                        <SessionBadge active={s.is_active} />
-                      </div>
-
-                      <div className={`rounded-lg p-3 mb-3 space-y-2 ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                        <div className="flex items-center gap-2">
-                          <i className={`${navMeta.icon} text-sm`} style={{ color: navMeta.color }}></i>
-                          <span className={`text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{s.navigateur}</span>
-                          <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>·</span>
-                          <i className={`${osMeta.icon} text-xs`} style={{ color: osMeta.color }}></i>
-                          <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{s.os}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Connexion</p>
-                          <p className={`text-sm font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>{new Date(s.login_at).toLocaleTimeString('fr-FR')}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Durée</p>
-                          <p className={`text-sm font-semibold ${s.is_active ? 'text-green-500' : (darkMode ? 'text-gray-200' : 'text-gray-800')}`}>{formatDuree(s.duree_mins)}</p>
-                        </div>
-                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${risk.bg}`}>{risk.label}</span>
-                      </div>
-
-                      {anomalies.length > 0 && (
-                        <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-100'} flex flex-wrap gap-1`}>
-                          {anomalies.map((a, i) => (
-                            <span key={i} className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${darkMode ? 'bg-orange-900/30 text-orange-400' : 'bg-orange-50 text-orange-600'}`}>
-                              <i className="bi bi-exclamation-circle mr-0.5"></i>{a.label}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {meta.last_page > 1 && (
-                  <div className="col-span-full flex items-center justify-between px-2 py-3">
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {((meta.current_page - 1) * meta.per_page) + 1}–{Math.min(meta.current_page * meta.per_page, meta.total)} sur {meta.total}
-                    </p>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={meta.current_page === 1}
-                        className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'}`}>
-                        <i className="bi bi-chevron-left"></i>
-                      </button>
-                      {Array.from({ length: meta.last_page }, (_, i) => i + 1).slice(Math.max(0, meta.current_page - 3), Math.min(meta.last_page, meta.current_page + 2)).map(page => (
-                        <button key={page} onClick={() => setCurrentPage(page)}
-                          className={`w-8 h-8 rounded-lg text-sm font-semibold ${meta.current_page === page ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
-                          style={meta.current_page === page ? { background: `linear-gradient(to right,${theme.primary},${theme.primaryDark})` } : {}}>
-                          {page}
-                        </button>
-                      ))}
-                      <button onClick={() => setCurrentPage(p => Math.min(meta.last_page, p + 1))} disabled={meta.current_page === meta.last_page}
-                        className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'}`}>
                         <i className="bi bi-chevron-right"></i>
                       </button>
                     </div>

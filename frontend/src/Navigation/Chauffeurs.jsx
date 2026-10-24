@@ -1411,7 +1411,7 @@ const Chauffeurs = () => {
         showNotifications={showNotifications} setShowNotifications={setShowNotifications}
         showProfile={showProfile} setShowProfile={setShowProfile} />
 
-      <main className=" flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className=" flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ── Tabs ── */}
         <div className={`${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'} rounded-xl border shadow-sm mb-6 p-2`}>

@@ -22,9 +22,13 @@ use Illuminate\Support\Facades\Validator;
  * Utilise DB::table() comme tous les autres contrôleurs du projet.
  * Audit explicite via JournalAudit::tracer().
  *
+ * STATUTS D'INTERVENTION (3 seulement) : en_cours | partiel | resolu
+ * Le statut choisi par l'utilisateur dans le formulaire est celui qui est enregistré
+ * et affiché côté frontend (aucun statut n'est calculé automatiquement si un statut est envoyé).
+ *
  * Droits :
  *   - Écriture interventions : admin, chef_parc, mecanicien, daal
- *   - Modification d'une intervention TERMINÉE : admin, daal
+ *   - Modification d'une intervention RÉSOLUE : admin, daal
  *   - Gestion de la caisse (approvisionner, sortie, annuler, clôturer) : daal (+ admin)
  *
  * Saisie de plusieurs demandes d'un même véhicule : le front envoie UN POST /admin/interventions
@@ -53,6 +57,9 @@ use Illuminate\Support\Facades\Validator;
  *
  * Migration requise (traçabilité des intervenants saisis) :
  *   ALTER TABLE interventions ADD COLUMN intervenants_noms TEXT NULL AFTER intervenant_id;
+ *
+ * Nettoyage des anciennes données (statut « annulee » supprimé) :
+ *   UPDATE interventions SET statut = 'resolu' WHERE statut = 'annulee';
  */
 class InterventionController extends Controller
 {
@@ -60,7 +67,11 @@ class InterventionController extends Controller
     // CONSTANTES
     // =========================================================================
 
-    private const STATUTS = ['planifiee', 'en_cours', 'terminee', 'annulee'];
+    /** Les 3 seuls statuts d'une intervention. */
+    private const STATUTS = ['en_cours', 'partiel', 'resolu'];
+
+    /** Statuts considérés comme « ouverts » (le véhicule reste immobilisé). */
+    private const STATUTS_OUVERTS = ['en_cours', 'partiel'];
 
     /** Valeur technique conservée en base (colonne NOT NULL éventuelle) : le champ n'est plus saisi. */
     private const SEVERITE_DEFAUT = 'normale';
@@ -74,7 +85,7 @@ class InterventionController extends Controller
     /** Rôles pouvant créer / modifier des interventions */
     private const ROLES_ECRITURE = ['admin', 'chef_parc', 'mecanicien', 'daal'];
 
-    /** Rôles pouvant modifier une intervention déjà TERMINÉE */
+    /** Rôles pouvant modifier une intervention déjà RÉSOLUE */
     private const ROLES_EDIT_TERMINEE = ['admin', 'daal'];
 
     /** Rôles pouvant gérer la caisse (approvisionner, sortie, annuler, clôturer) : le DAAL (+ admin) */
@@ -135,7 +146,7 @@ class InterventionController extends Controller
         return in_array($this->roleCode(), self::ROLES_ECRITURE, true);
     }
 
-    /** Peut modifier une intervention terminée (admin, daal). */
+    /** Peut modifier une intervention résolue (admin, daal). */
     private function canEditTerminee(): bool
     {
         return in_array($this->roleCode(), self::ROLES_EDIT_TERMINEE, true);
@@ -366,6 +377,16 @@ class InterventionController extends Controller
         return $out;
     }
 
+    /** Liste [{value,label}] des statuts d'intervention pour le formulaire / les filtres. */
+    private function statutsInterventionListe(): array
+    {
+        return [
+            ['value' => 'en_cours', 'label' => 'En cours'],
+            ['value' => 'partiel',  'label' => 'Partiel'],
+            ['value' => 'resolu',   'label' => 'Résolue'],
+        ];
+    }
+
     /** Applique le statut véhicule choisi manuellement (prioritaire sur la règle automatique). */
     private function appliquerStatutVehiculeChoisi(string $immat, string $statut, $now): void
     {
@@ -408,7 +429,8 @@ class InterventionController extends Controller
 
     private function format(object $row, ?string $role = null): array
     {
-        $isTerminee = ($row->statut ?? '') === 'terminee';
+        // CORRECTION : la variable s'appelait $isTerminee plus bas alors que seule $isResolu était définie
+        $isResolu = ($row->statut ?? '') === 'resolu';
 
         // Demandes liées (pivot) — infos complètes pour la fiche
         $demandes = DB::table('intervention_demandes as id')
@@ -461,8 +483,8 @@ class InterventionController extends Controller
             ->map(fn ($r) => (array) $r)
             ->toArray();
 
-        // En cours : tous les rôles d'écriture ; terminée : admin et DAAL seulement
-        $canEdit = !$isTerminee ? $this->canWrite() : $this->canEditTerminee();
+        // En cours / partielle : tous les rôles d'écriture ; résolue : admin et DAAL seulement
+        $canEdit = !$isResolu ? $this->canWrite() : $this->canEditTerminee();
 
         // Dates (sans heure) + durée lisible
         $entree = self::jour($row->date_entree_garage ?? null) ?: self::jour($row->date_debut);
@@ -481,6 +503,13 @@ class InterventionController extends Controller
         $intervenantsListe = $nomsSaisis
             ? array_values(array_filter(array_map('trim', explode(',', $nomsSaisis))))
             : ($row->intervenant_nom ? [$row->intervenant_nom] : []);
+
+        // Libellé du statut (affiché tel quel côté frontend)
+        $libellesStatut = [
+            'en_cours' => 'En cours',
+            'partiel'  => 'Partiel',
+            'resolu'   => 'Résolue',
+        ];
 
         return [
             'id'                                => (int) $row->id,
@@ -504,6 +533,7 @@ class InterventionController extends Controller
             'nature_intervention'               => $row->nature_intervention ?? 'interne',
             'type_intervention'                 => $row->type_intervention,
             'statut'                            => $row->statut,
+            'statut_libelle'                    => $libellesStatut[$row->statut] ?? $row->statut,
             'resultat'                          => $row->resultat,
             // Dates d'entrée / sortie garage-atelier (Y-m-d) — date_debut/date_fin gardés pour compatibilité
             'date_entree_garage'                => $entree,
@@ -539,8 +569,9 @@ class InterventionController extends Controller
             'date_creation'                     => self::iso($row->date_creation),
             'date_modification'                 => self::iso($row->date_modification),
             'can_edit'                          => $canEdit,
-            'can_terminer'                      => $this->canWrite() && in_array($row->statut, ['planifiee', 'en_cours'], true),
-            'can_annuler'                       => $this->canWrite() && $row->statut !== 'annulee',
+            'can_terminer'                      => $this->canWrite() && in_array($row->statut, self::STATUTS_OUVERTS, true),
+            // Le statut « annulée » n'existe plus : la suppression se fait via DELETE
+            'can_annuler'                       => false,
         ];
     }
 
@@ -661,6 +692,7 @@ class InterventionController extends Controller
             'solde_caisse'     => $soldeCaisse,
             'types_intervenant'=> $typesIntervenant,
             'statuts'          => self::STATUTS,
+            'statuts_liste'    => $this->statutsInterventionListe(),
             'statuts_vehicule' => $this->statutsVehiculeListe(),
         ]);
     }
@@ -712,15 +744,14 @@ class InterventionController extends Controller
     /**
      * GET /admin/interventions/statistiques
      *
-     * Totaux calculés en SQL sur TOUTES les interventions (hors supprimées et annulées),
+     * Totaux calculés en SQL sur TOUTES les interventions (hors supprimées),
      * et non sur la page courante de la liste paginée.
      * Filtres optionnels : vehicule, nature, date_from, date_to.
      */
     public function statistiques(Request $request): JsonResponse
     {
         $base = DB::table('interventions as i')
-            ->where('i.est_supprime', 0)
-            ->where('i.statut', '!=', 'annulee');
+            ->where('i.est_supprime', 0);
 
         if ($v = $request->input('vehicule'))   $base->where('i.vehicule_immatriculation', $v);
         if ($n = $request->input('nature'))     $base->where('i.nature_intervention', $n);
@@ -732,8 +763,9 @@ class InterventionController extends Controller
             COALESCE(SUM(i.cout_main_oeuvre), 0)                  as cout_main_oeuvre,
             COALESCE(SUM(i.cout_pieces), 0)                       as cout_pieces,
             COALESCE(SUM(i.cout_main_oeuvre + i.cout_pieces), 0)  as cout_total,
-            COALESCE(SUM(CASE WHEN i.statut = 'en_cours'  THEN 1 ELSE 0 END), 0) as en_cours,
-            COALESCE(SUM(CASE WHEN i.statut = 'terminee'  THEN 1 ELSE 0 END), 0) as terminees,
+            COALESCE(SUM(CASE WHEN i.statut = 'en_cours' THEN 1 ELSE 0 END), 0) as en_cours,
+            COALESCE(SUM(CASE WHEN i.statut = 'partiel'  THEN 1 ELSE 0 END), 0) as partiels,
+            COALESCE(SUM(CASE WHEN i.statut = 'resolu'   THEN 1 ELSE 0 END), 0) as resolus,
             COUNT(DISTINCT i.vehicule_immatriculation)            as nb_vehicules
         ")->first();
 
@@ -778,7 +810,8 @@ class InterventionController extends Controller
             'nb_interventions'  => (int) ($global->nb_interventions ?? 0),
             'nb_vehicules'      => (int) ($global->nb_vehicules ?? 0),
             'en_cours'          => (int) ($global->en_cours ?? 0),
-            'terminees'         => (int) ($global->terminees ?? 0),
+            'partiels'          => (int) ($global->partiels ?? 0),
+            'resolus'           => (int) ($global->resolus ?? 0),
             'cout_main_oeuvre'  => (float) ($global->cout_main_oeuvre ?? 0),
             'cout_pieces'       => (float) ($global->cout_pieces ?? 0),
             'cout_total'        => (float) ($global->cout_total ?? 0),
@@ -868,6 +901,8 @@ class InterventionController extends Controller
             'intervenant_id'               => 'nullable|integer',
             'nature_intervention'          => 'required|in:interne,externe',
             'type_intervention'            => 'nullable|string|max:100',
+            // Statut choisi par l'utilisateur : en_cours | partiel | resolu
+            'statut'                       => 'nullable|in:' . implode(',', self::STATUTS),
             'resultat'                     => 'nullable|in:' . implode(',', self::RESULTATS),
             'diagnostic'                   => 'nullable|string',   // = « Travaux effectués »
             'notes'                        => 'nullable|string',
@@ -1059,13 +1094,10 @@ class InterventionController extends Controller
                     ? (float) ($data['montant_main_oeuvre_prestataire'] ?? 0)
                     : 0;
 
-                // ── 4. Statut intervention
-                $statut   = 'en_cours';
-                $resultat = $data['resultat'] ?? 'en_cours';
-                if ($dateFin) {
-                    $statut   = 'terminee';
-                    $resultat = $data['resultat'] ?? 'resolu';
-                }
+                // ── 4. Statut intervention : le statut CHOISI par l'utilisateur est prioritaire.
+                //       Sans statut envoyé : « resolu » si date de sortie, sinon « en_cours ».
+                $statut   = $data['statut'] ?? ($dateFin ? 'resolu' : 'en_cours');
+                $resultat = $data['resultat'] ?? $statut; // en_cours / partiel / resolu
 
                 $demandePrincipale = $demandes->first();
 
@@ -1249,8 +1281,8 @@ class InterventionController extends Controller
                     ]);
                 }
 
-                // ── 12. KPI
-                if ($statut === 'terminee' && $dateFin) {
+                // ── 12. KPI (uniquement pour les interventions résolues avec une date de fin)
+                if ($statut === 'resolu' && $dateFin) {
                     $this->recalculerKpi($immat, $dateFin);
                 }
 
@@ -1293,9 +1325,9 @@ class InterventionController extends Controller
         $row = DB::table('interventions')->where('id', $id)->where('est_supprime', 0)->first();
         if (!$row) return $this->fail('Intervention introuvable.', 404);
 
-        $isTerminee = ($row->statut === 'terminee');
-        if ($isTerminee && !$this->canEditTerminee()) {
-            return $this->fail("Seuls l'administrateur et le DAAL peuvent modifier une intervention terminée.", 403);
+        $isResolu = ($row->statut === 'resolu');
+        if ($isResolu && !$this->canEditTerminee()) {
+            return $this->fail("Seuls l'administrateur et le DAAL peuvent modifier une intervention résolue.", 403);
         }
         if (!$this->canWrite()) {
             return $this->fail('Permissions insuffisantes.', 403);
@@ -1336,14 +1368,12 @@ class InterventionController extends Controller
         $now   = now();
         $immat = $row->vehicule_immatriculation;
 
-        // Une date de sortie saisie sur une réparation en cours la termine
-        if (!isset($data['statut']) && $row->statut === 'en_cours' && !empty($data['date_sortie_garage'])) {
-            $data['statut'] = 'terminee';
-        }
-        if (($data['statut'] ?? null) === 'terminee'
-            && empty($data['resultat'])
-            && in_array($row->resultat, [null, 'en_attente', 'en_cours'], true)) {
-            $data['resultat'] = 'resolu';
+        // CORRECTION : on ne force plus « resolu » quand une date de sortie est saisie.
+        // Le statut reste celui choisi par l'utilisateur (en_cours / partiel / resolu).
+
+        // Résultat cohérent avec le statut choisi (si aucun résultat n'est envoyé)
+        if (!empty($data['statut']) && empty($data['resultat'])) {
+            $data['resultat'] = $data['statut'];
         }
 
         // Cohérence des dates (entrée ≤ sortie) en tenant compte des valeurs existantes
@@ -1449,8 +1479,8 @@ class InterventionController extends Controller
                     }
                 }
 
-                // KPI : recalculé dès que l'intervention est terminée (y compris après correction par admin / DAAL)
-                if ($newStatut === 'terminee') {
+                // KPI : recalculé dès que l'intervention est résolue (y compris après correction par admin / DAAL)
+                if ($newStatut === 'resolu') {
                     $dateFin = $data['date_sortie_garage'] ?? $row->date_fin;
                     if ($dateFin) $this->recalculerKpi($immat, $dateFin);
                 }
@@ -1605,6 +1635,7 @@ class InterventionController extends Controller
                 ]);
 
                 // 6. Statut véhicule + KPI
+                //    'annulee' = simple paramètre interne (remet le véhicule disponible), PAS un statut d'intervention
                 $this->updateStatutVehicule($immat, 'annulee', $id, $now);
                 if ($row->date_fin) $this->recalculerKpi($immat, $row->date_fin);
 
@@ -1653,6 +1684,9 @@ class InterventionController extends Controller
 
         if ($request->filled('resultat')) {
             $updates['resultat'] = $request->input('resultat');
+        } else {
+            // Résultat cohérent avec le statut choisi
+            $updates['resultat'] = $newStatut;
         }
 
         if ($request->filled('notes')) {
@@ -1660,7 +1694,7 @@ class InterventionController extends Controller
             $updates['notes'] = $row->notes ? $row->notes . "\n\nClôture : " . $noteCloture : $noteCloture;
         }
 
-        if ($newStatut === 'terminee') {
+        if ($newStatut === 'resolu') {
             // Date de sortie du garage / atelier (sans heure), identique pour interne et externe
             $sortie = $request->filled('date_sortie_garage')
                 ? self::jour($request->input('date_sortie_garage'))
@@ -1677,10 +1711,6 @@ class InterventionController extends Controller
 
             $duree = self::dureeMinutes($debut, $sortie);
             if ($duree !== null) $updates['duree_minutes'] = $duree;
-
-            if (!isset($updates['resultat']) && in_array($row->resultat, [null, 'en_attente', 'en_cours'], true)) {
-                $updates['resultat'] = 'resolu';
-            }
         }
 
         DB::table('interventions')->where('id', $id)->update($updates);
@@ -1691,7 +1721,7 @@ class InterventionController extends Controller
             $this->updateStatutVehicule($immat, $newStatut, $id, $now);
         }
 
-        if ($newStatut === 'terminee' && $dateFin) {
+        if ($newStatut === 'resolu' && $dateFin) {
             $this->recalculerKpi($immat, $dateFin);
         }
 
@@ -2207,8 +2237,8 @@ class InterventionController extends Controller
 
     /**
      * Met à jour le statut du véhicule selon la règle automatique :
-     *  - en_cours  → 'En reparation' (sauf si déjà immobilisé)
-     *  - terminee / annulee → 'disponible' (sauf autre intervention ouverte ou demande en_cours)
+     *  - en_cours / partiel → 'En reparation' (sauf si déjà immobilisé)
+     *  - resolu / annulee (suppression) → 'disponible' (sauf autre intervention ouverte ou demande en_cours)
      */
     private function updateStatutVehicule(string $immat, string $statutIntervention, int $iId, $now): void
     {
@@ -2217,17 +2247,17 @@ class InterventionController extends Controller
 
         $statutActuel = $vehicule->statut ?? 'disponible';
 
-        if ($statutIntervention === 'en_cours') {
+        if (in_array($statutIntervention, self::STATUTS_OUVERTS, true)) {
             if (in_array($statutActuel, ['disponible', 'En panne'], true)) {
                 DB::table('vehicules')->where('immatriculation', $immat)
                     ->update(['statut' => 'En reparation', 'date_modification' => $now]);
             }
-        } elseif (in_array($statutIntervention, ['terminee', 'annulee'], true)) {
+        } elseif (in_array($statutIntervention, ['resolu', 'annulee'], true)) {
             $autresIntervOuvertes = DB::table('interventions')
                 ->where('vehicule_immatriculation', $immat)
                 ->where('est_supprime', 0)
                 ->where('id', '!=', $iId)
-                ->whereIn('statut', ['planifiee', 'en_cours'])
+                ->whereIn('statut', self::STATUTS_OUVERTS)
                 ->exists();
 
             $autresDemandesEnCours = DB::table('demandes_intervention')
@@ -2291,7 +2321,7 @@ class InterventionController extends Controller
             $agg = DB::table('interventions')
                 ->where('vehicule_immatriculation', $immat)
                 ->where('est_supprime', 0)
-                ->where('statut', 'terminee')
+                ->where('statut', 'resolu')
                 ->whereYear('date_fin', $year)
                 ->whereMonth('date_fin', $mois)
                 ->selectRaw("
@@ -2375,6 +2405,7 @@ class InterventionController extends Controller
             'intervenant_id.exists'             => 'Intervenant introuvable.',
             'nature_intervention.required'      => 'La nature de l\'intervention est obligatoire.',
             'nature_intervention.in'            => 'Nature invalide (interne ou externe).',
+            'statut.in'                         => 'Statut invalide (en cours, partiel ou résolue).',
             'date_entree_garage.required'       => 'La date d\'entrée au garage / atelier est obligatoire.',
             'date_entree_garage.date'           => 'La date d\'entrée est invalide.',
             'date_sortie_garage.date'           => 'La date de sortie est invalide.',

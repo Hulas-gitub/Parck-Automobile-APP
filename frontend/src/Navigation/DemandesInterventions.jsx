@@ -1646,7 +1646,7 @@ const DemandesIntervention = () => {
 
       {(showNotif||showProfile)&&<div className="fixed inset-0 z-30" onClick={()=>{setShowNotif(false);setShowProfile(false);}}/>}
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{marginLeft:sidebarCollapsed?'4.5rem':'15rem'}}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{marginLeft:sidebarCollapsed?'4.5rem':'16.25rem'}}>
 
         {/* Erreur de chargement */}
         {loadError&&(
@@ -1824,13 +1824,11 @@ const DemandesIntervention = () => {
             </div>
             <div className="flex items-center gap-2">
               <div className={`flex rounded-xl border overflow-hidden ${dark?'border-gray-700':'border-gray-200'}`}>
-                {[['table','bi-table'],['cards','bi-grid-3x3-gap-fill']].map(([v,ic])=>(
-                  <button key={v} onClick={()=>setVue(v)}
-                    className={`p-2 text-sm ${vue===v?'text-white':dark?'text-gray-400 hover:bg-gray-800':'text-gray-500 hover:bg-gray-50'}`}
-                    style={vue===v?{background:`linear-gradient(to right,${theme.primary},${theme.primaryDark})`}:{}}>
-                    <i className={`bi ${ic}`}></i>
-                  </button>
-                ))}
+                <button onClick={()=>setVue('table')}
+                  className={`p-2 text-sm ${vue==='table'?'text-white':dark?'text-gray-400 hover:bg-gray-800':'text-gray-500 hover:bg-gray-50'}`}
+                  style={vue==='table'?{background:`linear-gradient(to right,${theme.primary},${theme.primaryDark})`}:{}}>
+                  <i className="bi bi-table"></i>
+                </button>
               </div>
               <div className="relative">
                 <i className={`bi bi-search absolute left-3 top-1/2 -translate-y-1/2 text-xs ${dark?'text-gray-500':'text-gray-400'}`}></i>
@@ -1959,84 +1957,6 @@ const DemandesIntervention = () => {
               </table>
             </div>
             {!loading&&<Pagination/>}
-          </div>
-        )}
-
-        {/* Cards */}
-        {vue==='cards'&&(
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {loading ? (
-              Array.from({length:6}).map((_,i)=><SkeletonCard key={i} dark={dark}/>)
-            ) : paginated.length===0?(
-              <div className="col-span-full text-center py-16">
-                <i className={`bi bi-file-earmark-x text-5xl block mb-3 ${dark?'text-gray-600':'text-gray-300'}`}></i>
-                <p className={`text-sm ${dark?'text-gray-500':'text-gray-400'}`}>Aucune demande trouvée</p>
-              </div>
-            ):paginated.map((item,idx)=>{
-              const pri=getPrioriteInfo(item.priorite);
-              const stat=getStatutInfo(item.statut);
-              const nat=getNatureInfo(item.nature_intervention);
-              const rs=roleStyle(item.demandeur_role_code);
-              return (
-                <div key={item.id} onClick={()=>setDetailItem(item)}
-                  className={`${dark?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} rounded-2xl border shadow-sm p-5 cursor-pointer ch`}
-                  style={{animation:anim?`fadeInUp .4s ease-out ${idx*.04}s both`:'none'}}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <span className={`text-xs font-mono font-bold ${dark?'text-gray-500':'text-gray-400'}`}>{refDem(item.id)}</span>
-                      <p className={`text-sm font-bold mt-0.5 ${dark?'text-gray-100':'text-gray-900'}`}>{getTypeIntLib(item.type_intervention)}</p>
-                    </div>
-                    <div onClick={e=>e.stopPropagation()}>
-                      <ActionMenu item={item} {...menuProps}/>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${stat.bg}`}><i className={`bi ${stat.icon} mr-0.5`}></i>{stat.libelle}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${pri.bg}`}>{pri.libelle}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${getTypeMaintInfo(item.type_maintenance).bg}`}>{getTypeMaintInfo(item.type_maintenance).libelle}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${nat.bg}`}><i className={`bi ${nat.icon} mr-0.5`}></i>{nat.libelle}</span>
-                  </div>
-                  <div className={`${dark?'bg-gray-800':'bg-gray-50'} rounded-xl p-3 space-y-1.5 mb-3`}>
-                    <div className="flex items-center gap-2">
-                      <i className={`bi bi-car-front-fill text-xs ${dark?'text-gray-500':'text-gray-400'}`}></i>
-                      <span className={`text-xs font-semibold ${dark?'text-gray-300':'text-gray-700'}`}>{item.vehicule_immatriculation}</span>
-                      <span className={`text-xs ${dark?'text-gray-500':'text-gray-400'}`}>{item.vehicule_marque?` · ${item.vehicule_marque}`:''}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0" style={{background:rs.dot}}>
-                        {item.demandeur_nom?.charAt(0)||'?'}
-                      </div>
-                      <span className={`text-xs ${dark?'text-gray-300':'text-gray-700'}`}>{item.demandeur_nom||'—'}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ml-auto ${rs.bg}`}>{item.demandeur_role_libelle||'Saisie libre'}</span>
-                    </div>
-                  </div>
-                  {item.anomalie_constatee&&<p className={`text-xs italic mb-2 line-clamp-2 ${dark?'text-gray-500':'text-gray-400'}`}>"{item.anomalie_constatee}"</p>}
-                  {item.statut==='rejetee'&&item.motif_rejet&&<p className="text-xs text-red-500 mb-1 line-clamp-1"><i className="bi bi-x-circle-fill mr-1"></i>{item.motif_rejet}</p>}
-
-                  {/* Actions rapides card — demandes EXTERNES en attente (approuver / rejeter : DAAL selon l'API) */}
-                  {item.statut==='en_attente'&&item.can_treat&&(
-                    <div className="flex gap-1.5 mt-3 pt-3" style={{borderTop:`1px solid ${dark?'#1f2937':'#f1f5f9'}`}} onClick={e=>e.stopPropagation()}>
-                      <button onClick={()=>handleValider(item)}
-                        className="flex-1 py-1.5 rounded-lg text-white text-xs font-bold flex items-center justify-center gap-1 hover:opacity-90"
-                        style={{background:'linear-gradient(to right,#3b82f6,#2563eb)'}}>
-                        <i className="bi bi-gear-fill"></i>Approuver
-                      </button>
-                      <button onClick={()=>handleReject(item)}
-                        className="flex-1 py-1.5 rounded-lg border border-red-300 text-red-500 text-xs font-bold flex items-center justify-center gap-1 hover:bg-red-50">
-                        <i className="bi bi-x-lg"></i>Rejeter
-                      </button>
-                    </div>
-                  )}
-
-                  <p className={`text-[10px] mt-2 ${dark?'text-gray-600':'text-gray-400'}`}>{fmtRel(item.date_demande)}</p>
-                </div>
-              );
-            })}
-            {!loading&&totalPages>1&&(
-              <div className="col-span-full">
-                <div className={`rounded-2xl border ${dark?'bg-gray-900 border-gray-800':'bg-white border-gray-100'} shadow-sm`}><Pagination/></div>
-              </div>
-            )}
           </div>
         )}
       </main>

@@ -302,47 +302,18 @@ const Utilisateurs = () => {
   }), [darkMode, theme.primary]);
 
   // Succès : le rechargement silencieux part IMMÉDIATEMENT, en même temps que l'alerte
-  // (plus d'attente de la fermeture du SweetAlert pour rafraîchir les données).
   const swalSuccess = useCallback((message) => {
     if (loadDataRef.current) loadDataRef.current(true);   // rafraîchissement en arrière-plan
-    Swal.fire({
-      ...swalBase(),
-      icon:              'success',
-      title:             'Succès',
-      text:              message,
-      timer:             1400,
-      timerProgressBar:  false,
-      showConfirmButton: false,
-      allowOutsideClick: true,
-      allowEscapeKey:    true,
-    });
-  }, [swalBase]);
+    showSuccess(darkMode, theme, 'Succès', message);
+  }, [darkMode, theme]);
 
   const swalError = useCallback((message) => {
-    Swal.fire({
-      ...swalBase(),
-      icon:              'error',
-      title:             'Erreur',
-      text:              message,
-      confirmButtonText: "D'ACCORD",
-      showCancelButton:  false,
-    });
-  }, [swalBase]);
+    showError(darkMode, theme, 'Erreur', message);
+  }, [darkMode, theme]);
 
-  const swalConfirm = useCallback(async ({ title, text, confirmText = 'Confirmer', confirmColor = '#dc2626', icon = 'warning' }) => {
-    const result = await Swal.fire({
-      ...swalBase(),
-      icon,
-      title,
-      text,
-      showCancelButton:   true,
-      confirmButtonText:  confirmText,
-      cancelButtonText:   'Annuler',
-      confirmButtonColor: confirmColor,
-      cancelButtonColor:  darkMode ? '#374151' : '#6b7280',
-    });
-    return result.isConfirmed;
-  }, [swalBase, darkMode]);
+  const swalConfirm = useCallback(async ({ title, text, confirmText = 'Confirmer', isDanger = false }) => {
+    return await showConfirm(darkMode, theme, { title, html: text, confirmText, isDanger });
+  }, [darkMode, theme]);
 
   // Fermeture menus au clic dehors
   useEffect(() => {
@@ -1189,15 +1160,7 @@ const Utilisateurs = () => {
                             type="button"
                             onClick={() => {
                               navigator.clipboard.writeText(formData.mot_de_passe);
-                              Swal.fire({
-                                ...swalBase(),
-                                icon: 'success',
-                                title: 'Copié !',
-                                text: 'Mot de passe copié dans le presse-papier.',
-                                timer: 1200,
-                                timerProgressBar: true,
-                                showConfirmButton: false,
-                              });
+                              showSuccess(darkMode, theme, 'Copié !', 'Mot de passe copié dans le presse-papier.');
                             }}
                             className={`p-1.5 rounded ${dm('text-gray-400 hover:text-gray-200', 'text-gray-500 hover:text-gray-700')}`}
                           >
@@ -1342,7 +1305,7 @@ const Utilisateurs = () => {
         showNotifications={showNotifications} setShowNotifications={setShowNotifications}
         showProfile={showProfile} setShowProfile={setShowProfile} />
 
-      <main className=" flex-1 transition-all duration-300 pt-24 px-4 pb-8" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className=" flex-1 transition-all duration-300 pt-24 px-4 pb-8" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ════════════════════════════════════════════════════════════════
             SKELETON PLEINE PAGE : uniquement au premier chargement d'un onglet.

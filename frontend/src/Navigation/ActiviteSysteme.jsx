@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import Sidebar from '../components/Sidebar';
@@ -99,6 +100,87 @@ const Badge = ({ text, bg, small = false }) => (
 
 const getRoleInfo = (code) => ROLES.find(r => r.code === code) || { libelle: code, bg: 'bg-gray-500/20 text-gray-400', color: '#94a3b8' };
 const getActionInfo = (code) => ACTIONS.find(a => a.code === code) || { libelle: code, icon: 'bi-question', bg: 'bg-gray-500/20 text-gray-400', color: '#94a3b8' };
+
+// ============================================================================
+// MENU TROIS POINTS — actions d'une ligne du journal (même principe que Véhicules)
+// ============================================================================
+const RowActionsMenu = ({ log, darkMode, theme, onView }) => {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState({});
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const menuWidth = 210;
+  const menuHeight = 56;
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        buttonRef.current && !buttonRef.current.contains(e.target) &&
+        menuRef.current && !menuRef.current.contains(e.target)
+      ) setOpen(false);
+    };
+    const handleScroll = () => setOpen(false);
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('scroll', handleScroll, true);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const showAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight + 8;
+      setMenuStyle({
+        position: 'fixed',
+        top: showAbove ? rect.top - menuHeight - 4 : rect.bottom + 4,
+        left: Math.max(8, rect.right - menuWidth),
+        zIndex: 99999,
+        width: menuWidth,
+      });
+    }
+  }, [open]);
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        title="Actions"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${open
+          ? 'text-white'
+          : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+        style={open ? { background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` } : {}}
+      >
+        <i className="bi bi-three-dots-vertical text-sm"></i>
+      </button>
+
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          onClick={(e) => e.stopPropagation()}
+          className={`rounded-xl shadow-2xl border py-1.5 overflow-hidden text-left ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+          style={menuStyle}
+        >
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onView(log); }}
+            className={`w-full text-left px-4 py-2.5 text-sm font-semibold flex items-center gap-2.5 transition-colors ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}
+          >
+            <i className="bi bi-eye-fill text-base" style={{ color: theme.primary }}></i>Voir les détails
+          </button>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
 
 // ============================================================================
 // MINI SVG SPARKLINE
@@ -281,6 +363,8 @@ const Activitesysteme = () => {
 
   const showToast = (msg, type = 'success') => setToast({ message: msg, type });
 
+  const openLog = (log) => { setSelectedLog(log); setShowDetailModal(true); };
+
   useEffect(() => {
     const raf = requestAnimationFrame(() => { const raf2 = requestAnimationFrame(() => setAnimateCards(true)); return () => cancelAnimationFrame(raf2); });
     return () => cancelAnimationFrame(raf);
@@ -427,7 +511,7 @@ const Activitesysteme = () => {
         <div className="fixed inset-0 z-30" onClick={() => { setShowNotifications(false); setShowProfile(false); }} />
       )}
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-10" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ── PAGE HEADER ── */}
         <div className="flex items-center justify-between mb-6" style={{ animation: animateCards ? 'fadeInUp 0.4s ease-out both' : 'none' }}>
@@ -603,10 +687,11 @@ const Activitesysteme = () => {
           style={{ animation: animateCards ? 'fadeInUp 0.5s ease-out 0.6s both' : 'none' }}>
           <div className="overflow-x-auto scrollbar-thin">
             <table className="w-full">
+              {/* En-tête aux couleurs du thème (ThemeContext) ; « Actions » = DERNIÈRE colonne */}
               <thead>
                 <tr style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
-                  {['Date & Heure', 'Utilisateur', 'Rôle', 'Action', 'Table / Entité', 'Valeurs', 'IP', ''].map((h, i) => (
-                    <th key={i} className={`px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-wider text-white ${i === 7 ? 'text-center w-12' : ''}`}>{h}</th>
+                  {['Date & Heure', 'Utilisateur', 'Rôle', 'Opération', 'Table / Entité', 'Valeurs', 'IP', 'Actions'].map((h, i) => (
+                    <th key={i} className={`px-4 py-3.5 text-[11px] font-bold uppercase tracking-wider text-white whitespace-nowrap ${i === 7 ? 'text-center' : 'text-left'}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -631,7 +716,7 @@ const Activitesysteme = () => {
                           : (darkMode ? '#162033' : '#f1f4f9'),
                         animation: animateCards ? `fadeInUp 0.35s ease-out ${rowIdx * 0.03}s both` : 'none'
                       }}
-                      onClick={() => { setSelectedLog(log); setShowDetailModal(true); }}>
+                      onClick={() => openLog(log)}>
 
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <p className={`text-xs font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{logDate.toLocaleDateString('fr-FR')}</p>
@@ -692,12 +777,9 @@ const Activitesysteme = () => {
                         <span className={`text-[11px] font-mono ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{log.adresse_ip}</span>
                       </td>
 
-                      <td className="px-4 py-3.5 text-center" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => { setSelectedLog(log); setShowDetailModal(true); }}
-                          className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-gray-500 hover:text-white' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-800'}`}
-                          title="Voir les détails">
-                          <i className="bi bi-eye text-sm"></i>
-                        </button>
+                      {/* Actions : dernière colonne, boutons regroupés dans le menu trois points */}
+                      <td className="px-4 py-3.5 text-center whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                        <RowActionsMenu log={log} darkMode={darkMode} theme={theme} onView={openLog} />
                       </td>
                     </tr>
                   );

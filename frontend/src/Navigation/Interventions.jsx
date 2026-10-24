@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import Swal from 'sweetalert2';
@@ -21,8 +22,6 @@ import {
   toggleStatutTypeIntervenant,
 } from '../api/Admin-Axios/InterventionsReferentiel-axios';
 
-import { getSwalConfig } from '../utils/walConfig';
-
 const extractErrorMessage = (err) => {
   const data = err?.response?.data;
   if (!data) return 'Une erreur réseau est survenue.';
@@ -31,6 +30,23 @@ const extractErrorMessage = (err) => {
   }
   return data.message || 'Une erreur est survenue.';
 };
+
+// ─────────────────────────────────────────────────────────────
+// CONFIG SWAL (définie localement)
+// ─────────────────────────────────────────────────────────────
+const buildSwalConfig = (isDark, primary = '#f59e0b') => ({
+  background: isDark ? '#111827' : '#ffffff',
+  color: isDark ? '#f3f4f6' : '#111827',
+  confirmButtonColor: primary,
+  cancelButtonColor: isDark ? '#374151' : '#6b7280',
+  customClass: {
+    popup: 'swal-fleetify-popup',
+    title: 'swal-fleetify-title',
+    htmlContainer: 'swal-fleetify-html',
+    confirmButton: 'swal-fleetify-confirm',
+    cancelButton: 'swal-fleetify-cancel',
+  },
+});
 
 // ─────────────────────────────────────────────────────────────
 // SKELETON
@@ -66,7 +82,7 @@ const StatCardSkeleton = ({ darkMode }) => (
 );
 
 // ─────────────────────────────────────────────────────────────
-// CONFIG PAR FILTRE — Inspections + Intervenants uniquement
+// CONFIG PAR FILTRE : Inspections + Intervenants uniquement
 // ─────────────────────────────────────────────────────────────
 const FILTER_CONFIG = {
   inspections: {
@@ -80,6 +96,9 @@ const FILTER_CONFIG = {
     colCount: 5,
   },
 };
+
+const MENU_WIDTH = 192;   // w-48
+const MENU_HEIGHT = 150;  // hauteur approximative du menu (3 actions)
 
 // ─────────────────────────────────────────────────────────────
 // COMPOSANT PRINCIPAL
@@ -113,7 +132,8 @@ const Interventions = () => {
 
   // ── State UI ─────────────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState('');
-  const [openMenuId, setOpenMenuId] = useState(null);
+  // menuState = { item, top, left } | null  (menu rendu via portal)
+  const [menuState, setMenuState] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('create');
   const [selectedItem, setSelectedItem] = useState(null);
@@ -207,15 +227,51 @@ const Interventions = () => {
   }, []);
 
   // ─────────────────────────────────────────────────────────────
-  // MENU & MODAL
+  // MENU (portal) & MODAL
   // ─────────────────────────────────────────────────────────────
-  const toggleMenu = (id) => setOpenMenuId(prev => prev === id ? null : id);
+  const closeMenu = useCallback(() => setMenuState(null), []);
 
+  const toggleMenu = (e, item) => {
+    e.stopPropagation();
+    if (menuState?.item?.id === item.id) {
+      setMenuState(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const margin = 8;
+
+    // Alignement à droite du bouton, sans sortir de l'écran
+    let left = rect.right - MENU_WIDTH;
+    left = Math.max(margin, Math.min(left, window.innerWidth - MENU_WIDTH - margin));
+
+    // Ouvre vers le haut s'il n'y a pas assez de place en bas
+    const spaceBelow = window.innerHeight - rect.bottom;
+    let top = spaceBelow < MENU_HEIGHT + margin
+      ? rect.top - MENU_HEIGHT - 4
+      : rect.bottom + 4;
+    top = Math.max(margin, top);
+
+    setMenuState({ item, top, left });
+  };
+
+  // Fermer au clic extérieur, au scroll et au resize
   useEffect(() => {
-    const handler = (e) => { if (!e.target.closest('.action-menu')) setOpenMenuId(null); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
+    if (!menuState) return;
+    const onMouseDown = (e) => {
+      if (e.target.closest('.action-menu-portal') || e.target.closest('.action-menu-trigger')) return;
+      setMenuState(null);
+    };
+    const onScrollOrResize = () => setMenuState(null);
+
+    document.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, [menuState]);
 
   const emptyForm = {
     libelle: '', code: '', description: '',
@@ -225,7 +281,7 @@ const Interventions = () => {
   const handleOpenModal = (mode, item = null) => {
     setModalMode(mode);
     setSelectedItem(item);
-    setOpenMenuId(null);
+    setMenuState(null);
     setFormData(mode === 'edit' && item ? {
       libelle: item.libelle ?? '',
       code: item.code ?? '',
@@ -278,7 +334,7 @@ const Interventions = () => {
   };
 
   const handleDelete = async (item) => {
-    setOpenMenuId(null);
+    setMenuState(null);
     const result = await swalConfirm({
       title: 'Supprimer cet élément ?',
       text: `"${item.libelle}" sera supprimé définitivement.`,
@@ -301,7 +357,7 @@ const Interventions = () => {
   };
 
   const handleToggleStatus = async (item) => {
-    setOpenMenuId(null);
+    setMenuState(null);
     setActionLoading(true);
     try {
       switch (activeFilter) {
@@ -373,34 +429,45 @@ const Interventions = () => {
     </code>
   );
 
-  const ActionMenu = ({ item }) => (
-    <div className="relative action-menu inline-block">
-      <button onClick={() => toggleMenu(item.id)} disabled={actionLoading}
-        className={`p-2 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'} disabled:opacity-50`}>
-        <i className="bi bi-three-dots-vertical" />
-      </button>
-      {openMenuId === item.id && (
-        <div className={`absolute right-0 mt-2 w-48 rounded-lg shadow-xl z-20 border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-          <div className="py-1">
-            <button onClick={() => handleOpenModal('edit', item)}
-              className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100'}`}>
-              <i className="bi bi-pencil-square text-blue-500" /> Modifier
-            </button>
-            <button onClick={() => handleToggleStatus(item)}
-              className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100'}`}>
-              <i className={`bi ${item.est_actif ? 'bi-toggle-on text-green-500' : 'bi-toggle-off text-gray-400'}`} />
-              {item.est_actif ? 'Désactiver' : 'Activer'}
-            </button>
-            <hr className={`my-1 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`} />
-            <button onClick={() => handleDelete(item)}
-              className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-red-50'}`}>
-              <i className="bi bi-trash3" /> Supprimer
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+  // Bouton "trois points" (le menu lui-même est rendu via portal)
+  const renderActionButton = (item) => (
+    <button
+      type="button"
+      onClick={(e) => toggleMenu(e, item)}
+      disabled={actionLoading}
+      className={`action-menu-trigger p-2 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'} disabled:opacity-50`}>
+      <i className="bi bi-three-dots-vertical" />
+    </button>
   );
+
+  // Menu flottant rendu dans document.body : jamais coupé par le tableau
+  const renderFloatingMenu = () => {
+    if (!menuState) return null;
+    const { item, top, left } = menuState;
+    return createPortal(
+      <div
+        className={`action-menu-portal fixed rounded-lg shadow-xl border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+        style={{ top, left, width: MENU_WIDTH, zIndex: 9999 }}>
+        <div className="py-1">
+          <button onClick={() => handleOpenModal('edit', item)}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100'}`}>
+            <i className="bi bi-pencil-square text-blue-500" /> Modifier
+          </button>
+          <button onClick={() => handleToggleStatus(item)}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100'}`}>
+            <i className={`bi ${item.est_actif ? 'bi-toggle-on text-green-500' : 'bi-toggle-off text-gray-400'}`} />
+            {item.est_actif ? 'Désactiver' : 'Activer'}
+          </button>
+          <hr className={`my-1 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`} />
+          <button onClick={() => handleDelete(item)}
+            className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 ${darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-red-50'}`}>
+            <i className="bi bi-trash3" /> Supprimer
+          </button>
+        </div>
+      </div>,
+      document.body
+    );
+  };
 
   const renderFormFields = () => {
     const common = (
@@ -486,9 +553,9 @@ const Interventions = () => {
           </div>
         </td>
         <td className={`${tdBase} whitespace-nowrap`}>{codeBadge(item.code)}</td>
-        <td className={tdMuted}><div className="max-w-xs truncate">{item.description || '—'}</div></td>
+        <td className={tdMuted}><div className="max-w-xs truncate">{item.description || 'Aucune description'}</div></td>
         <td className={`${tdBase} whitespace-nowrap`}>{statusBadge(item.est_actif)}</td>
-        <td className={`${tdBase} whitespace-nowrap text-center`}><ActionMenu item={item} /></td>
+        <td className={`${tdBase} whitespace-nowrap text-center`}>{renderActionButton(item)}</td>
       </tr>
     ));
   };
@@ -501,7 +568,7 @@ const Interventions = () => {
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
       <style>{`
         .swal-fleetify-popup  { border-radius: 1rem !important; border: 1px solid ${darkMode ? '#374151' : '#e5e7eb'} !important; }
-        .swal-fleetify-title  { font-size: 1.15rem !important; font-weight: 700 !important; }
+        .swal-fleetify-title  { font-size: 1.25rem !important; font-weight: 700 !important; }
         .swal-fleetify-html   { font-size: 0.92rem !important; }
         .swal-fleetify-confirm, .swal-fleetify-cancel { border-radius: 0.5rem !important; font-weight: 600 !important; padding: 0.55rem 1.4rem !important; }
       `}</style>
@@ -512,7 +579,7 @@ const Interventions = () => {
         showProfile={showProfile} setShowProfile={setShowProfile} />
 
       <main className=" flex-1 transition-all duration-300 pt-24 px-4 pb-6"
-        style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+        style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ── STAT CARDS ── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -562,7 +629,7 @@ const Interventions = () => {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex flex-wrap gap-2">
               {Object.entries(FILTER_CONFIG).map(([key, cfg]) => (
-                <button key={key} onClick={() => { setActiveFilter(key); setSearchTerm(''); }}
+                <button key={key} onClick={() => { setActiveFilter(key); setSearchTerm(''); setMenuState(null); }}
                   className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 text-sm ${activeFilter === key ? 'text-white shadow-md' : `${darkMode ? 'text-gray-300 hover:bg-gray-800' : 'text-gray-700 hover:bg-gray-100'}`
                     }`}
                   style={activeFilter === key ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
@@ -613,6 +680,9 @@ const Interventions = () => {
       {/* ── FOOTER ── */}
       <Footer darkMode={darkMode} sidebarCollapsed={sidebarCollapsed} theme={theme} />
 
+      {/* ── MENU D'ACTIONS (portal, au-dessus de tout) ── */}
+      {renderFloatingMenu()}
+
       {/* ── MODAL CRUD ── */}
       {showModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -627,7 +697,7 @@ const Interventions = () => {
                     <i className={`bi ${FILTER_CONFIG[activeFilter]?.icon} text-white text-sm`} />
                   </div>
                   <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                    {modalMode === 'create' ? 'Créer' : 'Modifier'} — {FILTER_CONFIG[activeFilter]?.label}
+                    {modalMode === 'create' ? 'Créer' : 'Modifier'} : {FILTER_CONFIG[activeFilter]?.label}
                   </h3>
                 </div>
                 <button onClick={handleCloseModal}
@@ -658,7 +728,7 @@ const Interventions = () => {
                     className="px-5 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 flex items-center gap-2 disabled:opacity-50"
                     style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}>
                     {actionLoading && <i className="bi bi-arrow-repeat animate-spin" />}
-                    {modalMode === 'create' ? 'Créer' : 'Enregistrer'}
+                    Enregistrer
                   </button>
                 </div>
               </form>

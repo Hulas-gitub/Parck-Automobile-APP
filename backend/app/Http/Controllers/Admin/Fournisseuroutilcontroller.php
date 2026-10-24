@@ -15,18 +15,19 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\Rule;
 
 /**
- * FournisseurOutilController — page « Fournisseurs & Inventaire »
+ * FournisseurOutilController : page « Fournisseurs & Inventaire »
  *
- * Fournisseurs · Outils · Pièces détachées (+ stock) · Problèmes d'outils
+ * Fournisseurs, Outils (avec quantite_stock), Problèmes d'outils
+ * (les méthodes sur les pièces détachées sont conservées pour ne pas casser les routes existantes)
  *
  * Même style que VehiculesController : DB::table() + JournalAudit::tracer()
  * explicite (le trait Auditable ne marche qu'avec Eloquent, donc inutile ici).
  *
- * ─ STOCK ────────────────────────────────────────────────────────────────
+ * STOCK PIÈCES
  *  Sorties pour intervention : gérées par les TRIGGERS (prelevements_pieces).
  *  Entrées / corrections     : écrites ici dans mouvements_stock.
  *
- * ─ ALERTE STOCK FAIBLE ─────────────────────────────────────────────────
+ * ALERTE STOCK FAIBLE
  *  Le trigger trg_notif_stock_faible (migration) crée la notification et les
  *  lignes envois_notifications ; envoyerAlertesEnAttente() expédie les emails.
  */
@@ -38,7 +39,7 @@ class FournisseurOutilController extends Controller
     private const COLONNES_TECH = ['est_supprime', 'date_suppression', 'date_creation', 'date_modification'];
 
     // =========================================================================
-    // HELPERS — AUDIT / ACCÈS DONNÉES
+    // HELPERS : AUDIT / ACCÈS DONNÉES
     // =========================================================================
 
     private function userId(): ?int
@@ -182,7 +183,7 @@ class FournisseurOutilController extends Controller
     }
 
     // =========================================================================
-    // 2. OUTILS
+    // 2. OUTILS (avec quantité en stock)
     // =========================================================================
 
     private function outilRules(): array
@@ -191,6 +192,7 @@ class FournisseurOutilController extends Controller
             'nom'                   => 'required|string|max:200',
             'type'                  => 'nullable|string|max:100',
             'categorie'             => 'nullable|string|max:100',
+            'quantite_stock'        => 'required|integer|min:0',
             'etat'                  => ['required', Rule::in(['OK', 'Maintenance', 'Hors service', 'defaut'])],
             'emplacement'           => 'nullable|string|max:150',
             'date_dernier_controle' => 'nullable|date',
@@ -200,7 +202,9 @@ class FournisseurOutilController extends Controller
 
     private function fmtOutil(object $o): array
     {
-        return Arr::except((array) $o, ['est_supprime', 'date_suppression']);
+        $a = Arr::except((array) $o, ['est_supprime', 'date_suppression']);
+        $a['quantite_stock'] = (int) ($o->quantite_stock ?? 0);
+        return $a;
     }
 
     public function outils(): JsonResponse
@@ -216,7 +220,7 @@ class FournisseurOutilController extends Controller
         $id  = DB::table('outils')->insertGetId($request->validate($this->outilRules()));
         $row = DB::table('outils')->find($id);
 
-        $this->auditCreate('outils', $row, "Ajout de l'outil « {$row->nom} »");
+        $this->auditCreate('outils', $row, "Ajout de l'outil « {$row->nom} » (quantité en stock : {$row->quantite_stock})");
 
         return response()->json(['data' => $this->fmtOutil($row)], 201);
     }
@@ -228,9 +232,15 @@ class FournisseurOutilController extends Controller
         DB::table('outils')->where('id', $id)->update($request->validate($this->outilRules()));
         $apres = DB::table('outils')->find($id);
 
-        $this->auditUpdate('outils', $avant, $apres, $avant->etat !== $apres->etat
-            ? "Changement d'état de l'outil « {$apres->nom} » : {$avant->etat} → {$apres->etat}"
-            : "Modification de l'outil « {$apres->nom} »");
+        if ($avant->etat !== $apres->etat) {
+            $libelle = "Changement d'état de l'outil « {$apres->nom} » : {$avant->etat} → {$apres->etat}";
+        } elseif ((int) $avant->quantite_stock !== (int) $apres->quantite_stock) {
+            $libelle = "Variation du stock de l'outil « {$apres->nom} » : {$avant->quantite_stock} → {$apres->quantite_stock}";
+        } else {
+            $libelle = "Modification de l'outil « {$apres->nom} »";
+        }
+
+        $this->auditUpdate('outils', $avant, $apres, $libelle);
 
         return response()->json(['data' => $this->fmtOutil($apres)]);
     }
@@ -246,7 +256,7 @@ class FournisseurOutilController extends Controller
     }
 
     // =========================================================================
-    // 3. PIÈCES DÉTACHÉES
+    // 3. PIÈCES DÉTACHÉES (plus affichées dans la page, conservées côté API)
     // =========================================================================
 
     private function pieceRules(?int $id = null): array
@@ -456,7 +466,7 @@ class FournisseurOutilController extends Controller
     }
 
     // =========================================================================
-    // 4. PROBLÈMES D'OUTILS  (table sans date_creation / date_modification)
+    // 4. PROBLÈMES D'OUTILS (table sans date_creation / date_modification)
     // =========================================================================
 
     private function problemeRules(): array
@@ -489,7 +499,7 @@ class FournisseurOutilController extends Controller
         return $a;
     }
 
-    /** « 2026-03-01T14:00 » (datetime-local) → « 2026-03-01 14:00:00 » */
+    /** « 2026-03-01T14:00 » (datetime-local) devient « 2026-03-01 14:00:00 » */
     private function dt($v): ?string
     {
         return $v ? Carbon::parse($v)->format('Y-m-d H:i:s') : null;
@@ -638,7 +648,7 @@ class FournisseurOutilController extends Controller
     }
 
     // =========================================================================
-    // 5. ALERTES STOCK FAIBLE — ENVOI DES EMAILS
+    // 5. ALERTES STOCK FAIBLE : ENVOI DES EMAILS
     //    (la détection est faite par le trigger, voir la migration)
     // =========================================================================
 
@@ -743,7 +753,7 @@ class FournisseurOutilController extends Controller
             } catch (\Throwable $e) {
                 $this->marquerEnvoi($l->envoi_id, 'echec', $e->getMessage()); // retenté au prochain passage
                 $stats['erreurs']++;
-                Log::error("[StockAlerte] ✗ {$l->email} | {$e->getMessage()}");
+                Log::error("[StockAlerte] échec {$l->email} | {$e->getMessage()}");
             }
         }
 

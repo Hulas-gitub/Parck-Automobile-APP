@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme, generateShades } from '../contexts/ThemeContext';
-import Swal from 'sweetalert2';
 import {
   Palette, Check, Sparkles, Eye,
   Monitor, Save, X, Wand2, Sliders, Copy, Trash2,
@@ -9,42 +8,39 @@ import {
 import Sidebar from '../components/Sidebar';
 import Header  from '../components/Header';
 import Footer  from '../components/Footer';
+import { showSuccess, showError, showConfirm } from '../utils/walConfig';
 
 // ============================================================================
-// SWEETALERT2 HELPERS
+// STYLES SWEETALERT (injectés dans <head>, suivent le thème actif)
 // ============================================================================
-const createSwal = (darkMode, theme) =>
-  Swal.mixin({
-    customClass: {
-      popup:         darkMode ? 'swal-dark-popup'  : 'swal-light-popup',
-      title:         darkMode ? 'swal-dark-title'  : 'swal-light-title',
-      htmlContainer: darkMode ? 'swal-dark-html'   : 'swal-light-html',
-      confirmButton: 'swal-confirm-btn',
-      cancelButton:  'swal-cancel-btn',
-    },
-    background:         darkMode ? '#111827' : '#ffffff',
-    color:              darkMode ? '#f9fafb' : '#111827',
-    confirmButtonColor: theme?.primary ?? '#ffc400',
-    cancelButtonColor:  darkMode ? '#374151' : '#e5e7eb',
-    buttonsStyling: false,
-  });
-
-const buildSwalStyles = (theme) => `
-  .swal-dark-popup  { background:#111827!important;border:1px solid #374151!important;border-radius:16px!important;box-shadow:0 25px 50px rgba(0,0,0,.6)!important; }
-  .swal-light-popup { background:#ffffff!important;border:1px solid #e5e7eb!important;border-radius:16px!important;box-shadow:0 25px 50px rgba(0,0,0,.15)!important; }
-  .swal-dark-title  { color:#f9fafb!important;font-weight:800!important;font-size:18px!important; }
-  .swal-light-title { color:#111827!important;font-weight:800!important;font-size:18px!important; }
-  .swal-dark-html   { color:#9ca3af!important;font-size:15px!important; }
-  .swal-light-html  { color:#6b7280!important;font-size:15px!important; }
-  .swal-confirm-btn { background:linear-gradient(to right,${theme?.primary||'#ffc400'},${theme?.primaryDark||'#e6a800'})!important;color:#fff!important;border:none!important;border-radius:10px!important;font-weight:700!important;padding:10px 24px!important;font-size:14px!important;cursor:pointer!important; }
-  .swal-confirm-btn:hover { opacity:.9!important; }
-  .swal-cancel-btn  { background:transparent!important;color:#9ca3af!important;border:1px solid #374151!important;border-radius:10px!important;font-weight:700!important;padding:10px 24px!important;font-size:14px!important;cursor:pointer!important; }
-  .swal-cancel-btn:hover { background:rgba(156,163,175,.1)!important; }
-  .swal2-icon.swal2-question { border-color:${theme?.primary||'#ffc400'}!important;color:${theme?.primary||'#ffc400'}!important; }
-  .swal2-icon.swal2-success .swal2-success-ring { border-color:rgba(16,185,129,.3)!important; }
-  .swal2-icon.swal2-success [class^=swal2-success-line] { background:#10b981!important; }
-  .swal2-icon.swal2-error { border-color:#ef4444!important;color:#ef4444!important; }
-  .swal2-actions { gap:10px!important;margin-top:20px!important; }
+const buildSwalStyles = (theme, darkMode) => `
+  .swal2-popup {
+    border-radius: 16px !important;
+    font-family: inherit !important;
+  }
+  .swal2-title {
+    font-weight: 800 !important;
+  }
+  .swal2-confirm {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    padding: 10px 24px !important;
+    background: linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark}) !important;
+    box-shadow: 0 2px 10px ${theme.primary}55 !important;
+  }
+  .swal2-cancel {
+    border-radius: 10px !important;
+    font-weight: 500 !important;
+    padding: 10px 24px !important;
+    color: ${darkMode ? '#d1d5db' : '#374151'} !important;
+  }
+  .swal2-timer-progress-bar {
+    background: ${theme.primary} !important;
+  }
+  .swal2-icon.swal2-question {
+    border-color: ${theme.primary} !important;
+    color: ${theme.primary} !important;
+  }
 `;
 
 // ============================================================================
@@ -148,15 +144,18 @@ const Theme = () => {
   });
   useEffect(() => { try { localStorage.setItem('fleetify_darkMode', String(darkMode)); } catch {} }, [darkMode]);
 
+  // Styles SweetAlert : réinjectés quand le mode sombre ou le thème change
   useEffect(() => {
     const styleId = 'swal-theme-styles';
-    const existing = document.getElementById(styleId);
-    if (existing) existing.remove();
+    document.getElementById(styleId)?.remove();
+
     const style = document.createElement('style');
     style.id = styleId;
-    style.textContent = buildSwalStyles(theme);
+    style.textContent = buildSwalStyles(theme, darkMode);
     document.head.appendChild(style);
-  }, [theme]);
+
+    return () => style.remove();
+  }, [darkMode, theme]);
 
   const [sidebarCollapsed, setSidebarCollapsed]   = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -167,8 +166,6 @@ const Theme = () => {
   const [applying, setApplying]                   = useState(false);
 
   // ── Skeleton au chargement de la page ─────────────────────────────────────
-  // Affiché jusqu'à ce que la liste des thèmes soit disponible
-  // (avec un délai maximum pour ne jamais rester bloqué si la liste est vide).
   const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
@@ -206,19 +203,13 @@ const Theme = () => {
 
   // ── Appliquer un thème existant ───────────────────────────────────────────
   const handleApplyTheme = async (t) => {
-    // Si le thème n'a pas encore d'id BDD (prédéfini jamais enregistré),
-    // on le crée d'abord puis on l'applique
-    const result = await createSwal(darkMode, theme).fire({
-      icon:              'question',
-      title:             'Appliquer ce thème ?',
-      html:              `Le thème <strong>${t.couleur}</strong> sera appliqué à toute l'application.`,
-      confirmButtonText: 'Appliquer',
-      cancelButtonText:  'Annuler',
-      showCancelButton:  true,
-      buttonsStyling:    false,
+    const result = await showConfirm(darkMode, theme, {
+      title: 'Appliquer ce thème ?',
+      html: `Le thème <strong>${t.couleur}</strong> sera appliqué à toute l'application.`,
+      confirmText: 'Appliquer',
     });
 
-    if (!result.isConfirmed) return;
+    if (!result) return;
 
     setApplying(true);
     try {
@@ -234,27 +225,12 @@ const Theme = () => {
         });
       }
 
-      await createSwal(darkMode, t).fire({
-        icon:              'success',
-        title:             'Thème appliqué !',
-        text:              `"${t.couleur}" est maintenant le thème actif.`,
-        confirmButtonText: "D'ACCORD",
-        showCancelButton:  false,
-        buttonsStyling:    false,
-        timer:             1500,
-      });
+      showSuccess(darkMode, t, 'Thème appliqué !', `"${t.couleur}" est maintenant le thème actif.`);
 
       // Ne pas recharger - le thème sera appliqué automatiquement par le context
 
     } catch {
-      await createSwal(darkMode, theme).fire({
-        icon:              'error',
-        title:             'Erreur',
-        text:              'Impossible d\'appliquer le thème. Veuillez réessayer.',
-        confirmButtonText: "D'ACCORD",
-        showCancelButton:  false,
-        buttonsStyling:    false,
-      });
+      showError(darkMode, theme, 'Erreur', 'Impossible d\'appliquer le thème. Veuillez réessayer.');
     } finally {
       setApplying(false);
       setShowPreview(false);
@@ -284,43 +260,24 @@ const Theme = () => {
 
   // ── Enregistrer le thème custom (créer en BDD + appliquer) ───────────────
   const handleSaveCustom = async () => {
-    const result = await createSwal(darkMode, theme).fire({
-      icon:              'question',
-      title:             'Enregistrer ce thème ?',
-      html:              `<strong>${customColors.couleur}</strong> sera ajouté à la liste et appliqué.`,
-      confirmButtonText: 'Enregistrer',
-      cancelButtonText:  'Annuler',
-      showCancelButton:  true,
-      buttonsStyling:    false,
+    const result = await showConfirm(darkMode, theme, {
+      title: 'Enregistrer ce thème ?',
+      html: `<strong>${customColors.couleur}</strong> sera ajouté à la liste et appliqué.`,
+      confirmText: 'Enregistrer',
     });
 
-    if (!result.isConfirmed) return;
+    if (!result) return;
 
     setApplying(true);
     try {
       await creerEtAppliquer(customColors);
 
-      await createSwal(darkMode, { primary: customColors.valeur, primaryDark: customColors.primaryDark }).fire({
-        icon:              'success',
-        title:             'Thème enregistré et appliqué !',
-        text:              'Il apparaît maintenant dans la liste des thèmes.',
-        confirmButtonText: "D'ACCORD",
-        showCancelButton:  false,
-        buttonsStyling:    false,
-        timer:             1500,
-      });
+      showSuccess(darkMode, { primary: customColors.valeur, primaryDark: customColors.primaryDark }, 'Thème enregistré et appliqué !', 'Il apparaît maintenant dans la liste des thèmes.');
 
       // Ne pas recharger - le thème sera appliqué automatiquement par le context
 
     } catch {
-      await createSwal(darkMode, theme).fire({
-        icon:              'error',
-        title:             'Erreur',
-        text:              'Impossible d\'enregistrer le thème. Veuillez réessayer.',
-        confirmButtonText: "D'ACCORD",
-        showCancelButton:  false,
-        buttonsStyling:    false,
-      });
+      showError(darkMode, theme, 'Erreur', 'Impossible d\'enregistrer le thème. Veuillez réessayer.');
     } finally {
       setApplying(false);
     }
@@ -328,26 +285,20 @@ const Theme = () => {
 
   // ── Supprimer un thème custom ─────────────────────────────────────────────
   const handleDelete = async (t) => {
-    const result = await createSwal(darkMode, theme).fire({
-      icon:              'warning',
-      title:             'Supprimer ce thème ?',
-      html:              `<strong>${t.couleur}</strong> sera supprimé définitivement.`,
-      confirmButtonText: 'Supprimer',
-      cancelButtonText:  'Annuler',
-      showCancelButton:  true,
-      buttonsStyling:    false,
+    const result = await showConfirm(darkMode, theme, {
+      title: 'Supprimer ce thème ?',
+      html: `<strong>${t.couleur}</strong> sera supprimé définitivement.`,
+      confirmText: 'Supprimer',
+      isDanger: true,
     });
 
-    if (!result.isConfirmed) return;
+    if (!result) return;
 
     try {
       await supprimerTheme(t.id);
     } catch (err) {
       const msg = err.response?.data?.message ?? 'Impossible de supprimer ce thème.';
-      await createSwal(darkMode, theme).fire({
-        icon: 'error', title: 'Erreur', text: msg,
-        confirmButtonText: "D'ACCORD", showCancelButton: false, buttonsStyling: false,
-      });
+      showError(darkMode, theme, 'Erreur', msg);
     }
   };
 
@@ -371,7 +322,7 @@ const Theme = () => {
         <div className="fixed inset-0 z-30" onClick={() => { setShowNotifications(false); setShowProfile(false); }} />
       )}
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {pageLoading ? (
           <ThemeSkeleton darkMode={darkMode} />

@@ -349,6 +349,10 @@ const InterventionCreateModal = ({
       const form = { ...st.form, [field]: val };
       // Une date de sortie = intervention terminée : « en cours » n'est plus un résultat cohérent
       if (field === 'dateSortie' && val && form.resultat === 'en_cours') form.resultat = 'resolu';
+      // Quand on change le résultat, on peut aussi forcer la date de sortie si c'est résolu
+      if (field === 'resultat' && val === 'resolu' && !form.dateSortie) {
+        // On ne force pas la date de sortie automatiquement, l'utilisateur doit la mettre
+      }
       return { form };
     });
 
@@ -498,8 +502,10 @@ const InterventionCreateModal = ({
     };
     if (withStatutVehicule && statutVehicule) payload.statut_vehicule = statutVehicule;
 
+    // Le statut de l'intervention correspond exactement au résultat sélectionné
+    payload.statut = f.resultat;
+
     if (isEdit) {
-      if (f.dateSortie && intervention.statut === 'en_cours') payload.statut = 'terminee';
       // Un envoi multipart ne transporte pas une liste vide : on signale « plus aucun outil »
       if (outilsPayload.length === 0) payload.outils_vide = true;
     }
@@ -892,9 +898,8 @@ const InterventionCreateModal = ({
                   <label className={labelClass}>Résultat</label>
                   <select value={f.resultat} onChange={(e) => setF(key, 'resultat', e.target.value)} className={inputClass}>
                     <option value="en_cours" disabled={Boolean(f.dateSortie)}>En cours</option>
-                    <option value="resolu">Résolu</option>
                     <option value="partiel">Partiel</option>
-                    <option value="echec">Échec</option>
+                    <option value="resolu">Résolue</option>
                   </select>
                 </div>
               </div>

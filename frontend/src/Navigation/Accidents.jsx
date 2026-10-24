@@ -2121,13 +2121,11 @@ const Accidents = () => {
             <div className="flex items-center gap-3">
               {/* Vue */}
               <div className={`flex rounded-lg border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                {[['table', 'bi-table'], ['cards', 'bi-grid-3x3-gap-fill']].map(([v, ic]) => (
-                  <button key={v} onClick={() => setView(v)}
-                    className={`p-2 text-sm transition-colors ${view === v ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
-                    style={view === v ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                    <i className={`bi ${ic}`}></i>
-                  </button>
-                ))}
+                <button onClick={() => setView('table')}
+                  className={`p-2 text-sm transition-colors ${view === 'table' ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}
+                  style={view === 'table' ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
+                  <i className="bi bi-table"></i>
+                </button>
               </div>
 
               {/* Recherche */}
@@ -2303,124 +2301,6 @@ const Accidents = () => {
                   })}
                   <button onClick={() => setCurrentPage(p => Math.min(pagination.last_page, p + 1))} disabled={currentPage === pagination.last_page}
                     className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'} transition-colors`}>
-                    <i className="bi bi-chevron-right"></i>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ════ VUE CARDS ════ */}
-        {!loading && view === 'cards' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-            style={{ animation: animateCards ? 'fadeInUp .5s ease-out .65s both' : 'none' }}>
-            {accidents.length === 0 ? (
-              <div className={`col-span-full text-center py-16 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                <i className="bi bi-car-front text-5xl block mb-3 opacity-40"></i>
-                <p className="text-sm">Aucun accident pour les filtres sélectionnés</p>
-              </div>
-            ) : accidents.map((a, idx) => {
-              const niveau = getNiveauInfo(a.niveau_degats);
-              const statut = getStatutInfo(a.statut);
-              const hasRapport = !!(a.rapport_police || a.rapport_police_url);
-              return (
-                <div key={a.id} onClick={() => handleViewDetail(a)}
-                  className={`${darkMode ? 'bg-gray-900 border-gray-800 hover:border-gray-600' : 'bg-white border-gray-100 hover:border-gray-300'} rounded-xl border shadow-sm p-5 cursor-pointer transition-all card-hover`}
-                  style={{ animation: animateCards ? `fadeInUp .4s ease-out ${idx * .04}s both` : 'none' }}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-mono font-bold ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{a.ref}</span>
-                      {a.chauffeur_externe && <span className="text-yellow-500 text-xs"><i className="bi bi-person-exclamation"></i></span>}
-                      {hasRapport && (
-                        <Tooltip darkMode={darkMode} label="Voir le document">
-                          <a href={a.rapport_police_url || '#'} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-                            className={`text-xs ${darkMode ? 'text-gray-400 hover:text-white' : 'text-gray-400 hover:text-gray-700'}`}>
-                            <i className="bi bi-eye-fill"></i>
-                          </a>
-                        </Tooltip>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${niveau.bg}`}>{niveau.libelle}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statut.bg}`}>{statut.libelle}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0" style={{ background: theme.primary }}>
-                      {(a.chauffeur_nom || '?').charAt(0)}
-                    </div>
-                    <div>
-                      <p className={`text-sm font-semibold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>{a.chauffeur_nom || '—'}</p>
-                      <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{a.chauffeur_direction || (a.chauffeur_externe ? 'Externe' : '—')}</p>
-                    </div>
-                    <div className="ml-auto text-right">
-                      <p className={`text-xs font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>{a.vehicule_immatriculation}</p>
-                    </div>
-                  </div>
-                  <div className={`rounded-lg p-3 space-y-1.5 mb-3 ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                    <div className="flex items-center gap-2">
-                      <i className={`bi bi-calendar2-event text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                      <span className={`text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {a.date_accident ? new Date(a.date_accident).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <i className={`bi bi-geo-alt text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}></i>
-                      <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} truncate`}>{a.lieu || '—'}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      {a.vehicule_immobilise && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${darkMode ? 'bg-red-900/30 text-red-400' : 'bg-red-100 text-red-600'}`}>
-                          <i className="bi bi-slash-circle mr-0.5"></i>Immob.{a.jours_immobilisation ? ` ${a.jours_immobilisation}j` : ''}
-                        </span>
-                      )}
-                      {a.assure && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${darkMode ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-600'}`}>
-                          <i className="bi bi-shield-check mr-0.5"></i>Assuré
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>{formatRelative(a.date_accident)}</span>
-                      <div onClick={e => e.stopPropagation()}>
-                        <ActionMenu
-                          accident={a}
-                          darkMode={darkMode}
-                          theme={theme}
-                          onView={handleViewDetail}
-                          onEdit={handleEdit}
-                          onDelete={handleDelete}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Pagination cards */}
-            {pagination.last_page > 1 && (
-              <div className="col-span-full flex items-center justify-between px-2 py-3">
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Page {pagination.current_page} / {pagination.last_page}
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
-                    className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'}`}>
-                    <i className="bi bi-chevron-left"></i>
-                  </button>
-                  {Array.from({ length: pagination.last_page }, (_, i) => i + 1).slice(Math.max(0, currentPage - 3), Math.min(pagination.last_page, currentPage + 2)).map(page => (
-                    <button key={page} onClick={() => setCurrentPage(page)}
-                      className={`w-8 h-8 rounded-lg text-sm font-semibold ${currentPage === page ? 'text-white' : darkMode ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
-                      style={currentPage === page ? { background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` } : {}}>
-                      {page}
-                    </button>
-                  ))}
-                  <button onClick={() => setCurrentPage(p => Math.min(pagination.last_page, p + 1))} disabled={currentPage === pagination.last_page}
-                    className={`p-2 rounded-lg ${darkMode ? 'text-gray-400 hover:bg-gray-800 disabled:opacity-40' : 'text-gray-600 hover:bg-gray-100 disabled:opacity-40'}`}>
                     <i className="bi bi-chevron-right"></i>
                   </button>
                 </div>

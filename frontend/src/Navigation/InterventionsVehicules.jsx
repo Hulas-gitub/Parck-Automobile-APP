@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import Swal from 'sweetalert2';
@@ -25,13 +26,25 @@ import { getTableStyles, getCardStyles, getRowBackgroundColor, PageSkeleton } fr
 
 // ─────────────────────────────────────────────────────────────
 // CONFIGURATIONS ET BADGES
+// Seuls 3 statuts existent : en_cours | partiel | resolu
+// Le statut affiché est TOUJOURS celui choisi par l'utilisateur (renvoyé par l'API).
 // ─────────────────────────────────────────────────────────────
 const STATUTS = {
-  planifiee: { libelle: 'Planifiée', color: '#6366f1', bg: 'bg-indigo-500/10 text-indigo-500 border border-indigo-500/20', icon: 'bi-calendar-check-fill' },
   en_cours: { libelle: 'En cours', color: '#f59e0b', bg: 'bg-amber-500/10 text-amber-500 border border-amber-500/20', icon: 'bi-tools' },
-  terminee: { libelle: 'Terminée', color: '#10b981', bg: 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20', icon: 'bi-check-circle-fill' },
-  annulee: { libelle: 'Annulée', color: '#ef4444', bg: 'bg-rose-500/10 text-rose-500 border border-rose-500/20', icon: 'bi-x-circle-fill' },
+  partiel: { libelle: 'Partiel', color: '#8b5cf6', bg: 'bg-purple-500/10 text-purple-500 border border-purple-500/20', icon: 'bi-info-circle-fill' },
+  resolu: { libelle: 'Résolue', color: '#10b981', bg: 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20', icon: 'bi-check-circle-fill' },
 };
+
+// Statut inconnu (ancienne donnée en base) : on affiche la valeur brute, sans le transformer
+const STATUT_INCONNU = {
+  libelle: null,
+  color: '#6b7280',
+  bg: 'bg-gray-500/10 text-gray-400 border border-gray-500/20',
+  icon: 'bi-question-circle-fill',
+};
+
+// Statuts pour lesquels le véhicule est encore immobilisé (on peut donc clôturer)
+const STATUTS_OUVERTS = ['en_cours', 'partiel'];
 
 const formatCFA = (val) => {
   if (val === null || val === undefined || isNaN(val)) return '0 FCFA';
@@ -41,12 +54,110 @@ const formatCFA = (val) => {
 const EMPTY_STATS = {
   nb_interventions: 0,
   en_cours: 0,
-  terminees: 0,
+  partiels: 0,
+  resolus: 0, // CORRECTION : le backend renvoie "resolus" (et non "resolues")
   cout_total: 0,
   par_nature: [],
 };
 
+// ============================================================================
+// MENU TROIS POINTS — toutes les actions d'une ligne sont regroupées ici
+// (même principe que la page Véhicules). Les droits sont calculés dans le
+// composant principal ; une action non autorisée n'apparaît tout simplement pas.
+// ============================================================================
+const RowActionsMenu = ({ item, darkMode, theme, onView, onEdit, onTerminer, onDelete, canEdit, canTerminer, canDelete }) => {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState({});
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
 
+  const nbActions = 1 + (canEdit ? 1 : 0) + (canTerminer ? 1 : 0) + (canDelete ? 1 : 0);
+  const menuHeight = nbActions * 44 + 12 + (canDelete && nbActions > 1 ? 9 : 0);
+  const menuWidth = 220;
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        buttonRef.current && !buttonRef.current.contains(e.target) &&
+        menuRef.current && !menuRef.current.contains(e.target)
+      ) setOpen(false);
+    };
+    const handleScroll = () => setOpen(false);
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('scroll', handleScroll, true);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const showAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight + 8;
+      setMenuStyle({
+        position: 'fixed',
+        top: showAbove ? rect.top - menuHeight - 4 : rect.bottom + 4,
+        left: Math.max(8, rect.right - menuWidth),
+        zIndex: 99999,
+        width: menuWidth,
+      });
+    }
+  }, [open, menuHeight]);
+
+  const mi = (label, icon, color, fn, textCls) => (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); setOpen(false); fn(item); }}
+      className={`w-full text-left px-4 py-2.5 text-sm font-semibold flex items-center gap-2.5 transition-colors ${textCls}`}
+    >
+      <i className={`bi ${icon} text-base`} style={{ color }}></i>{label}
+    </button>
+  );
+
+  const neutral = darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50';
+  const danger = darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-red-50';
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        title="Actions"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${open
+          ? 'text-white'
+          : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+        style={open ? { background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` } : {}}
+      >
+        <i className="bi bi-three-dots-vertical text-sm"></i>
+      </button>
+
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          onClick={(e) => e.stopPropagation()}
+          className={`rounded-xl shadow-2xl border py-1.5 overflow-hidden text-left ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+          style={menuStyle}
+        >
+          {mi('Voir les détails', 'bi-eye-fill', theme.primary, onView, neutral)}
+          {canEdit && mi('Modifier', 'bi-pencil-square', '#f59e0b', onEdit, neutral)}
+          {canTerminer && mi('Clôturer la réparation', 'bi-check2-circle', '#10b981', onTerminer, neutral)}
+          {canDelete && (
+            <>
+              <div className={`my-1 mx-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-100'}`} />
+              {mi('Supprimer', 'bi-trash3-fill', '#ef4444', onDelete, danger)}
+            </>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
 
 const InterventionsVehicules = () => {
   const [darkMode, setDarkMode] = useState(() => {
@@ -109,7 +220,7 @@ const InterventionsVehicules = () => {
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [natureFilter, setNatureFilter] = useState(''); // '' | 'interne' | 'externe'
-  const [statutFilter, setStatutFilter] = useState(''); // '' | 'en_cours' | 'terminee' | etc.
+  const [statutFilter, setStatutFilter] = useState(''); // '' | 'en_cours' | 'partiel' | 'resolu'
   const [vue, setVue] = useState('table'); // 'table' | 'cards'
 
   // Recherche avec temporisation (évite une requête à chaque frappe)
@@ -188,7 +299,7 @@ const InterventionsVehicules = () => {
     loadStats();
   }, [loadInterventions, loadStats]);
 
-  // ── Clôturer rapidement une intervention en cours
+  // ── Clôturer rapidement une intervention en cours ou partielle
   const handleTerminerRapide = async (item) => {
     const result = await Swal.fire({
       ...getSwalConfig(darkMode, theme),
@@ -204,18 +315,18 @@ const InterventionsVehicules = () => {
 
     try {
       // Date de sortie du garage / atelier (sans heure), identique pour interne et externe
-      await updateStatutIntervention(item.id, 'terminee', {
+      await updateStatutIntervention(item.id, 'resolu', {
         resultat: 'resolu',
         date_sortie_garage: todayLocal(),
       });
-      showSuccess(darkMode, theme, 'Intervention terminée', 'Le véhicule est maintenant marqué comme réparé.');
+      showSuccess(darkMode, theme, 'Intervention résolue', 'Le véhicule est maintenant marqué comme réparé.');
       refreshAll();
     } catch (err) {
       Swal.fire({
         ...getSwalConfig(darkMode, theme),
         icon: 'error',
         title: 'Erreur',
-        text: getApiError(err, 'Impossible de terminer cette intervention.'),
+        text: getApiError(err, 'Impossible de résoudre cette intervention.'),
       });
     }
   };
@@ -254,7 +365,8 @@ const InterventionsVehicules = () => {
     return {
       total: statsGlobal.nb_interventions,
       enCours: statsGlobal.en_cours,
-      terminees: statsGlobal.terminees,
+      partiels: statsGlobal.partiels,
+      resolues: statsGlobal.resolus,
       coutGlobal: statsGlobal.cout_total,
       internes: nat('interne'),
       externes: nat('externe'),
@@ -326,7 +438,7 @@ const InterventionsVehicules = () => {
       {/* ── CONTENU PRINCIPAL ── */}
       <main
         className="flex-1 transition-all duration-300 pt-24 px-4 pb-10"
-        style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}
+        style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}
       >
         {initialLoading ? (
           <PageSkeleton darkMode={darkMode} />
@@ -412,17 +524,19 @@ const InterventionsVehicules = () => {
                       </div>
                     </div>
                     <div className="text-2xl font-black text-amber-500">{stats.enCours}</div>
-                    <p className={`text-[11px] mt-1 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Véhicules actuellement immobilisés</p>
+                    <p className={`text-[11px] mt-1 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                      Véhicules immobilisés · {stats.partiels} partielle(s)
+                    </p>
                   </div>
 
                   <div className={`p-4 rounded-2xl border transition-all ${darkMode ? 'bg-gray-900/80 border-gray-800/80' : 'bg-white border-gray-200'} shadow-sm`}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Terminées</span>
+                      <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Résolues</span>
                       <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
                         <i className="bi bi-check-circle-fill" />
                       </div>
                     </div>
-                    <div className="text-2xl font-black text-emerald-500">{stats.terminees}</div>
+                    <div className="text-2xl font-black text-emerald-500">{stats.resolues}</div>
                     <p className={`text-[11px] mt-1 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Véhicules réparés et remis en service</p>
                   </div>
 
@@ -466,20 +580,19 @@ const InterventionsVehicules = () => {
                       <option value="externe">Prestataire externe</option>
                     </select>
 
-                    {/* Filtre Statut */}
+                    {/* Filtre Statut : 3 statuts seulement */}
                     <select
                       value={statutFilter}
                       onChange={(e) => { setStatutFilter(e.target.value); setPage(1); }}
                       className={`px-3 py-2 rounded-xl border text-xs transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'}`}
                     >
                       <option value="">Tous les statuts</option>
-                      <option value="planifiee">Planifiée</option>
                       <option value="en_cours">En cours</option>
-                      <option value="terminee">Terminée</option>
-                      <option value="annulee">Annulée</option>
+                      <option value="partiel">Partiel</option>
+                      <option value="resolu">Résolue</option>
                     </select>
 
-                    {/* Switch vue Table / Cartes */}
+                    {/* Switch vue Table */}
                     <div className={`flex rounded-xl border p-0.5 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-100 border-gray-200'}`}>
                       <button
                         onClick={() => setVue('table')}
@@ -487,13 +600,6 @@ const InterventionsVehicules = () => {
                         title="Vue Tableau"
                       >
                         <i className="bi bi-table" />
-                      </button>
-                      <button
-                        onClick={() => setVue('cards')}
-                        className={`p-1.5 rounded-lg text-xs transition-all ${vue === 'cards' ? `${darkMode ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 shadow-sm'}` : 'text-gray-400 hover:text-gray-200'}`}
-                        title="Vue Cartes"
-                      >
-                        <i className="bi bi-grid-fill" />
                       </button>
                     </div>
                   </div>
@@ -516,19 +622,17 @@ const InterventionsVehicules = () => {
                   <div className={tableStyles.container}>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
-                        {/* En-tête aux couleurs du thème de l'application */}
-                        <thead
-                          className="text-white"
-                          style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.primaryDark})` }}
-                        >
-                          <tr className={tableStyles.header}>
-                            <th className="py-3 px-4">Réf & Véhicule</th>
-                            <th className="py-3 px-4">Nature & Intervenant</th>
-                            <th className="py-3 px-4">Travaux & Type</th>
-                            <th className="py-3 px-4">Statut</th>
-                            <th className="py-3 px-4">Dates & Durée</th>
-                            <th className="py-3 px-4 text-right">Coût Total</th>
-                            <th className="py-3 px-4 text-center">Actions</th>
+                        {/* En-tête aux couleurs du thème (ThemeContext) — identique à la page Véhicules :
+                            le dégradé est posé sur la LIGNE <tr>, texte blanc sur chaque cellule */}
+                        <thead>
+                          <tr style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.primaryDark})` }}>
+                            <th className="px-4 py-3.5 text-left text-xs font-extrabold uppercase tracking-wider text-white">Réf & Véhicule</th>
+                            <th className="px-4 py-3.5 text-left text-xs font-extrabold uppercase tracking-wider text-white">Nature & Intervenant</th>
+                            <th className="px-4 py-3.5 text-left text-xs font-extrabold uppercase tracking-wider text-white">Travaux & Type</th>
+                            <th className="px-4 py-3.5 text-left text-xs font-extrabold uppercase tracking-wider text-white">Statut</th>
+                            <th className="px-4 py-3.5 text-left text-xs font-extrabold uppercase tracking-wider text-white">Dates & Durée</th>
+                            <th className="px-4 py-3.5 text-right text-xs font-extrabold uppercase tracking-wider text-white">Coût Total</th>
+                            <th className="px-4 py-3.5 text-center text-xs font-extrabold uppercase tracking-wider text-white">Actions</th>
                           </tr>
                         </thead>
                         <tbody className={`divide-y text-sm ${darkMode ? 'divide-gray-800/40' : 'divide-gray-100'}`}>
@@ -556,8 +660,15 @@ const InterventionsVehicules = () => {
                             </tr>
                           ) : (
                             interventions.map((item, rowIdx) => {
-                              const stat = STATUTS[item.statut] || STATUTS.planifiee;
-                              const isEnCours = item.statut === 'en_cours';
+                              // Le statut affiché = le statut réellement enregistré (choisi par l'utilisateur)
+                              const stat = STATUTS[item.statut] || STATUT_INCONNU;
+                              const libelleStatut = stat.libelle || item.statut_libelle || item.statut || '—';
+                              const isOuverte = STATUTS_OUVERTS.includes(item.statut);
+
+                              // Droits de la ligne (les actions non autorisées n'apparaissent pas dans le menu)
+                              const canEditRow = !isReadOnly && !!item.can_edit && (item.statut !== 'resolu' || userRole === 'admin');
+                              const canTerminerRow = !isReadOnly && isOuverte;
+                              const canDeleteRow = !isReadOnly;
 
                               return (
                                 <tr
@@ -608,7 +719,7 @@ const InterventionsVehicules = () => {
                                   <td className="py-3.5 px-4">
                                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-bold ${stat.bg}`}>
                                       <i className={`bi ${stat.icon}`} />
-                                      {stat.libelle}
+                                      {libelleStatut}
                                     </span>
                                   </td>
 
@@ -630,31 +741,20 @@ const InterventionsVehicules = () => {
                                     <span className={tableStyles.cellBold}>{formatCFA(item.cout_total)}</span>
                                   </td>
 
-                                  {/* Actions */}
+                                  {/* Actions : tout est regroupé dans le menu trois points */}
                                   <td className="py-3.5 px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex items-center justify-center gap-1">
-                                      <button onClick={() => openDetail(item)} title="Voir les détails complets" className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-colors">
-                                        <i className="bi bi-eye text-sm" />
-                                      </button>
-
-                                      {!isReadOnly && item.can_edit && (
-                                        <button onClick={() => openEdit(item)} title="Modifier l'intervention" className="p-1.5 rounded-lg text-amber-400 hover:bg-amber-500/10 transition-colors">
-                                          <i className="bi bi-pencil-square text-sm" />
-                                        </button>
-                                      )}
-
-                                      {!isReadOnly && isEnCours && (
-                                        <button onClick={() => handleTerminerRapide(item)} title="Clôturer la réparation (véhicule prêt)" className="p-1.5 rounded-lg text-green-400 hover:bg-green-500/10 transition-colors">
-                                          <i className="bi bi-check2-circle text-sm" />
-                                        </button>
-                                      )}
-
-                                      {!isReadOnly && (
-                                        <button onClick={() => handleDelete(item)} title="Supprimer l'intervention" className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors">
-                                          <i className="bi bi-trash text-sm" />
-                                        </button>
-                                      )}
-                                    </div>
+                                    <RowActionsMenu
+                                      item={item}
+                                      darkMode={darkMode}
+                                      theme={theme}
+                                      onView={openDetail}
+                                      onEdit={openEdit}
+                                      onTerminer={handleTerminerRapide}
+                                      onDelete={handleDelete}
+                                      canEdit={canEditRow}
+                                      canTerminer={canTerminerRow}
+                                      canDelete={canDeleteRow}
+                                    />
                                   </td>
                                 </tr>
                               );
@@ -677,103 +777,6 @@ const InterventionsVehicules = () => {
                           </button>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ── LISTE : VUE CARTES ── */}
-                {vue === 'cards' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {loading ? (
-                      Array.from({ length: 6 }).map((_, idx) => (
-                        <div key={`card-skel-${idx}`} className={`p-5 rounded-2xl border animate-pulse ${darkMode ? 'bg-gray-900/80 border-gray-800' : 'bg-white border-gray-200'}`}>
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="space-y-1.5">
-                              <div className={`h-3 w-20 rounded ${darkMode ? 'bg-gray-800' : 'bg-gray-200'}`} />
-                              <div className={`h-5 w-32 rounded ${darkMode ? 'bg-gray-800' : 'bg-gray-200'}`} />
-                              <div className={`h-3 w-24 rounded ${darkMode ? 'bg-gray-800/60' : 'bg-gray-100'}`} />
-                            </div>
-                            <div className={`h-6 w-20 rounded-full ${darkMode ? 'bg-gray-800' : 'bg-gray-200'}`} />
-                          </div>
-                          <div className={`h-16 rounded-xl mb-3 ${darkMode ? 'bg-gray-800/60' : 'bg-gray-100'}`} />
-                          <div className={`h-3 w-full rounded mb-2 ${darkMode ? 'bg-gray-800' : 'bg-gray-200'}`} />
-                          <div className={`h-3 w-2/3 rounded ${darkMode ? 'bg-gray-800' : 'bg-gray-200'}`} />
-                        </div>
-                      ))
-                    ) : (!Array.isArray(interventions) || interventions.length === 0) ? (
-                      <div className="col-span-full text-center py-12">
-                        <p className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Aucune intervention trouvée.</p>
-                      </div>
-                    ) : (
-                      interventions.map((item) => {
-                        const stat = STATUTS[item.statut] || STATUTS.planifiee;
-
-                        return (
-                          <div
-                            key={item.id}
-                            onClick={() => openDetail(item)}
-                            className={`p-5 rounded-2xl border shadow-sm cursor-pointer transition-all hover:scale-[1.01] ${darkMode ? 'bg-gray-900/80 border-gray-800 hover:border-gray-700' : 'bg-white border-gray-200 hover:border-blue-300'}`}
-                          >
-                            <div className="flex items-start justify-between mb-3">
-                              <div>
-                                <span className="font-mono text-xs font-bold text-blue-500">
-                                  {item.reference_intervention || `INT-${String(item.id).padStart(5, '0')}`}
-                                </span>
-                                <h3 className="font-black text-base mt-0.5">{item.vehicule_immatriculation}</h3>
-                                <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                                  {item.vehicule_marque} {item.vehicule_modele}
-                                </p>
-                              </div>
-                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${stat.bg}`}>
-                                <i className={`bi ${stat.icon}`} />
-                                {stat.libelle}
-                              </span>
-                            </div>
-
-                            <div className={`p-3 rounded-xl mb-3 text-xs space-y-1.5 ${darkMode ? 'bg-gray-800/60' : 'bg-gray-50'}`}>
-                              <div className="flex items-center justify-between">
-                                <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Nature :</span>
-                                <span className="font-bold">{item.nature_intervention === 'interne' ? 'Atelier Interne' : 'Garage Externe'}</span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Intervenant :</span>
-                                <span className="font-semibold truncate max-w-[170px]" title={intervenantAffiche(item)}>{intervenantAffiche(item)}</span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Durée :</span>
-                                <span className="font-semibold text-teal-400">{dureeDe(item) || '—'}</span>
-                              </div>
-                            </div>
-
-                            <p className={`text-xs mb-3 line-clamp-2 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                              {item.travaux_effectues || 'Aucun travail renseigné.'}
-                            </p>
-
-                            <div className={`flex items-center justify-between pt-3 border-t text-xs ${darkMode ? 'border-gray-800/40' : 'border-gray-100'}`}>
-                              <div>
-                                <span className={`text-[10px] block ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Coût Total</span>
-                                <span className="font-black text-sm text-emerald-400">{formatCFA(item.cout_total)}</span>
-                              </div>
-
-                              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                                <button onClick={() => openDetail(item)} className="px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 font-bold transition-colors">
-                                  Détails
-                                </button>
-                                {!isReadOnly && item.can_edit && (
-                                  <button onClick={() => openEdit(item)} className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 font-bold transition-colors">
-                                    Modifier
-                                  </button>
-                                )}
-                                {!isReadOnly && item.statut === 'en_cours' && (
-                                  <button onClick={() => handleTerminerRapide(item)} className="px-3 py-1.5 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 font-bold transition-colors">
-                                    Clôturer
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
                     )}
                   </div>
                 )}

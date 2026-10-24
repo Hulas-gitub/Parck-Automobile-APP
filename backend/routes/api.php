@@ -112,7 +112,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | Sinon Laravel interprète "unread" comme un id → 404.
         |----------------------------------------------------------------------
         */
-        Route::prefix('notifications')->name('notifications.')->group(function () {
+        Route::prefix('notifications')->name('notifications.')->middleware('auth:sanctum')->group(function () {
             // ── Routes fixes AVANT {id} ──────────────────────────────────
             Route::get ('/unread/count',        [NotificationsController::class, 'getUnreadCount'])->name('unreadCount');
             Route::post('/read-all',            [NotificationsController::class, 'markAllAsRead'])->name('readAll');

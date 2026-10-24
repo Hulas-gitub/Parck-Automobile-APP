@@ -5,6 +5,7 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import Swal from 'sweetalert2';
 import { getFormStyles, getTableStyles, getRowBackgroundColor, PageSkeleton } from '../utils/uniformStyles';
+import { showSuccess, showError, showConfirm } from '../utils/walConfig';
 
 import {
   getReferentiels,
@@ -634,7 +635,7 @@ const InspectionVehicules = () => {
         showNotifications={showNotifications} setShowNotifications={setShowNotifications}
         showProfile={showProfile} setShowProfile={setShowProfile} />
 
-      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '15rem' }}>
+      <main className="flex-1 transition-all duration-300 pt-24 px-4 pb-6" style={{ marginLeft: sidebarCollapsed ? '4.5rem' : '16.25rem' }}>
 
         {/* ── ONGLETS ─────────────────────────────────────────────────────── */}
         <div className={`${cardCls} mb-6 p-2 flex gap-2`}>
